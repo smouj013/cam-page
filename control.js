@@ -1,13 +1,14 @@
-/* control.js — RLC Control v2.1.6 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE + KEY-NAMESPACE)
+/* control.js — RLC Control v2.1.7 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE + KEY-NAMESPACE)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
    ✅ Bot NO se incluye en URL (seguridad)
    ✅ Events bridge Player -> Control (ads auto detectados => bot escribe)
-   ✅ NUEVO v2.1.6:
-      - Soporte KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy
-      - BOT_SAY desde Player (cmd) => Control lo envía al chat (con anti-spam)
-      - Anuncio automático al chat cuando cambia la cámara (anti-spam)
+   ✅ KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy
+   ✅ BOT_SAY desde Player (cmd) => Control lo envía al chat (con anti-spam)
+   ✅ Anuncio automático al chat cuando cambia la cámara (anti-spam)
+   ✅ FIX v2.1.7:
+      - La UI de votación NO sale antes de tiempo: voteUi/uiSec se limita a voteAtSec
 */
 (() => {
   "use strict";
@@ -15,7 +16,7 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V216";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V217";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -277,6 +278,30 @@
     el.value = String(v);
   }
 
+  // ───────────────────────── Vote timing FIX (NO early UI) ─────────────────────────
+  function getTotalCamSecFallback() {
+    // Preferimos el mins real del estado si existe
+    const minsFromState = (lastState && typeof lastState.mins === "number") ? lastState.mins : null;
+    const minsFromUi = parseInt(ctlMins?.value || "", 10);
+    const mins = Number.isFinite(minsFromState) ? minsFromState
+      : Number.isFinite(minsFromUi) ? minsFromUi
+      : 5;
+    return clamp((mins | 0) * 60, 60, 120 * 60);
+  }
+
+  function computeVoteTiming() {
+    const totalSec = getTotalCamSecFallback();
+
+    const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, totalSec);
+    const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
+    const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
+
+    // ✅ CLAVE: la UI nunca puede durar más que el tiempo “hasta votar”
+    const uiSec = clamp(Math.min(windowSec + leadSec, voteAtSec), 1, 999999);
+
+    return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
+  }
+
   // ───────────────────────── BOT IRC (AUTH) ─────────────────────────
   class TwitchAuthIRC {
     constructor(getCfg, onStatus) {
@@ -525,7 +550,8 @@
     const u = new URL(location.href);
     u.pathname = u.pathname.replace(/control\.html$/i, "index.html");
 
-    u.searchParams.set("mins", String(clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120)));
+    const minsVal = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
+    u.searchParams.set("mins", String(minsVal));
     u.searchParams.set("fit", ctlFit?.value || "cover");
     u.searchParams.set("hud", (ctlHud?.value === "off") ? "0" : "1");
 
@@ -543,15 +569,15 @@
     if (ch) u.searchParams.set("twitch", ch);
     else u.searchParams.delete("twitch");
 
-    const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-    const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
-    const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
+    const { voteAtSec, windowSec, leadSec, uiSec } = computeVoteTiming();
 
     u.searchParams.set("voteOverlay", (ctlVoteOverlay?.value === "off") ? "0" : "1");
     u.searchParams.set("voteWindow", String(windowSec));
     u.searchParams.set("voteLead", String(leadSec));
     u.searchParams.set("voteAt", String(voteAtSec));
-    u.searchParams.set("voteUi", String(windowSec + leadSec));
+
+    // ✅ FIX: voteUi no puede ser mayor que voteAt (si no, la UI puede salir “antes”)
+    u.searchParams.set("voteUi", String(uiSec));
 
     if (ctlVoteCmd?.value) u.searchParams.set("voteCmd", ctlVoteCmd.value.trim());
 
@@ -726,7 +752,6 @@
     if (cmd === "BOT_SAY") {
       const text = String(payload.text || payload.message || "").trim();
       if (!text) return;
-      // anti spam extra
       botSayIfEnabled(text);
       return;
     }
@@ -743,15 +768,20 @@
   if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
   if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
 
-  // Fallback: state from localStorage
+  // Fallback: state from localStorage (mejor detectando origen)
   setInterval(() => {
     try {
-      const raw = lsGet(STATE_KEY) || lsGet(STATE_KEY_LEGACY);
+      const rawMain = lsGet(STATE_KEY);
+      const rawLegacy = rawMain ? null : lsGet(STATE_KEY_LEGACY);
+      const raw = rawMain || rawLegacy;
       if (!raw) return;
+
       const st = JSON.parse(raw);
       if (!st || st.type !== "state") return;
-      // si viene del legacy, filtra key
-      if (!keyOk(st, raw === lsGet(STATE_KEY))) return;
+
+      const isMain = !!rawMain;
+      if (!keyOk(st, isMain)) return;
+
       applyState(st);
     } catch (_) {}
   }, 500);
@@ -759,11 +789,16 @@
   // Fallback: events from localStorage
   setInterval(() => {
     try {
-      const raw = lsGet(EVT_KEY) || lsGet(EVT_KEY_LEGACY);
+      const rawMain = lsGet(EVT_KEY);
+      const rawLegacy = rawMain ? null : lsGet(EVT_KEY_LEGACY);
+      const raw = rawMain || rawLegacy;
       if (!raw) return;
+
       const evt = JSON.parse(raw);
       if (!evt || evt.type !== "event") return;
-      handleEvent(evt, raw === lsGet(EVT_KEY));
+
+      const isMain = !!rawMain;
+      handleEvent(evt, isMain);
     } catch (_) {}
   }, 650);
 
@@ -877,9 +912,7 @@
 
     // Vote controls
     function voteApply() {
-      const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
-      const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-      const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
+      const { voteAtSec, windowSec, leadSec, uiSec } = computeVoteTiming();
       const stayMins = ctlStayMins ? clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120) : undefined;
 
       sendCmd("TWITCH_SET", {
@@ -889,7 +922,10 @@
         windowSec,
         voteAtSec,
         leadSec,
-        uiSec: windowSec + leadSec,
+
+        // ✅ FIX: uiSec limitado para que la UI no aparezca antes de tiempo
+        uiSec,
+
         cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim(),
         stayMins,
         // chat/alerts toggles
@@ -910,9 +946,13 @@
     if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
 
     if (ctlVoteStart) ctlVoteStart.addEventListener("click", () => {
-      const w = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-      const lead = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
-      sendCmd("VOTE_START", { windowSec: w, leadSec: lead, uiSec: w + lead });
+      const { windowSec, leadSec, uiSec } = computeVoteTiming();
+      sendCmd("VOTE_START", {
+        windowSec,
+        leadSec,
+        // ✅ FIX también aquí, por si app.js usa uiSec para mostrar overlay
+        uiSec
+      });
     });
 
     // ADS buttons (player overlay) + bot say opcional
