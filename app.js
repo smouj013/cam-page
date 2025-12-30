@@ -1,15 +1,18 @@
-/* app.js — RLC Player v2.2.2 PRO (YT ERROR DETECT + BOT HELP/REQUESTVOTE + TAG VOTE + EVENTS)
+/* app.js — RLC Player v2.2.3 PRO (VOTE FIX + ADMIN APPLY + BGM ON + YT COOKIES DEFAULT)
    ✅ Compat con control.js (BUS/CMD/STATE) + soporte ?key=... (namespacing)
-      - Lee/escucha tanto keys “:key” como legacy (sin key) para no romper nada
+      - Lee/escucha tanto keys “:key” como legacy (sin key) para no romper nada (configurable)
       - Publica STATE en ambos (incluye state.key para filtrar)
-   ✅ Autoskip hard (start timeout + stall timeout + cooldown BAD cache)
+   ✅ Autoskip hard (start timeout + stall timeout + cooldown BAD cache) — runtime configurable (SET_HEALTH)
    ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR (emite EVENTS a Control => bot escribe)
    ✅ IRC anon: chat overlay + votos + alerts (subs/gifts/raids)
+   ✅ FIX CRÍTICO: si el timer llega a 0 con votación/TagVote activa, NO hace next directo:
+      - fuerza cierre de votación y aplica resultado (evita “saltos” antes de votar)
    ✅ FIX: si la votación termina con 0 votos o EMPATE → NEXT
    ✅ YouTube:
       - Handshake postMessage + escucha onStateChange/onError/infoDelivery
       - Solo cuenta “OK” si PLAYING/BUFFERING o avanza currentTime
-      - onError => autoskip al siguiente
+      - onError/ended => autoskip al siguiente
+      - ytCookies/ytSession ON por defecto (youtube.com) + comando runtime para cambiarlo
    ✅ BOT (vía control):
       - !help / !commands / !now
       - !callvote (requiere 5) => inicia votación NEXT/KEEP
@@ -19,7 +22,7 @@
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V222_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V223_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -62,10 +65,22 @@
 
     const key = (u.searchParams.get("key") || "").trim();
 
-    // Health override
-    const startTimeoutMs = clamp(parseInt(u.searchParams.get("startTimeoutMs") || "12000", 10) || 12000, 3000, 60000);
-    const stallTimeoutMs = clamp(parseInt(u.searchParams.get("stallTimeoutMs") || "15000", 10) || 15000, 4000, 90000);
-    const maxStalls = clamp(parseInt(u.searchParams.get("maxStalls") || "2", 10) || 2, 1, 6);
+    // Legacy allow (para no romper controles viejos)
+    const legacyParam = u.searchParams.get("legacy");
+    const allowLegacy = (legacyParam != null) ? parseBoolParam(legacyParam, true) : true;
+
+    // Health override (defaults más “suaves” para evitar falsos fails)
+    const startTimeoutMs = clamp(parseInt(u.searchParams.get("startTimeoutMs") || "20000", 10) || 20000, 3000, 90000);
+    const stallTimeoutMs = clamp(parseInt(u.searchParams.get("stallTimeoutMs") || "25000", 10) || 25000, 4000, 120000);
+    const maxStalls = clamp(parseInt(u.searchParams.get("maxStalls") || "3", 10) || 3, 1, 8);
+
+    // YouTube cookies/session (ON por defecto) — alias ytSession
+    const ytCookiesParam = u.searchParams.get("ytCookies");
+    const ytSessionParam = u.searchParams.get("ytSession");
+    const ytCookiesExplicit = (ytCookiesParam != null) || (ytSessionParam != null);
+    const ytCookies = ytCookiesExplicit
+      ? parseBoolParam((ytCookiesParam ?? ytSessionParam), true)
+      : true;
 
     return {
       mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
@@ -76,11 +91,14 @@
       mode: (u.searchParams.get("mode") || "").toLowerCase(),
       debug: (u.searchParams.get("debug") === "1"),
       key,
+      allowLegacy,
 
-      ytCookies: (u.searchParams.get("ytCookies") ?? "0") === "1",
+      ytCookies,
+      ytCookiesExplicit,
 
-      bgm: (u.searchParams.get("bgm") ?? "0") === "1",
-      bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.25") || 0.25, 0, 1),
+      // BGM ON por defecto
+      bgm: parseBoolParam(u.searchParams.get("bgm") ?? "1", true),
+      bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.22") || 0.22, 0, 1),
 
       vote: voteExplicit ? (voteParam === "1") : ((u.searchParams.get("vote") ?? "0") === "1"),
       voteExplicit,
@@ -170,10 +188,12 @@
   const BUS_BASE = "rlc_bus_v1";
   const CMD_KEY_BASE = "rlc_cmd_v1";
   const STATE_KEY_BASE = "rlc_state_v1";
-  const EVT_KEY_BASE = "rlc_evt_v1"; // ✅ NUEVO
+  const EVT_KEY_BASE = "rlc_evt_v1"; // EVENTS
 
   const KEY = String(P.key || "").trim();
   const OWNER_MODE = !!KEY;
+
+  const ALLOW_LEGACY = !!P.allowLegacy;
 
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
@@ -215,11 +235,15 @@
   const BAD_BASE_COOLDOWN_MS = 30 * 60 * 1000;
   const BAD_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
-  const START_TIMEOUT_MS = P.startTimeoutMs | 0;
-  const STALL_TIMEOUT_MS = P.stallTimeoutMs | 0;
-  const MAX_STALLS = P.maxStalls | 0;
+  // Health runtime variables (admin apply)
+  let startTimeoutMs = P.startTimeoutMs | 0;
+  let stallTimeoutMs = P.stallTimeoutMs | 0;
+  let maxStalls = P.maxStalls | 0;
 
   const OWNER_DEFAULT_TWITCH = "globaleyetv";
+
+  // YouTube cookies/session runtime (admin apply)
+  let ytCookiesEnabled = !!P.ytCookies;
 
   // ───────────────────────── DOM ─────────────────────────
   const frame = qs("#frame");
@@ -440,6 +464,7 @@
       roundEndsAt = 0;
       pausedRemaining = s;
     }
+    recalcVoteScheduleForSegment(s);
     setCountdownUI();
   }
 
@@ -456,6 +481,7 @@
       roundEndsAt = 0;
       pausedRemaining = rem;
     }
+    recalcVoteScheduleForSegment(total);
     setCountdownUI();
   }
 
@@ -559,9 +585,10 @@
   function healthStall(tok, cam, reason = "stall") {
     if (tok !== playToken) return;
     if (!autoskip) return;
+    if (!playing) return;
 
     stallCount++;
-    if (stallCount >= MAX_STALLS) {
+    if (stallCount >= (maxStalls | 0)) {
       healthFail(tok, cam, `stall_${reason}`);
       return;
     }
@@ -570,22 +597,27 @@
     stallTimer = setTimeout(() => {
       if (tok !== playToken) return;
       const age = Date.now() - (lastProgressAt || 0);
-      if (age >= STALL_TIMEOUT_MS) healthFail(tok, cam, `stall_timeout_${reason}`);
-    }, STALL_TIMEOUT_MS);
+      if (age >= (stallTimeoutMs | 0)) healthFail(tok, cam, `stall_timeout_${reason}`);
+    }, clamp((stallTimeoutMs | 0), 2000, 120000));
   }
 
   function healthExpectStart(tok, cam, kind = "media") {
     healthReset();
     if (!autoskip) return;
+    if (!playing) return;
+
     startTimer = setTimeout(() => {
       if (tok !== playToken) return;
       if (!startedOk) healthFail(tok, cam, `${kind}_start_timeout`);
-    }, START_TIMEOUT_MS);
+    }, clamp((startTimeoutMs | 0), 2000, 120000));
   }
 
   function healthFail(tok, cam, reason) {
     if (tok !== playToken) return;
     if (!autoskip) return;
+    if (!playing) return;
+
+    if (switching) return;
 
     const id = cam?.id;
     if (id) markBad(id, reason);
@@ -596,7 +628,10 @@
     idx = idx % Math.max(1, cams.length);
 
     showFallback(cam, "Stream/imagen no disponible. Saltando…");
-    setTimeout(() => nextCam(String(reason || "fail")), 900);
+    setTimeout(() => {
+      if (tok !== playToken) return;
+      nextCam(String(reason || "fail"));
+    }, 900);
   }
 
   function clearMedia() {
@@ -671,8 +706,8 @@
 
   // ───────────────────────── Alerts UI ─────────────────────────
   let alertsEnabled = !!P.alerts;
-  const alertsMax = P.alertsMax | 0;
-  const alertsTtlSec = P.alertsTtl | 0;
+  let alertsMax = P.alertsMax | 0;
+  let alertsTtlSec = P.alertsTtl | 0;
 
   let alertsRoot = null;
   let alertsList = null;
@@ -888,7 +923,7 @@
     adBarEl = document.getElementById("rlcAdBar");
   }
 
-  function adHide() {
+  function adHide(noEvent = false) {
     const wasActive = adActive;
     adActive = false;
     adPhase = "idle";
@@ -898,7 +933,7 @@
     adTotalLive = 0;
     if (adRoot) adRoot.classList.remove("on");
 
-    if (wasActive) emitEvent("AD_AUTO_CLEAR", {});
+    if (wasActive && !noEvent) emitEvent("AD_AUTO_CLEAR", {});
   }
 
   function adShow() {
@@ -981,7 +1016,6 @@
   let ytExpectTok = 0;
   let ytPlayerId = "";
 
-  // ✅ NUEVO: estado real de YT para health
   let ytLastState = -999;
   let ytLastTime = 0;
   let ytLastGoodAt = 0;
@@ -998,7 +1032,6 @@
       try { if (typeof data === "string") data = JSON.parse(data); } catch (_) {}
       if (!data || typeof data !== "object") return;
 
-      // Filtra por id cuando exista
       if (data.id && ytPlayerId && String(data.id) !== String(ytPlayerId)) return;
 
       const tok = ytExpectTok | 0;
@@ -1009,7 +1042,6 @@
 
       const evName = String(data.event || data.type || "").toLowerCase();
 
-      // onError => FAIL directo
       if (evName === "onerror") {
         const code = (data.info != null) ? (data.info | 0) : -1;
         emitEvent("YT_ERROR", { code });
@@ -1017,24 +1049,25 @@
         return;
       }
 
-      // onStateChange
       if (evName === "onstatechange") {
         const st = (data.info != null) ? (data.info | 0) : -999;
         ytLastState = st;
 
-        // Estados YT:
         // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
+        if (st === 0) { // ended => no sirve
+          emitEvent("YT_ENDED", {});
+          healthFail(tok, cam, "yt_ended");
+          return;
+        }
+
         if (st === 1 || st === 3) {
           ytLastGoodAt = Date.now();
           healthProgress(tok);
           return;
         }
-
-        // Si se queda cued/unstarted no es progreso (dejamos que startTimeout lo mate)
         return;
       }
 
-      // infoDelivery (si llega currentTime)
       if (evName === "infodelivery") {
         const info = data.info || {};
         const ct = (typeof info.currentTime === "number") ? info.currentTime : null;
@@ -1048,11 +1081,7 @@
         return;
       }
 
-      // onReady: NO cuenta como “reproduce”
-      if (evName === "onready") {
-        // nada
-        return;
-      }
+      if (evName === "onready") return;
     }, false);
   }
 
@@ -1068,14 +1097,12 @@
     bindYtMessagesOnce();
     if (!ytPlayerId) ytPlayerId = "rlcYt_" + String(Date.now());
 
-    // reset trackers
     ytLastState = -999;
     ytLastTime = 0;
     ytLastGoodAt = 0;
 
     ytSend({ event: "listening", id: ytPlayerId });
 
-    // pedir eventos reales
     ytSend({ id: ytPlayerId, event: "command", func: "addEventListener", args: ["onStateChange"] });
     ytSend({ id: ytPlayerId, event: "command", func: "addEventListener", args: ["onError"] });
     ytSend({ id: ytPlayerId, event: "command", func: "addEventListener", args: ["infoDelivery"] });
@@ -1256,11 +1283,22 @@
   let voteOverlay = !!P.voteOverlay;
   let twitchChannel = P.twitch || "";
 
-  let voteWindowSec = P.voteWindow;
-  let voteAtSec = P.voteAt;
-  let voteLeadSec = P.voteLead;
-  let voteUiSec = (P.voteUi > 0) ? P.voteUi : (voteLeadSec + voteWindowSec);
-  let stayMins = P.stayMins;
+  // Config (admin)
+  let voteWindowCfgSec = P.voteWindow | 0;
+  let voteAtCfgSec = P.voteAt | 0;
+  let voteLeadCfgSec = P.voteLead | 0;
+  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : (voteLeadCfgSec + voteWindowCfgSec);
+  let stayMins = P.stayMins | 0;
+
+  // Segment schedule (auto-ajustada por duración)
+  let voteWindowSegSec = voteWindowCfgSec;
+  let voteAtSegSec = voteAtCfgSec;
+  let voteLeadSegSec = voteLeadCfgSec;
+  let voteUiSegSec = voteUiCfgSec;
+
+  // Active session (lo que se está usando en la votación actual)
+  let voteWindowActiveSec = voteWindowCfgSec;
+  let voteLeadActiveSec = voteLeadCfgSec;
 
   let voteCmdStr = String(P.voteCmd || "!next,!cam|!stay,!keep").trim();
   let cmdYes = new Set(["!next","!cam"]);
@@ -1273,6 +1311,9 @@
 
   let votesYes = 0, votesNo = 0;
   let voters = new Set();
+
+  // TagVote flags (declarado antes para evitar TDZ en ensureIrc)
+  let tagVoteActive = false;
 
   function parseVoteCmds(str) {
     voteCmdStr = String(str || "!next,!cam|!stay,!keep").trim() || "!next,!cam|!stay,!keep";
@@ -1428,15 +1469,46 @@
     renderVote();
   }
 
+  // Auto-ajuste para que el voto “quepa” en el segmento
+  function recalcVoteScheduleForSegment(segTotalSec) {
+    const total = clamp(segTotalSec | 0, 1, 120 * 60);
+
+    voteWindowSegSec = clamp(voteWindowCfgSec | 0, 5, 180);
+    voteLeadSegSec = clamp(voteLeadCfgSec | 0, 0, 30);
+
+    // Si no cabe, reduce ventana (primero) y si aún no cabe, reduce lead; si es imposible, desactiva auto-trigger del segmento
+    const minMargin = 2; // segundos de margen para evitar “corte”
+    if ((voteLeadSegSec + voteWindowSegSec + minMargin) > total) {
+      const maxWindow = Math.max(0, total - voteLeadSegSec - minMargin);
+      voteWindowSegSec = clamp(maxWindow | 0, 5, voteWindowSegSec);
+      if ((voteLeadSegSec + voteWindowSegSec + minMargin) > total) {
+        voteLeadSegSec = 0;
+        const maxWindow2 = Math.max(0, total - minMargin);
+        voteWindowSegSec = clamp(maxWindow2 | 0, 5, voteWindowSegSec);
+      }
+    }
+
+    // Si aun así no cabe (segmento ultra corto), el auto vote no se lanza
+    const fits = (voteLeadSegSec + voteWindowSegSec + minMargin) <= total;
+
+    const latestAt = Math.max(5, total - (voteLeadSegSec + voteWindowSegSec + minMargin));
+    voteAtSegSec = clamp(voteAtCfgSec | 0, 5, latestAt);
+
+    voteUiSegSec = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : (voteLeadSegSec + voteWindowSegSec);
+    if (!fits) {
+      // marca como “no auto”
+      voteAtSegSec = 999999;
+    }
+  }
+
   function voteStartSequence(windowSec, leadSec) {
     if (!voteEnabled || !twitchChannel) return;
 
     const w = clamp(windowSec | 0, 5, 180);
     const lead = clamp(leadSec | 0, 0, 30);
 
-    voteWindowSec = w;
-    voteLeadSec = lead;
-    voteUiSec = w + lead;
+    voteWindowActiveSec = w;
+    voteLeadActiveSec = lead;
 
     votesYes = 0; votesNo = 0;
     voters = new Set();
@@ -1526,7 +1598,7 @@
     }
   }
 
-  function tryCallVote(userId, displayName) {
+  function tryCallVote(userId, _displayName) {
     if (!OWNER_MODE || !twitchChannel) return;
     const now = Date.now();
     if (now < callVoteCooldownUntil) return;
@@ -1540,11 +1612,11 @@
       callVoteCooldownUntil = now + REQUEST_COOLDOWN_MS;
 
       voteTriggeredForSegment = true;
-      voteStartSequence(voteWindowSec, 0);
+      voteStartSequence(voteWindowSegSec, 0);
 
       const yes0 = [...cmdYes][0] || "!next";
       const no0  = [...cmdNo][0]  || "!stay";
-      botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSec}s`);
+      botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSegSec}s`);
     } else {
       if (n === 1 || n === 3) botSay(`🗳️ Solicitud de votación: ${n}/${REQUEST_THRESHOLD}. Escribe !callvote para apoyar.`);
     }
@@ -1575,7 +1647,6 @@
       for (const p of parts) out.add(p);
     }
 
-    // opcional: si no hay tags, intenta inferir (suave)
     if (!out.size) {
       const kind = normTag(cam.kind);
       if (kind) out.add(kind);
@@ -1597,13 +1668,11 @@
         tagIndex.get(t).push(String(cam.id));
       }
     }
-    // limpia tags “flojos”
     for (const [t, arr] of Array.from(tagIndex.entries())) {
       if (!Array.isArray(arr) || arr.length < 3) tagIndex.delete(t);
     }
   }
 
-  let tagVoteActive = false;
   let tagVoteEndsAt = 0;
   let tagVoteTags = [];
   let tagVoteCounts = [0, 0, 0];
@@ -1750,7 +1819,6 @@
   function pickCamByTag(tag) {
     const t = normTag(tag);
     if (!t) return null;
-    // usa cams filtradas actuales
     const candidates = cams.filter(c => camTags(c).has(t));
     if (!candidates.length) return null;
     return candidates[(rnd() * candidates.length) | 0];
@@ -1782,7 +1850,6 @@
     if (!tagVoteActive) return;
     tagVoteActive = false;
 
-    // winner
     const a = tagVoteCounts[0] | 0, b = tagVoteCounts[1] | 0, c = tagVoteCounts[2] | 0;
     const max = Math.max(a, b, c);
     let winners = [];
@@ -1856,24 +1923,17 @@
       const who = String(ev.userId || ev.user || "anon");
       const name = (ev.displayName || ev.user || "chat").trim();
 
-      // Chat overlay
       if (chatEnabled && twitchChannel) {
         if (!isHiddenChatCommand(text)) chatAdd(name, text);
       }
 
-      // ✅ Bot commands (solo owner)
       if (OWNER_MODE && twitchChannel && low && low[0] === "!") {
         if (low === "!help" || low === "!commands") { sendHelp(); return; }
         if (low === "!now" || low === "!where" || low === "!camera") { sendNow(); return; }
-
-        // Solicitar vote (protegido)
         if (low === "!callvote" || low === "!startvote") { tryCallVote(who, name); return; }
-
-        // Solicitar tag vote (protegido)
         if (low === "!tagvote" || low === "!tagsvote") { tryTagVoteRequest(who); return; }
       }
 
-      // TagVote votar
       if (tagVoteActive) {
         if (!tagVoteVoters.has(who)) {
           if (low === "!1" || low === "!one") { tagVoteVoters.add(who); tagVoteCounts[0]++; tagVoteRender(); return; }
@@ -1882,12 +1942,10 @@
         }
       }
 
-      // Vote normal
       if (voteSessionActive && votePhase === "vote") {
-        const low2 = low;
         if (!voters.has(who)) {
-          if (cmdYes.has(low2)) { voters.add(who); votesYes++; renderVote(); }
-          else if (cmdNo.has(low2)) { voters.add(who); votesNo++; renderVote(); }
+          if (cmdYes.has(low)) { voters.add(who); votesYes++; renderVote(); }
+          else if (cmdNo.has(low)) { voters.add(who); votesNo++; renderVote(); }
         }
       }
       return;
@@ -1938,6 +1996,21 @@
   let bgmIdx = 0;
   let bgmPlaying = false;
 
+  function fadeAudioTo(el, targetVol, ms) {
+    if (!el) return;
+    const start = el.volume;
+    const end = clamp(+targetVol || 0, 0, 1);
+    const dur = clamp(ms | 0, 0, 2000);
+    if (dur <= 0) { try { el.volume = end; } catch(_) {} return; }
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      const k = clamp((Date.now() - t0) / dur, 0, 1);
+      const v = start + (end - start) * k;
+      try { el.volume = clamp(v, 0, 1); } catch(_) {}
+      if (k >= 1) { try { clearInterval(timer); } catch(_) {} }
+    }, 40);
+  }
+
   function bgmSetVol(v) {
     bgmVol = clamp(+v || 0, 0, 1);
     try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
@@ -1956,15 +2029,24 @@
     if (!bgmEnabled || !bgmList.length || !bgmEl) return;
     try {
       if (!bgmEl.src) bgmLoadTrack(bgmIdx);
+      // fade-in suave
+      try { bgmEl.volume = 0; } catch(_) {}
       const p = bgmEl.play();
       if (p && typeof p.then === "function") await p;
+      fadeAudioTo(bgmEl, bgmVol, 320);
       bgmPlaying = true;
     } catch (_) { bgmPlaying = false; }
     postState({ reason: "bgm_play" });
   }
 
   function bgmPause() {
-    try { if (bgmEl) bgmEl.pause(); } catch (_) {}
+    try {
+      if (bgmEl) {
+        // fade-out suave
+        fadeAudioTo(bgmEl, 0, 220);
+        setTimeout(() => { try { bgmEl.pause(); } catch(_) {} }, 240);
+      }
+    } catch (_) {}
     bgmPlaying = false;
     postState({ reason: "bgm_pause" });
   }
@@ -2009,7 +2091,7 @@
       showOnly("youtube");
       healthExpectStart(tok, cam, "youtube");
 
-      const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
+      const base = ytCookiesEnabled ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
       const ytId = cam.youtubeId || "";
       if (!ytId) { healthFail(tok, cam, "youtube_missing_id"); return; }
 
@@ -2168,13 +2250,17 @@
     modeAdfree = false;
     autoskip = true;
 
+    // defaults deseados
+    bgmEnabled = true;
+    ytCookiesEnabled = true;
+
     applyFilters();
     setFit("cover");
     setRoundMins(5);
     setHudHidden(false);
     setHudCollapsed(true);
     setPlaying(true);
-    adHide();
+    adHide(true);
     playCam(cams[idx]);
     postState({ reason: "reset" });
   }
@@ -2193,7 +2279,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.2",
+      version: "2.2.3",
       playing,
       idx,
       total: cams.length,
@@ -2204,7 +2290,14 @@
       hudCollapsed: !!hud?.classList?.contains?.("hud--collapsed"),
       autoskip,
       adfree: modeAdfree,
-      ytCookies: !!P.ytCookies,
+
+      ytCookies: !!ytCookiesEnabled,
+
+      health: {
+        startTimeoutMs: startTimeoutMs | 0,
+        stallTimeoutMs: stallTimeoutMs | 0,
+        maxStalls: maxStalls | 0
+      },
 
       cam: {
         id: cam.id, title: cam.title, place: cam.place, source: cam.source,
@@ -2231,12 +2324,16 @@
         enabled: voteEnabled,
         overlay: voteOverlay,
         channel: twitchChannel || "",
-        windowSec: voteWindowSec,
-        voteAtSec,
-        leadSec: voteLeadSec,
-        uiSec: voteUiSec,
+        windowSec: voteWindowCfgSec,
+        voteAtSec: voteAtCfgSec,
+        leadSec: voteLeadCfgSec,
+        uiSec: voteUiCfgSec,
         stayMins,
         cmd: voteCmdStr,
+        // segment-adjusted
+        segWindowSec: voteWindowSegSec,
+        segVoteAtSec: voteAtSegSec,
+        segLeadSec: voteLeadSegSec,
         sessionActive: voteSessionActive,
         phase: votePhase,
         yes: votesYes,
@@ -2276,8 +2373,15 @@
 
   function cmdKeyOk(msg, isMainChannel) {
     if (!KEY) return true;
-    if (isMainChannel) return true;
-    return (msg && msg.key === KEY);
+    if (msg && msg.key === KEY) return true;
+
+    // Compat legacy (sin key) si el usuario lo permite
+    if (ALLOW_LEGACY && !isMainChannel && msg && !msg.key) return true;
+
+    // Si viene del canal main pero no trae key (raro), aceptamos solo si ALLOW_LEGACY
+    if (ALLOW_LEGACY && isMainChannel && msg && !msg.key) return true;
+
+    return false;
   }
 
   function applyCommand(cmd, payload) {
@@ -2341,7 +2445,6 @@
           if (modeAdfree !== prev) {
             const curId = String((cams[idx] || {}).id || "");
             applyFilters();
-            // intenta mantener cam actual si sigue disponible
             const n = curId ? cams.findIndex(c => c && String(c.id) === curId) : -1;
             idx = (n >= 0) ? n : (idx % Math.max(1, cams.length));
             playCam(cams[idx]);
@@ -2366,15 +2469,16 @@
           if (payload && typeof payload === "object") {
             if (payload.enabled != null) voteEnabled = !!payload.enabled;
             if (payload.overlay != null) voteOverlay = !!payload.overlay;
-            if (payload.windowSec != null) voteWindowSec = clamp(payload.windowSec | 0, 5, 180);
-            if (payload.voteAtSec != null) voteAtSec = clamp(payload.voteAtSec | 0, 5, 600);
-            if (payload.leadSec != null) voteLeadSec = clamp(payload.leadSec | 0, 0, 30);
-            if (payload.uiSec != null) voteUiSec = clamp(payload.uiSec | 0, 0, 300) || (voteLeadSec + voteWindowSec);
+            if (payload.windowSec != null) voteWindowCfgSec = clamp(payload.windowSec | 0, 5, 180);
+            if (payload.voteAtSec != null) voteAtCfgSec = clamp(payload.voteAtSec | 0, 5, 600);
+            if (payload.leadSec != null) voteLeadCfgSec = clamp(payload.leadSec | 0, 0, 30);
+            if (payload.uiSec != null) voteUiCfgSec = clamp(payload.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
             if (payload.stayMins != null) stayMins = clamp(payload.stayMins | 0, 1, 120);
             if (payload.cmd != null) parseVoteCmds(String(payload.cmd || ""));
           } else {
             voteEnabled = !!payload;
           }
+          recalcVoteScheduleForSegment(segmentSeconds | 0);
           ensureIrc();
           voteReset();
           postState({ reason: "vote" });
@@ -2383,12 +2487,12 @@
 
       case "START_VOTE":
       case "VOTE_START":
-        // manual (desde control)
         voteTriggeredForSegment = true;
-        voteStartSequence(
-          clamp((payload?.windowSec ?? voteWindowSec) | 0, 5, 180),
-          clamp((payload?.leadSec ?? voteLeadSec) | 0, 0, 30)
-        );
+        {
+          const w = clamp((payload?.windowSec ?? voteWindowSegSec) | 0, 5, 180);
+          const lead = clamp((payload?.leadSec ?? voteLeadSegSec) | 0, 0, 30);
+          voteStartSequence(w, lead);
+        }
         postState({ reason: "vote_start" });
         break;
 
@@ -2406,7 +2510,6 @@
             if (payload.hideCommands != null) chatHideCommands = !!payload.hideCommands;
             if (payload.max != null) chatMax = clamp(payload.max | 0, 3, 12);
             if (payload.ttl != null) chatTtlSec = clamp(payload.ttl | 0, 5, 30);
-            // refresca UI si ya existe
             if (chatEnabled) { ensureChatUI(); chatRoot?.classList?.add?.("chat--on"); }
           } else {
             chatSetEnabled(!!payload);
@@ -2421,13 +2524,8 @@
         {
           if (payload && typeof payload === "object") {
             if (payload.enabled != null) alertsEnabled = !!payload.enabled;
-            if (payload.max != null) {
-              // no cambiamos P.alertsMax; solo runtime
-              // (alertsPush ya respeta alertsMax actual en variable alertsMax const; mantenemos límite UI por cola)
-            }
-            if (payload.ttl != null) {
-              // idem, no tocamos const; mantenemos TTL runtime como alertsTtlSec const
-            }
+            if (payload.max != null) alertsMax = clamp(payload.max | 0, 1, 6);
+            if (payload.ttl != null) alertsTtlSec = clamp(payload.ttl | 0, 3, 20);
           } else {
             alertsEnabled = !!payload;
           }
@@ -2448,27 +2546,24 @@
           } else {
             adsEnabled = !!payload;
           }
-          if (!adsEnabled) adHide();
+          if (!adsEnabled) adHide(true);
           postState({ reason: "ads" });
         }
         break;
 
-      // 🔔 Ads overlay por comandos (viene de control.html o automatizaciones)
+      // 🔔 Ads overlay por comandos
       case "AD_NOTICE":
         adStartLead(payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec);
-        // (adStartLead ya emite event al control para que el bot hable)
         break;
 
       case "AD_BEGIN":
         adStartLive(payload?.durationSec ?? payload?.duration ?? 30);
-        // opcional: texto en chat cuando empieza
         if (adChatText) botSay(adChatText);
         break;
 
       case "AD_CLEAR":
       case "AD_END":
-        adHide();
-        emitEvent("AD_AUTO_CLEAR", {});
+        adHide(false);
         break;
 
       // 🎲 TagVote manual
@@ -2492,6 +2587,7 @@
       case "BGM":
         bgmEnabled = !!(payload?.enabled ?? payload?.value ?? payload);
         if (!bgmEnabled) bgmPause();
+        else bgmPlay();
         postState({ reason: "bgm" });
         break;
 
@@ -2516,6 +2612,34 @@
         bgmShuffle();
         break;
 
+      // ✅ HEALTH runtime
+      case "SET_HEALTH":
+      case "HEALTH":
+        if (payload && typeof payload === "object") {
+          if (payload.startTimeoutMs != null) startTimeoutMs = clamp(payload.startTimeoutMs | 0, 3000, 120000);
+          if (payload.stallTimeoutMs != null) stallTimeoutMs = clamp(payload.stallTimeoutMs | 0, 4000, 120000);
+          if (payload.maxStalls != null) maxStalls = clamp(payload.maxStalls | 0, 1, 8);
+        }
+        postState({ reason: "health" });
+        break;
+
+      // ✅ YouTube cookies/session runtime (alias)
+      case "SET_YT_COOKIES":
+      case "YT_COOKIES":
+      case "SET_YT_SESSION":
+      case "YT_SESSION":
+        {
+          const v = !!(payload?.enabled ?? payload?.value ?? payload ?? true);
+          ytCookiesEnabled = v;
+
+          // si estamos en YT ahora, recarga la misma cam para aplicar dominio
+          const cam = cams[idx] || {};
+          if (cam.kind === "youtube") playCam(cam);
+
+          postState({ reason: "yt_cookies" });
+        }
+        break;
+
       case "RESET":
         resetState();
         break;
@@ -2525,7 +2649,6 @@
         break;
 
       default:
-        // comandos desconocidos: no romper
         if (P.debug) console.log("[player] unknown cmd:", cmd, payload);
         break;
     }
@@ -2570,7 +2693,6 @@
     if (k === CMD_KEY) readCmdFromStorage(CMD_KEY, true);
     else if (k === CMD_KEY_LEGACY) readCmdFromStorage(CMD_KEY_LEGACY, false);
 
-    // Si cambia config del bot en control.html y NO se fijó twitch en URL:
     if (!P.twitchExplicit && (k === BOT_STORE_KEY || k === BOT_STORE_KEY_BASE)) {
       const ch = readBotCfgChannel();
       if (ch && ch !== twitchChannel) {
@@ -2586,7 +2708,7 @@
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 2,
+        v: 3,
         ts: Date.now(),
         key: KEY || "",
         curId: cam.id || "",
@@ -2604,13 +2726,21 @@
 
         twitch: twitchChannel || "",
 
+        ytCookies: !!ytCookiesEnabled,
+
+        health: {
+          startTimeoutMs: startTimeoutMs | 0,
+          stallTimeoutMs: stallTimeoutMs | 0,
+          maxStalls: maxStalls | 0
+        },
+
         vote: {
           enabled: !!voteEnabled,
           overlay: !!voteOverlay,
-          windowSec: voteWindowSec | 0,
-          voteAtSec: voteAtSec | 0,
-          leadSec: voteLeadSec | 0,
-          uiSec: voteUiSec | 0,
+          windowSec: voteWindowCfgSec | 0,
+          voteAtSec: voteAtCfgSec | 0,
+          leadSec: voteLeadCfgSec | 0,
+          uiSec: voteUiCfgSec | 0,
           stayMins: stayMins | 0,
           cmd: voteCmdStr
         },
@@ -2669,7 +2799,6 @@
     }
   } catch (_) {}
 
-  // “Tap” sobre HUD para esconder/mostrar (opcional, no molesta)
   try {
     if (hud) {
       hud.addEventListener("dblclick", () => {
@@ -2679,7 +2808,6 @@
     }
   } catch (_) {}
 
-  // Teclas rápidas (no interfiere con inputs)
   window.addEventListener("keydown", (e) => {
     const t = (e.target && e.target.tagName) ? String(e.target.tagName).toLowerCase() : "";
     if (t === "input" || t === "textarea" || (e.target && e.target.isContentEditable)) return;
@@ -2692,7 +2820,6 @@
 
   // ───────────────────────── Main tick loop ─────────────────────────
   function tick() {
-    // UI
     setCountdownUI();
 
     // Vote tick
@@ -2711,40 +2838,50 @@
     // Ads tick
     adTick();
 
-    // Auto-trigger vote (por tiempo transcurrido)
+    // YouTube stall guard (suave) — sólo si ya “empezó ok”
+    try {
+      const cam = cams[idx] || null;
+      if (playing && autoskip && cam && cam.kind === "youtube" && startedOk) {
+        const age = Date.now() - (lastProgressAt || 0);
+        if (age > (stallTimeoutMs | 0)) healthStall(playToken, cam, "yt_no_progress");
+      }
+    } catch (_) {}
+
+    // Auto-trigger vote (por tiempo transcurrido) — usa schedule del segmento
     if (playing && !voteSessionActive && !tagVoteActive && voteEnabled && twitchChannel) {
       const rem = remainingSeconds();
       const elapsed = Math.max(0, (segmentSeconds | 0) - rem);
-      if (!voteTriggeredForSegment && elapsed >= (voteAtSec | 0)) {
+      if (!voteTriggeredForSegment && elapsed >= (voteAtSegSec | 0)) {
         voteTriggeredForSegment = true;
-        voteStartSequence(voteWindowSec, voteLeadSec);
+        voteStartSequence(voteWindowSegSec, voteLeadSegSec);
       }
     }
 
-    // Fin del segmento => next
+    // Fin del segmento => NO saltar si hay votación/TagVote: fuerza fin y aplica
     if (playing && remainingSeconds() <= 0) {
-      nextCam("timer");
+      if (voteSessionActive) {
+        voteFinish();
+      } else if (tagVoteActive) {
+        tagVoteFinish();
+      } else {
+        nextCam("timer");
+      }
     }
 
-    // Publica state “suave” (throttle interno)
     postState({}, false);
   }
 
   // ───────────────────────── Boot ─────────────────────────
   function boot() {
-    // Tag index (para TagVote)
     try { buildTagIndex(); } catch (_) {}
 
-    // Fit desde URL
     setFit(P.fit);
 
-    // HUD persisted (keyed + legacy)
     const hudCollapsed = boolFromLS([HUD_COLLAPSE_KEY, HUD_COLLAPSE_KEY_BASE], true);
     const hudHidden = boolFromLS([HUD_HIDE_KEY, HUD_HIDE_KEY_BASE], false);
     setHudCollapsed(hudCollapsed);
     setHudHidden(hudHidden);
 
-    // Estado guardado (si existe)
     const saved = loadPlayerState();
 
     // Twitch channel: URL explícita > saved > bot cfg > default(owner)
@@ -2753,17 +2890,25 @@
     else if (OWNER_MODE) twitchChannel = readBotCfgChannel() || OWNER_DEFAULT_TWITCH;
     else twitchChannel = P.twitch || "";
 
-    // Vote/Chat/Ads/BGM: URL explícitos (cuando aplica) > saved > params
+    // Aplica saved (sin romper defaults nuevos)
     if (saved && typeof saved === "object") {
-      // playing
       if (saved.playing != null) playing = !!saved.playing;
-
-      // mins / timers
       if (saved.mins != null) roundSeconds = clamp((saved.mins | 0), 1, 120) * 60;
 
-      // autoskip/mode
       if (saved.autoskip != null) autoskip = !!saved.autoskip;
       if (saved.adfree != null) modeAdfree = !!saved.adfree;
+
+      // ytCookies: si viene de save v3+ o si el param no fue explícito
+      if (!P.ytCookiesExplicit) {
+        if ((saved.v | 0) >= 3 && typeof saved.ytCookies === "boolean") ytCookiesEnabled = !!saved.ytCookies;
+      }
+
+      // health
+      if (saved.health && typeof saved.health === "object") {
+        if (saved.health.startTimeoutMs != null) startTimeoutMs = clamp(saved.health.startTimeoutMs | 0, 3000, 120000);
+        if (saved.health.stallTimeoutMs != null) stallTimeoutMs = clamp(saved.health.stallTimeoutMs | 0, 4000, 120000);
+        if (saved.health.maxStalls != null) maxStalls = clamp(saved.health.maxStalls | 0, 1, 8);
+      }
 
       // vote
       if (!P.voteExplicit && saved.vote && typeof saved.vote === "object") {
@@ -2771,10 +2916,10 @@
       }
       if (saved.vote && typeof saved.vote === "object") {
         if (saved.vote.overlay != null) voteOverlay = !!saved.vote.overlay;
-        if (saved.vote.windowSec != null) voteWindowSec = clamp(saved.vote.windowSec | 0, 5, 180);
-        if (saved.vote.voteAtSec != null) voteAtSec = clamp(saved.vote.voteAtSec | 0, 5, 600);
-        if (saved.vote.leadSec != null) voteLeadSec = clamp(saved.vote.leadSec | 0, 0, 30);
-        if (saved.vote.uiSec != null) voteUiSec = clamp(saved.vote.uiSec | 0, 0, 300) || (voteLeadSec + voteWindowSec);
+        if (saved.vote.windowSec != null) voteWindowCfgSec = clamp(saved.vote.windowSec | 0, 5, 180);
+        if (saved.vote.voteAtSec != null) voteAtCfgSec = clamp(saved.vote.voteAtSec | 0, 5, 600);
+        if (saved.vote.leadSec != null) voteLeadCfgSec = clamp(saved.vote.leadSec | 0, 0, 30);
+        if (saved.vote.uiSec != null) voteUiCfgSec = clamp(saved.vote.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
         if (saved.vote.stayMins != null) stayMins = clamp(saved.vote.stayMins | 0, 1, 120);
         if (saved.vote.cmd != null) parseVoteCmds(String(saved.vote.cmd || ""));
       }
@@ -2807,21 +2952,23 @@
       }
     }
 
-    // Aplica filtros (adfree, bad, banned...)
+    // Defaults “nuevos” si no hay explícito
+    if (!P.ytCookiesExplicit && (!saved || (saved.v | 0) < 3)) ytCookiesEnabled = true;
+    if (!saved || !saved.bgm) bgmEnabled = true;
+
     applyFilters();
 
-    // Determina idx inicial por ID guardada si se puede
     if (saved?.curId) {
       const n = cams.findIndex(c => c && String(c.id) === String(saved.curId));
       if (n >= 0) idx = n;
     }
 
-    // UI toggles que dependen de “enabled”
+    recalcVoteScheduleForSegment(segmentSeconds | 0);
+
     if (chatEnabled) { ensureChatUI(); chatRoot?.classList?.add?.("chat--on"); }
     ensureAlertsUI();
     ensureIrc();
 
-    // Arranca BGM cuando haya gesto (autoplay policies)
     if (bgmEnabled && bgmList.length) {
       const tryStart = () => {
         window.removeEventListener("pointerdown", tryStart);
@@ -2830,34 +2977,26 @@
       };
       window.addEventListener("pointerdown", tryStart, { once: true });
       window.addEventListener("keydown", tryStart, { once: true });
-      // también intenta (si el navegador lo permite)
       setTimeout(() => { bgmPlay(); }, 300);
     }
 
-    // Play inicial
     playCam(cams[idx]);
 
-    // Restaura remaining/segment si existe (después de playCam)
     try {
       if (saved && typeof saved === "object" && saved.segmentSec != null && saved.remaining != null) {
-        // respeta "playing" guardado
         playing = !!saved.playing;
         startRoundWithRemaining(saved.segmentSec | 0, saved.remaining | 0);
       }
     } catch (_) {}
 
-    // Tick loop
     try { if (tickTimer) clearInterval(tickTimer); } catch (_) {}
     tickTimer = setInterval(tick, 250);
 
-    // Save loop
     try { if (saveTimer) clearInterval(saveTimer); } catch (_) {}
     saveTimer = setInterval(savePlayerState, 3500);
 
-    // Primer state publish
     postState({ reason: "boot" }, true);
 
-    // Lee comandos “pendientes” (por si control escribió antes de cargar player)
     readCmdFromStorage(CMD_KEY, true);
     readCmdFromStorage(CMD_KEY_LEGACY, false);
   }
@@ -2866,7 +3005,6 @@
     try { savePlayerState(); } catch (_) {}
   });
 
-  // boot
   boot();
 
 })();
