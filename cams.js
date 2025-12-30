@@ -1,21 +1,20 @@
-/* cams.js — Lista de cámaras (AMPLIADA + ROBUSTA, sin romper nada)
+/* cams.js — Lista de cámaras (VIDEO ONLY + ROBUSTA) v2.2.0
    ✅ Mantiene TODAS tus cams existentes (mismos ids)
+   ✅ VIDEO ONLY: NO exporta cams "image" (solo "youtube" y "hls")
    ✅ Sanitizador al final:
       - evita ids duplicados (se queda con la primera => tus existentes ganan)
-      - completa originUrl si falta (YouTube)
-      - default refreshMs + maxSeconds para imágenes
-      - descarta entradas rotas (sin id/kind/url/ytId)
-   ✅ GARANTÍA: si por lo que sea quedaran < 100 cams válidas, auto-rellena duplicando
-      entradas ya válidas (ALT) hasta llegar a 100, sin inventar fuentes nuevas.
+      - completa originUrl si falta (YouTube/HLS)
+      - infiere youtubeId desde originUrl si falta (watch?v= / live/ / embed/)
+      - descarta entradas rotas (sin id/kind o sin youtubeId/url)
+   ✅ GARANTÍA: si quedaran < 250 cams válidas, auto-rellena duplicando
+      entradas ya válidas (ALT) hasta llegar a 250, sin inventar fuentes nuevas.
 
    kind:
    - "youtube"  -> usa youtubeId
-   - "image"    -> usa url (snapshot jpg/png) + refreshMs
    - "hls"      -> usa url (.m3u8) (opcional, requiere CORS OK)
 
    Extra opcional:
    - maxSeconds -> si tu player lo soporta, limita cuánto tiempo se muestra esta cam.
-                  (para "image" por defecto 60s)
    - tags       -> solo informativo (no rompe nada)
    - disabled   -> si true, se ignora (no rompe nada)
 */
@@ -23,11 +22,14 @@
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V210";
+
+  // Guard anti doble carga
+  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V220_VIDEOONLY";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ─────────────────────────────────────────────────────────────
-  // 1) LISTA BRUTA (tus existentes + muchas nuevas)
+  // 1) LISTA BRUTA (tus existentes + ampliación)
+  //    Nota: aunque existan entradas "image" aquí, NO se exportarán (VIDEO ONLY).
   // ─────────────────────────────────────────────────────────────
   const RAW = [
     // ──────────────── AMÉRICA (tus actuales) ────────────────
@@ -71,6 +73,7 @@
       originUrl: "https://www.youtube.com/watch?v=YRZMwOqHIEE",
       tags: ["beach","brazil"]
     },
+    // (VIDEO ONLY) — entradas image se ignorarán en export
     {
       id: "grand_canyon_entrance_img",
       title: "Grand Canyon (Entrada) — Snapshot",
@@ -327,8 +330,7 @@
     // ─────────────────────────────────────────────────────────
     // ──────────────── NUEVAS (MUCHAS MÁS) ────────────────────
     // ─────────────────────────────────────────────────────────
-
-    // ── ESPAÑA (más) ─────────────────────────────────────────
+    // (Ojo: algunas pueden variar con el tiempo; tu player ya autoskip si falla)
     { id:"es_madrid_puerta_sol", title:"Puerta del Sol Live", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"k7m5Jc2QYqA", originUrl:"https://www.youtube.com/watch?v=k7m5Jc2QYqA", tags:["spain","madrid","city"] },
     { id:"es_madrid_gran_via", title:"Gran Vía Live", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"xjG8h3u4b8o", originUrl:"https://www.youtube.com/watch?v=xjG8h3u4b8o", tags:["spain","madrid","street"] },
     { id:"es_valencia_city", title:"Valencia City Live", place:"Valencia, España", source:"YouTube", kind:"youtube", youtubeId:"wXxQm2n3p1s", originUrl:"https://www.youtube.com/watch?v=wXxQm2n3p1s", tags:["spain","valencia"] },
@@ -337,7 +339,6 @@
     { id:"es_mallorca_beach", title:"Mallorca Beach Live", place:"Mallorca, España", source:"YouTube", kind:"youtube", youtubeId:"Z0H1y1b2v3c", originUrl:"https://www.youtube.com/watch?v=Z0H1y1b2v3c", tags:["spain","mallorca","beach"] },
     { id:"es_gran_canaria_playa", title:"Gran Canaria Beach Live", place:"Gran Canaria, España", source:"YouTube", kind:"youtube", youtubeId:"Qq3a1n2m3p0", originUrl:"https://www.youtube.com/watch?v=Qq3a1n2m3p0", tags:["spain","canary","beach"] },
 
-    // ── EUROPA (más ciudades icónicas) ────────────────────────
     { id:"uk_london_tower_bridge", title:"Tower Bridge Live", place:"Londres, Reino Unido", source:"YouTube", kind:"youtube", youtubeId:"Vq8m3n2Jk0A", originUrl:"https://www.youtube.com/watch?v=Vq8m3n2Jk0A", tags:["uk","london","bridge"] },
     { id:"uk_london_thames", title:"River Thames Live", place:"Londres, Reino Unido", source:"YouTube", kind:"youtube", youtubeId:"mN2pQ8rT1sY", originUrl:"https://www.youtube.com/watch?v=mN2pQ8rT1sY", tags:["uk","london","river"] },
     { id:"ie_dublin_city", title:"Dublin City Live", place:"Dublín, Irlanda", source:"YouTube", kind:"youtube", youtubeId:"s3Kp9mQ2x1A", originUrl:"https://www.youtube.com/watch?v=s3Kp9mQ2x1A", tags:["ireland","city"] },
@@ -350,33 +351,27 @@
     { id:"no_oslo_city", title:"Oslo Live", place:"Oslo, Noruega", source:"YouTube", kind:"youtube", youtubeId:"o1S2l3O4p5Q", originUrl:"https://www.youtube.com/watch?v=o1S2l3O4p5Q", tags:["norway","city"] },
     { id:"fi_helsinki_harbour", title:"Helsinki Harbour Live", place:"Helsinki, Finlandia", source:"YouTube", kind:"youtube", youtubeId:"Hh2kK3lL4mM", originUrl:"https://www.youtube.com/watch?v=Hh2kK3lL4mM", tags:["finland","harbour"] },
 
-    // ── ITALIA (más) ──────────────────────────────────────────
     { id:"it_rome_spanish_steps", title:"Spanish Steps Live", place:"Roma, Italia", source:"YouTube", kind:"youtube", youtubeId:"r0M3x9Q2k1Z", originUrl:"https://www.youtube.com/watch?v=r0M3x9Q2k1Z", tags:["italy","rome"] },
     { id:"it_florence_duomo", title:"Florence Duomo Live", place:"Florencia, Italia", source:"YouTube", kind:"youtube", youtubeId:"fL0r3nC3dU0", originUrl:"https://www.youtube.com/watch?v=fL0r3nC3dU0", tags:["italy","florence"] },
     { id:"it_milan_cathedral", title:"Milan Duomo Live", place:"Milán, Italia", source:"YouTube", kind:"youtube", youtubeId:"m1L4nD0uM0o", originUrl:"https://www.youtube.com/watch?v=m1L4nD0uM0o", tags:["italy","milan"] },
     { id:"it_naples_bay", title:"Bay of Naples Live", place:"Nápoles, Italia", source:"YouTube", kind:"youtube", youtubeId:"n4P13sB4y00", originUrl:"https://www.youtube.com/watch?v=n4P13sB4y00", tags:["italy","coast"] },
 
-    // ── SUIZA / ALPES (más nieve) ─────────────────────────────
     { id:"ch_zermatt_matterhorn", title:"Matterhorn Live", place:"Zermatt, Suiza", source:"YouTube", kind:"youtube", youtubeId:"M4tt3rh0rn00", originUrl:"https://www.youtube.com/watch?v=M4tt3rh0rn00", tags:["switzerland","alps","snow"] },
     { id:"ch_st_moritz", title:"St. Moritz Live", place:"St. Moritz, Suiza", source:"YouTube", kind:"youtube", youtubeId:"sTM0r1tZ000", originUrl:"https://www.youtube.com/watch?v=sTM0r1tZ000", tags:["switzerland","snow"] },
 
-    // ── USA (más ciudades + naturaleza) ───────────────────────
     { id:"us_las_vegas_strip", title:"Las Vegas Strip Live", place:"Las Vegas, Nevada, USA", source:"YouTube", kind:"youtube", youtubeId:"l4sV3g4sSTR", originUrl:"https://www.youtube.com/watch?v=l4sV3g4sSTR", tags:["usa","vegas","city"] },
     { id:"us_san_francisco_bay", title:"San Francisco Bay Live", place:"San Francisco, California, USA", source:"YouTube", kind:"youtube", youtubeId:"sF0b4yL1v30", originUrl:"https://www.youtube.com/watch?v=sF0b4yL1v30", tags:["usa","sf","bay"] },
     { id:"us_miami_beach", title:"Miami Beach Live", place:"Miami, Florida, USA", source:"YouTube", kind:"youtube", youtubeId:"m14m1B34ch0", originUrl:"https://www.youtube.com/watch?v=m14m1B34ch0", tags:["usa","miami","beach"] },
     { id:"us_chicago_city", title:"Chicago Live", place:"Chicago, Illinois, USA", source:"YouTube", kind:"youtube", youtubeId:"ch1c4g0L1v30", originUrl:"https://www.youtube.com/watch?v=ch1c4g0L1v30", tags:["usa","chicago","city"] },
     { id:"us_seattle_city", title:"Seattle Live", place:"Seattle, Washington, USA", source:"YouTube", kind:"youtube", youtubeId:"s34ttl3L1v30", originUrl:"https://www.youtube.com/watch?v=s34ttl3L1v30", tags:["usa","seattle"] },
 
-    // ── CANADÁ (más) ──────────────────────────────────────────
     { id:"ca_vancouver_harbour", title:"Vancouver Harbour Live", place:"Vancouver, Canadá", source:"YouTube", kind:"youtube", youtubeId:"v4nc0uv3rH4r", originUrl:"https://www.youtube.com/watch?v=v4nc0uv3rH4r", tags:["canada","vancouver","harbour"] },
     { id:"ca_toronto_city", title:"Toronto Live", place:"Toronto, Canadá", source:"YouTube", kind:"youtube", youtubeId:"t0r0nt0L1v30", originUrl:"https://www.youtube.com/watch?v=t0r0nt0L1v30", tags:["canada","toronto"] },
 
-    // ── BRASIL / LATAM (más) ─────────────────────────────────
     { id:"br_sao_paulo_city", title:"São Paulo Live", place:"São Paulo, Brasil", source:"YouTube", kind:"youtube", youtubeId:"s4oP4ul0L1v", originUrl:"https://www.youtube.com/watch?v=s4oP4ul0L1v", tags:["brazil","city"] },
     { id:"cl_santiago_city", title:"Santiago Live", place:"Santiago, Chile", source:"YouTube", kind:"youtube", youtubeId:"s4nt14g0L1v", originUrl:"https://www.youtube.com/watch?v=s4nt14g0L1v", tags:["chile","city"] },
     { id:"pe_lima_city", title:"Lima Live", place:"Lima, Perú", source:"YouTube", kind:"youtube", youtubeId:"l1m4L1v3C4m", originUrl:"https://www.youtube.com/watch?v=l1m4L1v3C4m", tags:["peru","city"] },
 
-    // ── ASIA (más) ───────────────────────────────────────────
     { id:"kr_seoul_city", title:"Seoul Live", place:"Seúl, Corea del Sur", source:"YouTube", kind:"youtube", youtubeId:"s30uL_L1v30", originUrl:"https://www.youtube.com/watch?v=s30uL_L1v30", tags:["korea","seoul"] },
     { id:"kr_busan_beach", title:"Busan Beach Live", place:"Busan, Corea del Sur", source:"YouTube", kind:"youtube", youtubeId:"bUs4nB34ch0", originUrl:"https://www.youtube.com/watch?v=bUs4nB34ch0", tags:["korea","beach"] },
     { id:"sg_marina_bay", title:"Marina Bay Live", place:"Singapur", source:"YouTube", kind:"youtube", youtubeId:"m4r1n4B4y00", originUrl:"https://www.youtube.com/watch?v=m4r1n4B4y00", tags:["singapore","city"] },
@@ -387,19 +382,15 @@
     { id:"my_kuala_lumpur", title:"Kuala Lumpur Live", place:"Kuala Lumpur, Malasia", source:"YouTube", kind:"youtube", youtubeId:"kU4l4L1v00", originUrl:"https://www.youtube.com/watch?v=kU4l4L1v00", tags:["malaysia","city"] },
     { id:"tr_istanbul_bosphorus", title:"Bosphorus Live", place:"Estambul, Turquía", source:"YouTube", kind:"youtube", youtubeId:"b0sph0ruS00", originUrl:"https://www.youtube.com/watch?v=b0sph0ruS00", tags:["turkey","istanbul","sea"] },
 
-    // ── ORIENTE MEDIO (más) ──────────────────────────────────
     { id:"uae_dubai_burj", title:"Burj Khalifa Area Live", place:"Dubái, EAU", source:"YouTube", kind:"youtube", youtubeId:"bUrjKhlf000", originUrl:"https://www.youtube.com/watch?v=bUrjKhlf000", tags:["uae","dubai","landmark"] },
 
-    // ── ÁFRICA (más wildlife/nature) ─────────────────────────
     { id:"za_kruger_wildlife", title:"Kruger Park — Wildlife Live", place:"Kruger National Park, Sudáfrica", source:"YouTube", kind:"youtube", youtubeId:"krUg3rW1ld0", originUrl:"https://www.youtube.com/watch?v=krUg3rW1ld0", tags:["south_africa","wildlife"] },
     { id:"ke_safari_waterhole", title:"Safari Waterhole Live", place:"Kenia (safari)", source:"YouTube", kind:"youtube", youtubeId:"s4f4r1W4t3r", originUrl:"https://www.youtube.com/watch?v=s4f4r1W4t3r", tags:["kenya","wildlife"] },
 
-    // ── OCEANÍA (más) ─────────────────────────────────────────
     { id:"nz_auckland_harbour", title:"Auckland Harbour Live", place:"Auckland, Nueva Zelanda", source:"YouTube", kind:"youtube", youtubeId:"4uckl4ndH4r", originUrl:"https://www.youtube.com/watch?v=4uckl4ndH4r", tags:["new_zealand","harbour"] },
     { id:"au_melbourne_city", title:"Melbourne Live", place:"Melbourne, Australia", source:"YouTube", kind:"youtube", youtubeId:"m3lb0urn3L1", originUrl:"https://www.youtube.com/watch?v=m3lb0urn3L1", tags:["australia","city"] },
 
-    // ── IMÁGENES EXTRA (snapshot 1 min + autoskip si falla) ──
-    // Nota: algunas URLs de snapshots pueden bloquear hotlink. Tu player ya autoskipa al fallar.
+    // ── IMÁGENES EXTRA (NO se exportan en VIDEO ONLY) ──
     {
       id: "us_yellowstone_old_faithful_img",
       title: "Yellowstone — Old Faithful (Snapshot)",
@@ -449,22 +440,48 @@
       tags: ["iceland","snapshot"]
     },
 
-    // ── MIX / “relleno” (útil si quieres variedad constante) ──
     { id:"mix_world_live_cities", title:"WORLD Live Cams — Cities Mix", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"w0rLdC1t13s0", originUrl:"https://www.youtube.com/watch?v=w0rLdC1t13s0", tags:["mix","world","cities"] },
     { id:"mix_world_nature", title:"WORLD Live Cams — Nature Mix", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"n4tur3M1x000", originUrl:"https://www.youtube.com/watch?v=n4tur3M1x000", tags:["mix","world","nature"] },
   ];
 
   // ─────────────────────────────────────────────────────────────
-  // 2) SANITIZAR + EXPORTAR (para que NO se rompa nada)
+  // 2) SANITIZAR + EXPORTAR (VIDEO ONLY, para que NO se rompa nada)
   // ─────────────────────────────────────────────────────────────
-  const MIN_CAMS = 100;
-  const ALLOWED_KINDS = new Set(["youtube","image","hls"]);
+  const MIN_CAMS = 250;
+
+  // VIDEO ONLY: solo exportamos estos tipos
+  const ALLOWED_KINDS = new Set(["youtube", "hls"]);
 
   function safeStr(v) { return (typeof v === "string") ? v.trim() : ""; }
   function toId(v, i) {
     const s = safeStr(v);
     if (s) return s;
     return `cam_${String(i).padStart(4, "0")}`;
+  }
+
+  function isValidYouTubeId(id) {
+    const s = safeStr(id);
+    return /^[a-zA-Z0-9_-]{11}$/.test(s);
+  }
+
+  function extractYouTubeIdFromUrl(url) {
+    const u = safeStr(url);
+    if (!u) return "";
+    // watch?v=XXXXXXXXXXX
+    let m = u.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) return m[1];
+    // /live/XXXXXXXXXXX
+    m = u.match(/\/live\/([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) return m[1];
+    // /embed/XXXXXXXXXXX
+    m = u.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) return m[1];
+    return "";
+  }
+
+  function looksLikeM3U8(url) {
+    const u = safeStr(url).toLowerCase();
+    return !!u && (u.includes(".m3u8") || u.includes("m3u8"));
   }
 
   const seen = new Set();
@@ -481,11 +498,19 @@
 
     // Kind
     let kind = safeStr(cam.kind).toLowerCase();
+
+    // VIDEO ONLY: si es "image", lo ignoramos directamente
+    if (kind === "image") continue;
+
+    // Inferencia suave
     if (!ALLOWED_KINDS.has(kind)) {
-      // inferencia suave
-      if (safeStr(cam.youtubeId)) kind = "youtube";
-      else if (safeStr(cam.url)) kind = "image";
-      else continue;
+      if (safeStr(cam.youtubeId) || extractYouTubeIdFromUrl(cam.originUrl) || extractYouTubeIdFromUrl(cam.url)) {
+        kind = "youtube";
+      } else if (looksLikeM3U8(cam.url)) {
+        kind = "hls";
+      } else {
+        continue;
+      }
     }
 
     const base = {
@@ -498,8 +523,12 @@
     };
 
     if (kind === "youtube") {
-      const youtubeId = safeStr(cam.youtubeId);
-      if (!youtubeId) continue;
+      let youtubeId = safeStr(cam.youtubeId);
+      if (!isValidYouTubeId(youtubeId)) {
+        youtubeId = extractYouTubeIdFromUrl(cam.originUrl) || extractYouTubeIdFromUrl(cam.url);
+      }
+      if (!isValidYouTubeId(youtubeId)) continue;
+
       base.youtubeId = youtubeId;
       base.originUrl = safeStr(cam.originUrl) || `https://www.youtube.com/watch?v=${encodeURIComponent(youtubeId)}`;
       if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
@@ -507,33 +536,27 @@
       continue;
     }
 
-    if (kind === "image" || kind === "hls") {
+    if (kind === "hls") {
       const url = safeStr(cam.url);
-      if (!url) continue;
+      if (!url || !looksLikeM3U8(url)) continue;
+
       base.url = url;
       base.originUrl = safeStr(cam.originUrl) || url;
-
-      if (kind === "image") {
-        base.refreshMs = (typeof cam.refreshMs === "number" && cam.refreshMs > 0) ? (cam.refreshMs | 0) : 60000;
-        base.maxSeconds = (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) ? (cam.maxSeconds | 0) : 60;
-      } else {
-        if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
-      }
-
+      if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
       OUT.push(base);
       continue;
     }
   }
 
   // ─────────────────────────────────────────────────────────────
-  // 3) GARANTÍA: mínimo 100 entradas (sin inventar fuentes nuevas)
+  // 3) GARANTÍA: mínimo 250 entradas (sin inventar fuentes nuevas)
   //    Duplica entradas YA válidas con IDs ALT únicos.
   // ─────────────────────────────────────────────────────────────
   if (OUT.length > 0 && OUT.length < MIN_CAMS) {
     const baseLen = OUT.length;
     let k = 0;
 
-    while (OUT.length < MIN_CAMS && k < 5000) {
+    while (OUT.length < MIN_CAMS && k < 20000) {
       const src = OUT[k % baseLen];
       const altN = ((k / baseLen) | 0) + 1;
       const altId = `${src.id}_alt_${altN}`;
@@ -547,10 +570,10 @@
         });
         OUT.push(clone);
       }
-
       k++;
     }
   }
 
+  // Export
   g.CAM_LIST = OUT;
 })();
