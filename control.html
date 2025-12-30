@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0b0f14" />
   <title>Random Live Cams — Control</title>
   <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.0.0";</script>
+  <script>window.APP_VERSION = "2.1.4";</script>
 </head>
 <body class="mode-control">
   <main class="controlWrap">
@@ -159,26 +159,52 @@
         <div class="hint" id="ctlBgmNow">—</div>
       </div>
 
-      <!-- TWITCH VOTE -->
+      <!-- TWITCH VOTE + CHAT + ALERTS -->
       <div class="card">
-        <div class="cardTitle">Votación Twitch (chat)</div>
+        <div class="cardTitle">Twitch (votos / chat / alerts)</div>
 
         <label class="row">
           <span>Canal</span>
           <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" />
         </label>
 
-        <label class="row">
-          <span>Votos</span>
-          <select id="ctlVoteOn" class="select">
-            <option value="off">OFF</option>
-            <option value="on">ON</option>
-          </select>
-        </label>
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Votos</span>
+            <select id="ctlVoteOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0">
+            <span>Overlay voto</span>
+            <select id="ctlVoteOverlay" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Chat overlay</span>
+            <select id="ctlChatOn" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0">
+            <span>Ocultar cmds</span>
+            <select id="ctlChatHideCmd" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
 
         <label class="row">
-          <span>Overlay</span>
-          <select id="ctlVoteOverlay" class="select">
+          <span>Alerts Twitch</span>
+          <select id="ctlAlertsOn" class="select">
             <option value="on">ON</option>
             <option value="off">OFF</option>
           </select>
@@ -213,7 +239,7 @@
         </label>
 
         <label class="row">
-          <span>Cmds</span>
+          <span>Cmds voto</span>
           <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" />
         </label>
 
@@ -223,8 +249,99 @@
         </div>
 
         <div class="hint">
-          ✅ La ventana visible debe durar: <b>Pre-aviso + Duración voto</b>.<br/>
-          Ej: 5s + 20s = 25s (sin cortar).
+          ✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)
+        </div>
+      </div>
+
+      <!-- ADS OVERLAY -->
+      <div class="card">
+        <div class="cardTitle">Anuncios (overlay en stream)</div>
+
+        <label class="row">
+          <span>Ads overlay</span>
+          <select id="ctlAdsOn" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Lead (s)</span>
+            <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" />
+          </label>
+          <label class="row" style="margin:0">
+            <span>Duración (s)</span>
+            <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" />
+          </label>
+        </div>
+
+        <label class="row">
+          <span>Mostrar durante</span>
+          <select id="ctlAdShowDuring" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Msg chat (lead)</span>
+          <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlAdNoticeBtn" class="btn full">⏳ Aviso (AD_NOTICE)</button>
+          <button id="ctlAdBeginBtn" class="btn full">▶️ En curso (AD_BEGIN)</button>
+        </div>
+        <button id="ctlAdClearBtn" class="btn ghost full" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
+
+        <div class="hint">
+          Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.
+        </div>
+      </div>
+
+      <!-- BOT IRC -->
+      <div class="card">
+        <div class="cardTitle">Bot (manda mensajes al chat)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Bot</span>
+            <select id="ctlBotOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlBotStatus">Bot OFF</div>
+        </div>
+
+        <label class="row">
+          <span>Usuario bot</span>
+          <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" />
+        </label>
+
+        <label class="row">
+          <span>OAuth token</span>
+          <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" />
+        </label>
+
+        <label class="row">
+          <span>Escribir en Ads</span>
+          <select id="ctlBotSayOnAd" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <button id="ctlBotConnect" class="btn full">🔌 Conectar bot</button>
+
+        <div class="row2" style="margin-top:10px">
+          <input id="ctlBotTestText" class="input" type="text" value="✅ Bot online" />
+          <button id="ctlBotTestSend" class="btn">Enviar test</button>
+        </div>
+
+        <div class="hint">
+          ✅ Esto solo funciona en tu panel (no en el player). No se expone el token en la URL.
         </div>
       </div>
     </section>

@@ -8,15 +8,14 @@
   <meta name="format-detection" content="telephone=no" />
 
   <title>Random Live Cams</title>
-  <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch y overlay de chat." />
+  <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts y ads notice." />
 
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <!-- Versión (para tu UI / SW si lo usas) -->
-  <script>window.APP_VERSION = "2.0.2";</script>
+  <script>window.APP_VERSION = "2.0.6";</script>
 </head>
 
 <body class="mode-player">
@@ -95,7 +94,7 @@
         </div>
       </div>
 
-      <!-- VOTE overlay (pre-aviso + voto completo, controlado por app.js) -->
+      <!-- VOTE overlay -->
       <div id="voteBox" class="vote hidden" aria-label="Votación del chat" aria-live="polite">
         <div class="voteTop">
           <div class="voteTitle">VOTA</div>
@@ -114,7 +113,7 @@
         </div>
       </div>
 
-      <!-- Chat overlay (se crea por JS, pero dejamos un ancla opcional por si quieres forzarlo en HTML) -->
+      <!-- Chat overlay (JS lo gestiona) -->
       <div id="rlcChatRoot" class="rlcChatRoot" aria-label="Chat overlay" aria-live="polite" style="display:none">
         <div id="rlcChatList"></div>
       </div>

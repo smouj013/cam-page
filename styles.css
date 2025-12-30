@@ -249,9 +249,7 @@ body{
   color: rgba(255,255,255,.88);
 }
 
-/* ───────────────────────── CHAT overlay (abajo derecha) ───────────────────────── */
-/* OJO: tu index tenía style="display:none". Este CSS lo deja apagado por defecto,
-   y se activa solo cuando app.js pone .chat--on. */
+/* CHAT overlay */
 .rlcChatRoot{
   position:absolute;
   right:max(12px, env(safe-area-inset-right));
@@ -260,25 +258,11 @@ body{
   max-height: min(44vh, 420px);
   z-index: 7;
   pointer-events:none;
-  display:none; /* off por defecto */
+  display:none;
 }
-
-/* Cuando app.js lo habilite */
 .rlcChatRoot.chat--on{
   display:block !important;
 }
-
-.rlcChatRoot::before{
-  content:"";
-  position:absolute;
-  inset:-10px -10px -10px -10px;
-  background: radial-gradient(260px 180px at 80% 80%, rgba(77,215,255,.14), transparent 60%),
-              radial-gradient(260px 180px at 10% 40%, rgba(37,243,166,.10), transparent 60%);
-  filter: blur(10px);
-  opacity:.55;
-  pointer-events:none;
-}
-
 #rlcChatList{
   position:relative;
   display:flex;
@@ -287,57 +271,6 @@ body{
   gap: 8px;
   max-height: min(44vh, 420px);
   overflow:hidden;
-}
-
-.rlcChatMsg{
-  display:flex;
-  gap: 8px;
-  align-items:flex-end;
-  padding: 8px 10px;
-  border-radius: 14px;
-  background: rgba(10,14,20,.46);
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: 0 10px 30px rgba(0,0,0,.28);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transform: translateY(6px);
-  opacity: 0;
-  animation: rlcChatIn .16s ease-out forwards;
-}
-
-@keyframes rlcChatIn{
-  to { transform: translateY(0); opacity: 1; }
-}
-
-.rlcChatMsg.is-out{
-  animation: rlcChatOut .25s ease-in forwards;
-}
-@keyframes rlcChatOut{
-  to { transform: translateY(6px); opacity: 0; }
-}
-
-.rlcChatUser{
-  font-weight: 900;
-  font-size: 12px;
-  color: var(--accent2);
-  white-space: nowrap;
-  max-width: 120px;
-  overflow:hidden;
-  text-overflow: ellipsis;
-}
-
-.rlcChatText{
-  font-size: 12px;
-  color: rgba(255,255,255,.90);
-  line-height: 1.25;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-/* en móvil lo hacemos un pelín más compacto */
-@media (max-width: 520px){
-  .rlcChatRoot{ width: min(320px, calc(100vw - 24px)); max-height: 38vh; }
-  .rlcChatUser{ max-width: 95px; }
 }
 
 /* CONTROL ROOM */

@@ -1,21 +1,15 @@
-/* app.js — RLC Player v2.0.5 PRO (ADS NOTICE + TWITCH ALERTS + YT HEALTH)
-   ✅ Detecta streams/imágenes caídas y salta a la siguiente automáticamente
-   ✅ “CoolDown” de cams fallidas (evita repetir la misma rota)
-   ✅ Mantiene: voto configurable (voteAt/voteLead/voteWindow), STAY, ytCookies, chat overlay
-
-   v2.0.5:
-   - ✅ Ads overlay: “Anuncio en…” + “Anuncio en curso…”
-   - ✅ Comandos: AD_NOTICE, AD_CLEAR, ALERT
-   - ✅ eventsWs opcional (bridge local) para eventos automáticos
-   - ✅ IRC USERNOTICE: subs/resubs/gifts/raids → alertas en pantalla (sin backend)
-   - ✅ FIX: si la votación termina con 0 votos → NEXT
-   - ✅ YouTube: handshake postMessage (mejor detección de “video unavailable”)
+/* app.js — RLC Player v2.0.6 PRO (ADS NOTICE + TWITCH ALERTS + YT HEALTH)
+   ✅ Autoskip hard (start timeout + stall timeout + cooldown)
+   ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR
+   ✅ IRC anon: chat overlay + votos + alerts (subs/gifts/raids)
+   ✅ FIX: si la votación termina con 0 votos O EMPATE → NEXT
+   ✅ YouTube: handshake postMessage (mejor “video unavailable”)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V205_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V206_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Bus ─────────────────────────
@@ -24,12 +18,12 @@
   const STATE_KEY = "rlc_state_v1";
 
   // ───────────────────────── Health / fail cache ─────────────────────────
-  const BAD_KEY = "rlc_bad_ids_v1"; // cooldown temporal por fallos
-  const BAD_BASE_COOLDOWN_MS = 30 * 60 * 1000; // 30 min base
-  const BAD_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24h max
-  const START_TIMEOUT_MS = 12000;   // si no arranca en 12s -> fail
-  const STALL_TIMEOUT_MS = 15000;   // si se queda colgado 15s -> fail
-  const MAX_STALLS = 2;             // 2 stalls largos -> fail
+  const BAD_KEY = "rlc_bad_ids_v1";
+  const BAD_BASE_COOLDOWN_MS = 30 * 60 * 1000;
+  const BAD_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+  const START_TIMEOUT_MS = 12000;
+  const STALL_TIMEOUT_MS = 15000;
+  const MAX_STALLS = 2;
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -66,7 +60,6 @@
       autoskip: (u.searchParams.get("autoskip") ?? "1") !== "0",
       mode: (u.searchParams.get("mode") || "").toLowerCase(), // adfree
       debug: (u.searchParams.get("debug") === "1"),
-
       key: u.searchParams.get("key") || "",
 
       // YouTube embed mode
@@ -83,7 +76,6 @@
       voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
-
       voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
       stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
 
@@ -100,7 +92,7 @@
       chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
       chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
 
-      // Alerts (subs/gifts/raids via IRC + externos via eventsWs/cmd)
+      // Alerts (subs/gifts/raids via IRC + externos via cmd/eventsWs si lo usas)
       alerts: (u.searchParams.get("alerts") ?? "1") !== "0",
       alertsMax: clamp(parseInt(u.searchParams.get("alertsMax") || "3", 10) || 3, 1, 6),
       alertsTtl: clamp(parseInt(u.searchParams.get("alertsTtl") || "8", 10) || 8, 3, 20),
@@ -110,12 +102,6 @@
       adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
       adShowDuring: (u.searchParams.get("adShowDuring") ?? "1") !== "0",
       adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
-      botSayUrl: (u.searchParams.get("botSayUrl") || "").trim(), // POST {message,channel,key}
-      botSayOnAd: (u.searchParams.get("botSayOnAd") ?? "1") !== "0",
-
-      // Bridge opcional (WebSocket) para eventos automáticos (ads/follows/etc.)
-      eventsWs: (u.searchParams.get("eventsWs") || "").trim(),
-      eventsKey: (u.searchParams.get("eventsKey") || u.searchParams.get("key") || "").trim(),
     };
   }
 
@@ -257,7 +243,6 @@
     let list = allCams.filter(c => c && !banned.has(c.id) && !isBad(c.id));
     if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
 
-    // Si te quedas sin lista por “bad cooldown”, aflojamos (no bloqueamos el player)
     if (!list.length) {
       list = allCams.filter(c => c && !banned.has(c.id));
       if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
@@ -571,9 +556,7 @@
         display: none;
       }
       .rlcAlertsRoot.alerts--on{ display:block !important; }
-      .rlcAlertsList{
-        display:flex; flex-direction:column; gap:10px;
-      }
+      .rlcAlertsList{ display:flex; flex-direction:column; gap:10px; }
       .rlcAlert{
         display:flex; gap:10px; align-items:flex-start;
         padding:10px 12px;
@@ -590,39 +573,25 @@
       @keyframes rlcAlertIn{ to{ transform: translateY(0); opacity:1; } }
       .rlcAlert.rlcAlertOut{ animation: rlcAlertOut .28s ease-in forwards; }
       @keyframes rlcAlertOut{ to{ transform: translateY(-6px); opacity:0; } }
-
       .rlcAlertIcon{
-        flex:0 0 auto;
-        width:34px; height:34px;
-        border-radius:12px;
-        display:grid; place-items:center;
+        flex:0 0 auto; width:34px; height:34px;
+        border-radius:12px; display:grid; place-items:center;
         font-size:18px;
         background: rgba(255,255,255,.10);
         border:1px solid rgba(255,255,255,.10);
       }
       .rlcAlertBody{ min-width:0; }
-      .rlcAlertTitle{
-        font-weight:900;
-        font-size:14px;
-        color: rgba(255,255,255,.95);
-        line-height:1.15;
-      }
+      .rlcAlertTitle{ font-weight:900; font-size:14px; color: rgba(255,255,255,.95); line-height:1.15; }
       .rlcAlertText{
         margin-top:2px;
-        font-size:12.5px;
-        color: rgba(255,255,255,.85);
-        line-height:1.25;
-        word-break: break-word;
-        overflow-wrap:anywhere;
-        white-space: pre-wrap;
+        font-size:12.5px; color: rgba(255,255,255,.85); line-height:1.25;
+        word-break: break-word; overflow-wrap:anywhere; white-space: pre-wrap;
       }
-
       .rlcAlert--follow .rlcAlertIcon{ background: rgba(79, 214, 255, .18); }
       .rlcAlert--sub   .rlcAlertIcon{ background: rgba(140, 255, 179, .18); }
       .rlcAlert--gift  .rlcAlertIcon{ background: rgba(255, 206, 87, .18); }
       .rlcAlert--raid  .rlcAlertIcon{ background: rgba(255, 133, 196, .18); }
       .rlcAlert--ad    .rlcAlertIcon{ background: rgba(255, 96, 96, .18); }
-
       @media (max-width: 520px){
         .rlcAlertsRoot{ width:min(360px, calc(100vw - 24px)); }
       }
@@ -655,14 +624,7 @@
     ensureAlertsUI();
     if (!alertsRoot || !alertsList) return;
 
-    const iconMap = {
-      follow: "★",
-      sub: "◆",
-      gift: "🎁",
-      raid: "⚡",
-      ad: "⏳",
-      info: "ℹ",
-    };
+    const iconMap = { follow: "★", sub: "◆", gift: "🎁", raid: "⚡", ad: "⏳", info: "ℹ" };
     const t = String(type || "info").toLowerCase();
     const el = document.createElement("div");
     el.className = `rlcAlert rlcAlert--${t}`;
@@ -688,8 +650,7 @@
     el.appendChild(body);
 
     alertsList.appendChild(el);
-    const item = { el, ts: Date.now() };
-    alertItems.push(item);
+    alertItems.push({ el, ts: Date.now() });
 
     while (alertItems.length > alertsMax) {
       const old = alertItems.shift();
@@ -704,11 +665,9 @@
 
   // ───────────────────────── Ads overlay ─────────────────────────
   let adsEnabled = !!P.ads;
-  const adLeadDefaultSec = P.adLead | 0;
-  const adShowDuring = !!P.adShowDuring;
-  const adChatText = String(P.adChatText || "").trim();
-  const botSayUrl = String(P.botSayUrl || "").trim();
-  const botSayOnAd = !!P.botSayOnAd;
+  let adLeadDefaultSec = P.adLead | 0;
+  let adShowDuring = !!P.adShowDuring;
+  let adChatText = String(P.adChatText || "").trim();
 
   let adRoot = null;
   let adTitleEl = null;
@@ -721,7 +680,6 @@
   let adEndsAt = 0;
   let adTotalLead = 0;
   let adTotalLive = 0;
-  let adChatSent = false;
 
   function injectAdsStylesOnce() {
     if (document.getElementById("rlcAdsStyles")) return;
@@ -739,9 +697,7 @@
         display:none;
       }
       .rlcAdCard{
-        display:flex;
-        align-items:center;
-        gap:12px;
+        display:flex; align-items:center; gap:12px;
         padding:12px 14px;
         border-radius:18px;
         background: rgba(10,14,20,.62);
@@ -762,30 +718,10 @@
         color: rgba(255,255,255,.95);
       }
       .rlcAdMsg{ min-width:0; flex:1 1 auto; }
-      .rlcAdTitle{
-        font-weight:900;
-        font-size:14px;
-        color: rgba(255,255,255,.95);
-        line-height:1.15;
-      }
-      .rlcAdTime{
-        margin-top:2px;
-        font-size:12.5px;
-        color: rgba(255,255,255,.85);
-      }
-      .rlcAdBar{
-        margin-top:8px;
-        height:6px;
-        border-radius:999px;
-        background: rgba(255,255,255,.10);
-        overflow:hidden;
-      }
-      .rlcAdBar > i{
-        display:block;
-        height:100%;
-        width:0%;
-        background: linear-gradient(90deg, rgba(255,96,96,.85), rgba(255,206,87,.85));
-      }
+      .rlcAdTitle{ font-weight:900; font-size:14px; color: rgba(255,255,255,.95); line-height:1.15; }
+      .rlcAdTime{ margin-top:2px; font-size:12.5px; color: rgba(255,255,255,.85); }
+      .rlcAdBar{ margin-top:8px; height:6px; border-radius:999px; background: rgba(255,255,255,.10); overflow:hidden; }
+      .rlcAdBar > i{ display:block; height:100%; width:0%; background: linear-gradient(90deg, rgba(255,96,96,.85), rgba(255,206,87,.85)); }
       .rlcAdRoot.on{ display:block !important; }
     `;
     document.head.appendChild(st);
@@ -822,7 +758,6 @@
     adEndsAt = 0;
     adTotalLead = 0;
     adTotalLive = 0;
-    adChatSent = false;
     if (adRoot) adRoot.classList.remove("on");
   }
 
@@ -844,8 +779,8 @@
 
     if (adTitleEl) adTitleEl.textContent = "Anuncio en…";
     if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
-
     if (adBarEl) adBarEl.style.width = "0%";
+
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
   }
 
@@ -879,17 +814,10 @@
       if (adBarEl) adBarEl.style.width = `${clamp(pct, 0, 100).toFixed(1)}%`;
 
       if (left <= 0) {
-        // si no sabemos duración, dejamos el banner 6s y escondemos
         adPhase = "live";
         adTotalLive = Math.max(6, adTotalLive | 0);
         adEndsAt = now + (adTotalLive || 6) * 1000;
         if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
-      }
-
-      // Mensaje al chat (vía botSayUrl) cuando entra en ventana lead
-      if (!adChatSent && botSayOnAd && botSayUrl && adChatText) {
-        adChatSent = true;
-        botSay(adChatText);
       }
       return;
     }
@@ -906,69 +834,7 @@
     }
   }
 
-  function parseTimeMs(v) {
-    const t = Date.parse(String(v || ""));
-    return Number.isFinite(t) ? t : 0;
-  }
-
-  function adSchedule(nextAdAtIso, leadSec, durationSec) {
-    if (!adsEnabled) return;
-    const t = parseTimeMs(nextAdAtIso);
-    if (!t) return;
-
-    const lead = clamp((leadSec != null ? leadSec : adLeadDefaultSec) | 0, 0, 600);
-    const dur = (durationSec != null) ? clamp(durationSec | 0, 0, 3600) : 0;
-
-    const now = Date.now();
-    const startLeadAt = t - lead * 1000;
-    const untilLead = Math.ceil((startLeadAt - now) / 1000);
-
-    // Guard: si ya está pasando o demasiado lejos, no spamear UI
-    if (untilLead > 24 * 60 * 60) return;
-
-    adTotalLead = lead || Math.max(1, Math.ceil((t - now) / 1000));
-    adTotalLive = dur || 0;
-
-    if (untilLead <= 0) {
-      // ya estamos en ventana lead
-      const left = Math.max(0, Math.ceil((t - now) / 1000));
-      adStartLead(left);
-      if (dur > 0) {
-        // programamos live “virtual” cuando llegue el momento
-        // (se convierte en live automáticamente cuando left llega a 0)
-        adTotalLive = dur;
-        adEndsAt = t + dur * 1000;
-      } else {
-        adTotalLive = 6;
-      }
-    } else {
-      // programar inicio lead
-      setTimeout(() => {
-        // recalcular por si hubo cambios
-        const n2 = Date.now();
-        const left = Math.max(0, Math.ceil((t - n2) / 1000));
-        if (left > 0) adStartLead(left);
-      }, untilLead * 1000);
-    }
-  }
-
-  async function botSay(message) {
-    const msg = String(message || "").trim();
-    if (!msg || !botSayUrl) return;
-    try {
-      await fetch(botSayUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          message: msg,
-          channel: twitchChannel || "",
-          key: P.eventsKey || P.key || ""
-        })
-      });
-    } catch (_) {}
-  }
-
-  // ───────────────────────── YouTube handshake (mejor health) ─────────────────────────
+  // ───────────────────────── YouTube handshake ─────────────────────────
   let ytMsgBound = false;
   let ytExpectTok = 0;
   let ytPlayerId = "";
@@ -982,14 +848,11 @@
       if (!origin.includes("youtube.com") && !origin.includes("youtube-nocookie.com")) return;
 
       let data = ev.data;
-      try {
-        if (typeof data === "string") data = JSON.parse(data);
-      } catch (_) {}
+      try { if (typeof data === "string") data = JSON.parse(data); } catch (_) {}
 
       if (!data || typeof data !== "object") return;
       if (data.id && ytPlayerId && String(data.id) !== String(ytPlayerId)) return;
 
-      // Cualquier señal del player la consideramos “progreso real”
       if (ytExpectTok) healthProgress(ytExpectTok);
     }, false);
   }
@@ -1006,7 +869,6 @@
     bindYtMessagesOnce();
     if (!ytPlayerId) ytPlayerId = "rlcYt_" + String(Date.now());
 
-    // Protocolo iframe API
     ytSend({ event: "listening", id: ytPlayerId });
     ytSend({ id: ytPlayerId, event: "command", func: "mute", args: [] });
     ytSend({ id: ytPlayerId, event: "command", func: "playVideo", args: [] });
@@ -1025,14 +887,11 @@
     startRound(effectiveSeconds(cam));
     resetVoteForNewCam();
 
-    // nuevo token de reproducción (para invalidar callbacks viejos)
     playToken++;
     const tok = playToken;
 
     if (cam.kind === "youtube") {
       showOnly("youtube");
-
-      // watchdog: esperamos señal real (postMessage), no solo onload
       healthExpectStart(tok, cam, "youtube");
 
       const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
@@ -1042,23 +901,14 @@
         + `&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
         + `&widgetid=1`;
 
-      if (!cam.youtubeId) {
-        healthFail(tok, cam, "youtube_missing_id");
-        return;
-      }
+      if (!cam.youtubeId) { healthFail(tok, cam, "youtube_missing_id"); return; }
 
       ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
 
       if (frame) {
-        frame.onload = () => {
-          // hacemos handshake; si el vídeo está “unavailable”, normalmente no responde bien
-          ytHandshake(tok);
-        };
+        frame.onload = () => { ytHandshake(tok); };
         frame.src = src;
-      } else {
-        healthFail(tok, cam, "youtube_no_iframe");
-        return;
-      }
+      } else { healthFail(tok, cam, "youtube_no_iframe"); return; }
 
       postState();
       return;
@@ -1066,7 +916,6 @@
 
     if (cam.kind === "image") {
       showOnly("image");
-
       healthExpectStart(tok, cam, "image");
 
       const refreshMs = Math.max(5000, (cam.refreshMs | 0) || 60000);
@@ -1080,17 +929,11 @@
 
       if (img) {
         img.onload = () => healthProgress(tok);
-
-        img.onerror = () => {
-          if (!autoskip) return;
-          img.onerror = null;
-          healthFail(tok, cam, "image_error");
-        };
+        img.onerror = () => { if (!autoskip) return; img.onerror = null; healthFail(tok, cam, "image_error"); };
       }
 
       setSnap();
       imgTimer = setInterval(setSnap, refreshMs);
-
       postState();
       return;
     }
@@ -1101,10 +944,7 @@
       const url = cam.url || "";
       const Hls = g.Hls;
 
-      if (!url || !video) {
-        healthFail(tok, cam, "hls_no_url_or_video");
-        return;
-      }
+      if (!url || !video) { healthFail(tok, cam, "hls_no_url_or_video"); return; }
 
       healthExpectStart(tok, cam, "hls");
 
@@ -1132,16 +972,11 @@
 
           hls.on(Hls.Events.ERROR, (_ev, data) => {
             if (!autoskip) return;
-            if (data && data.fatal) {
-              healthFail(tok, cam, `hls_fatal_${data.type || "err"}`);
-            }
+            if (data && data.fatal) healthFail(tok, cam, `hls_fatal_${data.type || "err"}`);
           });
 
           hls.on(Hls.Events.MANIFEST_PARSED, () => healthProgress(tok));
-        } catch (_) {
-          healthFail(tok, cam, "hls_exception");
-          return;
-        }
+        } catch (_) { healthFail(tok, cam, "hls_exception"); return; }
 
         postState();
         return;
@@ -1195,10 +1030,7 @@
 
   function goToId(id) {
     const n = cams.findIndex(c => c && c.id === id);
-    if (n >= 0) {
-      idx = n;
-      playCam(cams[idx]);
-    }
+    if (n >= 0) { idx = n; playCam(cams[idx]); }
   }
 
   function banId(id) {
@@ -1254,9 +1086,7 @@
       const p = bgmEl.play();
       if (p && typeof p.then === "function") await p;
       bgmPlaying = true;
-    } catch (_) {
-      bgmPlaying = false;
-    }
+    } catch (_) { bgmPlaying = false; }
     postState();
   }
 
@@ -1277,9 +1107,7 @@
     if (bgmEnabled) bgmPlay();
   }
 
-  bgmEl?.addEventListener?.("ended", () => {
-    if (bgmEnabled) bgmNext();
-  });
+  bgmEl?.addEventListener?.("ended", () => { if (bgmEnabled) bgmNext(); });
 
   // ───────────────────────── Chat Overlay ─────────────────────────
   let chatEnabled = !!P.chat;
@@ -1435,8 +1263,7 @@
 
     chatList.appendChild(bubble);
 
-    const item = { el: bubble, ts: Date.now() };
-    chatItems.push(item);
+    chatItems.push({ el: bubble, ts: Date.now() });
 
     while (chatItems.length > chatMax) {
       const old = chatItems.shift();
@@ -1445,9 +1272,7 @@
 
     setTimeout(() => {
       try { bubble.classList.add("rlcChatFade"); } catch (_) {}
-      setTimeout(() => {
-        try { bubble.remove(); } catch (_) {}
-      }, 300);
+      setTimeout(() => { try { bubble.remove(); } catch (_) {} }, 300);
     }, Math.max(3000, chatTtlSec * 1000));
   }
 
@@ -1484,12 +1309,7 @@
 
   function unescapeTagValue(v) {
     const s = String(v || "");
-    return s
-      .replace(/\\s/g, " ")
-      .replace(/\\:/g, ";")
-      .replace(/\\r/g, "\r")
-      .replace(/\\n/g, "\n")
-      .replace(/\\\\/g, "\\");
+    return s.replace(/\\s/g, " ").replace(/\\:/g, ";").replace(/\\r/g, "\r").replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
   }
 
   function parseTagsToObj(tagsStr) {
@@ -1676,10 +1496,13 @@
     votePhase = "idle";
     renderVote();
 
-    // ✅ FIX: si no vota nadie, no te quedas -> NEXT
+    // ✅ FIX pedido:
+    //  - 0 votos => NEXT
+    //  - empate => NEXT
     if (y === 0 && n === 0) { nextCam("vote_no_votes"); return; }
+    if (y === n) { nextCam("vote_tie"); return; }
 
-    if (y > n && y > 0) nextCam("vote_yes");
+    if (y > n) nextCam("vote_yes");
     else restartStaySegment();
   }
 
@@ -1720,7 +1543,6 @@
   function handleTwitchEvent(ev) {
     if (!ev) return;
 
-    // 1) Chat overlay (privmsg)
     if (ev.kind === "privmsg") {
       const text = String(ev.msg || "").trim();
       if (chatEnabled && twitchChannel) {
@@ -1728,7 +1550,6 @@
         if (!isHiddenChatCommand(text)) chatAdd(name, text);
       }
 
-      // VOTO (solo en fase vote)
       if (voteSessionActive && votePhase === "vote") {
         const low = text.toLowerCase();
         const who = ev.userId || ev.user || "anon";
@@ -1740,14 +1561,11 @@
       return;
     }
 
-    // 2) USERNOTICE (subs/gifts/raid)
     if (ev.kind === "usernotice") {
       const msgId = String(ev.msgId || "").toLowerCase();
       const dn = String(ev.displayName || "Twitch");
       const sys = String(ev.sysMsg || "").trim();
       const tags = ev.tags || {};
-
-      // Si viene system-msg, úsalo como texto “bonito”
       const nice = sys || "";
 
       if (msgId === "sub" || msgId === "resub") {
@@ -1778,107 +1596,8 @@
         if (nice) chatAdd("TWITCH", nice);
         return;
       }
-
       return;
     }
-  }
-
-  // ───────────────────────── eventsWs (bridge opcional) ─────────────────────────
-  let eventsWs = null;
-  let eventsWsTimer = null;
-  let eventsWsBackoff = 800;
-
-  function eventsKeyOk(obj) {
-    const need = String(P.eventsKey || "").trim();
-    if (!need) return true;
-    return String(obj?.key || "").trim() === need;
-  }
-
-  function handleExternalEvent(obj) {
-    if (!obj || typeof obj !== "object") return;
-    if (!eventsKeyOk(obj)) return;
-
-    const type = String(obj.type || obj.kind || "").toLowerCase();
-
-    if (type === "ad_notice" || type === "ad_schedule") {
-      // Soporta: next_ad_at (ISO), leadSec, durationSec
-      const nextAt = obj.next_ad_at || obj.nextAdAt || obj.at || "";
-      const lead = (obj.leadSec != null) ? (obj.leadSec | 0) : (obj.lead_sec != null ? (obj.lead_sec | 0) : adLeadDefaultSec);
-      const dur  = (obj.durationSec != null) ? (obj.durationSec | 0) : (obj.duration_seconds != null ? (obj.duration_seconds | 0) : 0);
-      if (nextAt) adSchedule(nextAt, lead, dur);
-      else if (obj.leadSec != null) adStartLead(obj.leadSec | 0);
-      return;
-    }
-
-    if (type === "ad_begin") {
-      const d = (obj.durationSec != null) ? (obj.durationSec | 0) : (obj.duration_seconds != null ? (obj.duration_seconds | 0) : 30);
-      adStartLive(d);
-      return;
-    }
-
-    if (type === "ad_clear") {
-      adHide();
-      return;
-    }
-
-    if (type === "follow") {
-      const user = obj.user || obj.displayName || obj.name || "Nuevo follow";
-      alertsPush("follow", "¡Nuevo follow!", String(user));
-      if (obj.chat && chatEnabled) chatAdd("TWITCH", `💜 ${user} ha seguido el canal`);
-      return;
-    }
-
-    if (type === "alert") {
-      const aType = obj.alertType || obj.subtype || obj.level || "info";
-      alertsPush(aType, obj.title || "Alerta", obj.text || obj.message || "");
-      return;
-    }
-  }
-
-  function connectEventsWs() {
-    const url = String(P.eventsWs || "").trim();
-    if (!url) return;
-
-    try { eventsWs?.close?.(); } catch (_) {}
-    eventsWs = null;
-
-    try {
-      const ws = new WebSocket(url);
-      eventsWs = ws;
-
-      ws.onopen = () => {
-        eventsWsBackoff = 800;
-        if (P.debug) console.log("[eventsWs] connected:", url);
-        try {
-          ws.send(JSON.stringify({ type: "hello", key: P.eventsKey || "", channel: twitchChannel || "" }));
-        } catch (_) {}
-      };
-
-      ws.onmessage = (ev) => {
-        const raw = String(ev.data || "");
-        try {
-          const obj = JSON.parse(raw);
-          handleExternalEvent(obj);
-        } catch (_) {}
-      };
-
-      ws.onclose = () => {
-        if (P.debug) console.log("[eventsWs] closed");
-        scheduleEventsWsReconnect();
-      };
-      ws.onerror = () => {};
-    } catch (_) {
-      scheduleEventsWsReconnect();
-    }
-  }
-
-  function scheduleEventsWsReconnect() {
-    const url = String(P.eventsWs || "").trim();
-    if (!url) return;
-    try { if (eventsWsTimer) clearTimeout(eventsWsTimer); } catch (_) {}
-    const wait = clamp(eventsWsBackoff, 800, 15000);
-    eventsWsBackoff = Math.min(15000, (eventsWsBackoff * 1.6) | 0);
-    eventsWsTimer = setTimeout(connectEventsWs, wait);
   }
 
   // ───────────────────────── State publish ─────────────────────────
@@ -1939,7 +1658,12 @@
         enabled: adsEnabled,
         active: adActive,
         phase: adPhase,
+        adLead: adLeadDefaultSec,
+        adShowDuring: adShowDuring,
+        adChatText: adChatText
       },
+
+      alertsEnabled,
 
       ...extra
     };
@@ -1995,7 +1719,7 @@
       case "BGM_PLAYPAUSE": bgmPlayPause(); break;
       case "BGM_SHUFFLE": bgmShuffle(); break;
 
-      // Vote / Twitch
+      // Vote / Twitch + chat/alerts toggles
       case "TWITCH_SET": {
         twitchChannel = String(payload?.channel || "").trim().replace(/^@/, "");
         voteEnabled = !!payload?.enabled;
@@ -2035,16 +1759,22 @@
         break;
       }
 
-      // ADS
+      // ADS overlay (runtime)
+      case "ADS_SET": {
+        if (payload?.enabled != null) adsEnabled = !!payload.enabled;
+        if (payload?.adLead != null) adLeadDefaultSec = clamp(parseInt(payload.adLead, 10) || adLeadDefaultSec, 0, 300);
+        if (payload?.adShowDuring != null) adShowDuring = !!payload.adShowDuring;
+        if (payload?.adChatText != null) adChatText = String(payload.adChatText || "").trim() || adChatText;
+        if (!adsEnabled) adHide();
+        postState();
+        break;
+      }
+
       case "AD_NOTICE": {
-        // Soporta:
-        // - payload.nextAdAt (ISO), payload.leadSec, payload.durationSec
-        // - o payload.leadSec directo
-        if (payload?.nextAdAt || payload?.next_ad_at) {
-          adSchedule(payload.nextAdAt || payload.next_ad_at, payload.leadSec ?? payload.lead_sec, payload.durationSec ?? payload.duration_seconds);
-        } else if (payload?.leadSec != null) {
-          adStartLead(payload.leadSec | 0);
-        }
+        // leadSec inmediato
+        const lead = (payload?.leadSec != null) ? (payload.leadSec | 0) : adLeadDefaultSec;
+        adTotalLead = Math.max(1, clamp(lead | 0, 0, 3600));
+        adStartLead(adTotalLead);
         postState();
         break;
       }
@@ -2059,7 +1789,7 @@
         break;
       }
 
-      // ALERT
+      // ALERT manual
       case "ALERT": {
         const t = payload?.type || payload?.alertType || "info";
         alertsPush(t, payload?.title || "Alerta", payload?.text || payload?.message || "");
@@ -2142,14 +1872,10 @@
         adsEnabled: adsEnabled ? 1 : 0,
         adLeadDefaultSec,
         adShowDuring: adShowDuring ? 1 : 0,
-        botSayOnAd: botSayOnAd ? 1 : 0,
-        botSayUrl,
-
-        eventsWs: P.eventsWs || "",
-        eventsKey: P.eventsKey || "",
+        adChatText,
 
         ts: Date.now(),
-        v: 205
+        v: 206
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
     } catch (_) {}
@@ -2291,19 +2017,16 @@
 
       // Ads restore
       adsEnabled = (st.adsEnabled ?? (P.ads ? 1 : 0)) !== 0;
-      // botSayUrl/… ya vienen de params pero dejamos el storage como compat
-
-      // ytCookies restore
-      if (typeof st.ytCookies !== "undefined") {
-        try { P.ytCookies = (st.ytCookies | 0) !== 0; } catch (_) {}
-      }
+      adLeadDefaultSec = clamp((st.adLeadDefaultSec | 0) || adLeadDefaultSec, 0, 300);
+      adShowDuring = (st.adShowDuring ?? 1) !== 0;
+      adChatText = String(st.adChatText || adChatText);
 
       // restore segment + remaining
       const totalSeg = clamp((st.segmentSec | 0) || roundSeconds, 1, 120 * 60);
-      const rem = clamp((st.remaining | 0) || totalSeg, 0, totalSeg);
+      const rem2 = clamp((st.remaining | 0) || totalSeg, 0, totalSeg);
 
-      startRoundWithRemaining(totalSeg, rem);
-      if (!playing) { pausedRemaining = rem; roundEndsAt = 0; setCountdownUI(); }
+      startRoundWithRemaining(totalSeg, rem2);
+      if (!playing) { pausedRemaining = rem2; roundEndsAt = 0; setCountdownUI(); }
     } else {
       idx = 0;
       playing = true;
@@ -2330,6 +2053,9 @@
 
       alertsEnabled = !!P.alerts;
       adsEnabled = !!P.ads;
+      adLeadDefaultSec = P.adLead | 0;
+      adShowDuring = !!P.adShowDuring;
+      adChatText = String(P.adChatText || adChatText);
 
       parseVoteCmds(P.voteCmd);
     }
@@ -2353,9 +2079,6 @@
 
     // IRC init
     ensureIrc();
-
-    // eventsWs (bridge)
-    connectEventsWs();
 
     playCam(cams[idx]);
 

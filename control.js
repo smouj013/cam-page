@@ -1,15 +1,23 @@
+/* control.js — RLC Control v2.1.4 (BOT IRC + ADS + SAFE APPLY)
+   ✅ Controla el Player por BroadcastChannel/localStorage
+   ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat...)
+   ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
+   ✅ Bot NO se incluye en URL (seguridad)
+*/
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V213";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V214";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS = "rlc_bus_v1";
   const CMD_KEY = "rlc_cmd_v1";
   const STATE_KEY = "rlc_state_v1";
+
+  const BOT_STORE_KEY = "rlc_bot_cfg_v1"; // solo control.html (no player)
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -72,15 +80,41 @@
   const ctlTwitchChannel = qs("#ctlTwitchChannel");
   const ctlVoteOn = qs("#ctlVoteOn");
   const ctlVoteOverlay = qs("#ctlVoteOverlay");
-  const ctlVoteWindow = qs("#ctlVoteWindow"); // duración real del voto
-  const ctlVoteAt = qs("#ctlVoteAt");         // a falta de X segundos para iniciar voto
-  const ctlVoteLead = qs("#ctlVoteLead");     // pre-aviso (seg antes)
+  const ctlVoteWindow = qs("#ctlVoteWindow");
+  const ctlVoteAt = qs("#ctlVoteAt");
+  const ctlVoteLead = qs("#ctlVoteLead");
   const ctlVoteCmd = qs("#ctlVoteCmd");
   const ctlVoteStart = qs("#ctlVoteStart");
   const ctlVoteApply = qs("#ctlVoteApply");
 
   const ctlStayMins = qs("#ctlStayMins");
   const ctlYtCookies = qs("#ctlYtCookies");
+
+  // Chat/Alerts
+  const ctlChatOn = qs("#ctlChatOn");
+  const ctlChatHideCmd = qs("#ctlChatHideCmd");
+  const ctlAlertsOn = qs("#ctlAlertsOn");
+
+  // ADS (player overlay)
+  const ctlAdsOn = qs("#ctlAdsOn");
+  const ctlAdLead = qs("#ctlAdLead");
+  const ctlAdDur = qs("#ctlAdDur");
+  const ctlAdShowDuring = qs("#ctlAdShowDuring");
+  const ctlAdChatText = qs("#ctlAdChatText");
+
+  const ctlAdNoticeBtn = qs("#ctlAdNoticeBtn");
+  const ctlAdBeginBtn = qs("#ctlAdBeginBtn");
+  const ctlAdClearBtn = qs("#ctlAdClearBtn");
+
+  // BOT (control->twitch chat)
+  const ctlBotOn = qs("#ctlBotOn");
+  const ctlBotUser = qs("#ctlBotUser");
+  const ctlBotToken = qs("#ctlBotToken");
+  const ctlBotConnect = qs("#ctlBotConnect");
+  const ctlBotStatus = qs("#ctlBotStatus");
+  const ctlBotSayOnAd = qs("#ctlBotSayOnAd");
+  const ctlBotTestText = qs("#ctlBotTestText");
+  const ctlBotTestSend = qs("#ctlBotTestSend");
 
   // Data
   const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
@@ -106,6 +140,13 @@
     ctlStatus.textContent = text;
     ctlStatus.classList.toggle("pill--ok", !!ok);
     ctlStatus.classList.toggle("pill--bad", !ok);
+  }
+
+  function setBotStatus(text, ok = true) {
+    if (!ctlBotStatus) return;
+    ctlBotStatus.textContent = text;
+    ctlBotStatus.classList.toggle("pill--ok", !!ok);
+    ctlBotStatus.classList.toggle("pill--bad", !ok);
   }
 
   function label(cam) {
@@ -183,12 +224,224 @@
     el.value = String(v);
   }
 
+  // ───────────────────────── BOT IRC (AUTH) ─────────────────────────
+  // Se usa SOLO desde control.html. El token nunca viaja en URL.
+  class TwitchAuthIRC {
+    constructor(getCfg, onStatus) {
+      this.getCfg = getCfg; // () => {on,user,token,channel}
+      this.onStatus = onStatus || (() => {});
+      this.ws = null;
+      this.closed = true;
+      this.connected = false;
+      this.joinedChan = "";
+      this.backoff = 900;
+      this.timer = null;
+      this.queue = [];
+    }
+
+    _set(ok, msg) {
+      this.connected = !!ok;
+      try { this.onStatus(msg, !!ok); } catch (_) {}
+    }
+
+    _normalizeToken(tok) {
+      const t = String(tok || "").trim();
+      if (!t) return "";
+      // Acepta token con o sin "oauth:"
+      return t.startsWith("oauth:") ? t : ("oauth:" + t);
+    }
+
+    connect() {
+      const cfg = this.getCfg();
+      if (!cfg || !cfg.on) { this.close(); this._set(false, "Bot OFF"); return; }
+
+      const user = String(cfg.user || "").trim();
+      const token = this._normalizeToken(cfg.token);
+      const chan = String(cfg.channel || "").trim().replace(/^#/, "").replace(/^@/, "").toLowerCase();
+
+      if (!user || !token || !chan) {
+        this._set(false, "Falta user/token/canal");
+        return;
+      }
+
+      this.closed = false;
+      this._set(false, "Conectando…");
+
+      try { this.ws?.close?.(); } catch (_) {}
+      this.ws = null;
+
+      let ws;
+      try {
+        ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+      } catch (_) {
+        this._set(false, "WebSocket no disponible");
+        return;
+      }
+      this.ws = ws;
+
+      ws.onopen = () => {
+        this.backoff = 900;
+        this.joinedChan = "";
+        this._set(true, "Conectado (auth)");
+
+        // Auth
+        ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
+        ws.send(`PASS ${token}\r\n`);
+        ws.send(`NICK ${user}\r\n`);
+        ws.send(`JOIN #${chan}\r\n`);
+      };
+
+      ws.onmessage = (ev) => {
+        const text = String(ev.data || "");
+        const lines = text.split("\r\n").filter(Boolean);
+        for (const line of lines) this._handleLine(line);
+      };
+
+      ws.onclose = () => {
+        this.connected = false;
+        if (this.closed) { this._set(false, "Desconectado"); return; }
+        this._set(false, "Reconectando…");
+        this._scheduleReconnect();
+      };
+
+      ws.onerror = () => {};
+    }
+
+    _scheduleReconnect() {
+      try { if (this.timer) clearTimeout(this.timer); } catch (_) {}
+      const wait = clamp(this.backoff | 0, 900, 12000);
+      this.backoff = Math.min(12000, (this.backoff * 1.5) | 0);
+      this.timer = setTimeout(() => {
+        if (this.closed) return;
+        this.connect();
+      }, wait);
+    }
+
+    _handleLine(line) {
+      if (!line) return;
+      if (line.startsWith("PING")) {
+        try { this.ws?.send?.("PONG :tmi.twitch.tv\r\n"); } catch (_) {}
+        return;
+      }
+
+      // Detecta JOIN ok
+      const mJoin = line.match(/ JOIN #([a-z0-9_]+)/i);
+      if (mJoin) {
+        this.joinedChan = (mJoin[1] || "").toLowerCase();
+        // flush queue
+        this._flush();
+        return;
+      }
+
+      // NOTICE de auth fallida
+      if (line.includes("Login authentication failed")) {
+        this._set(false, "Auth fallida (token?)");
+        this.close();
+      }
+    }
+
+    close() {
+      this.closed = true;
+      this.connected = false;
+      try { if (this.timer) clearTimeout(this.timer); } catch (_) {}
+      this.timer = null;
+      try { this.ws?.close?.(); } catch (_) {}
+      this.ws = null;
+      this.queue = [];
+      this.joinedChan = "";
+    }
+
+    _flush() {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      if (!this.joinedChan) return;
+      const max = 10;
+      let n = 0;
+      while (this.queue.length && n < max) {
+        const it = this.queue.shift();
+        try { this.ws.send(it); } catch (_) {}
+        n++;
+      }
+    }
+
+    say(message, channel) {
+      const cfg = this.getCfg();
+      const chan = String(channel || cfg.channel || "").trim().replace(/^#/, "").replace(/^@/, "").toLowerCase();
+      const msg = String(message || "").trim();
+      if (!cfg || !cfg.on) return false;
+      if (!chan || !msg) return false;
+
+      const line = `PRIVMSG #${chan} :${msg}\r\n`;
+
+      if (this.ws && this.ws.readyState === 1 && this.joinedChan) {
+        try { this.ws.send(line); return true; } catch (_) { return false; }
+      }
+
+      // cola (por si está conectando)
+      this.queue.push(line);
+      // intenta conectar si no está
+      if (!this.ws || this.ws.readyState > 1) this.connect();
+      return true;
+    }
+  }
+
+  function loadBotCfg() {
+    try {
+      const raw = localStorage.getItem(BOT_STORE_KEY);
+      if (!raw) return { on: false, user: "", token: "", sayOnAd: true };
+      const o = JSON.parse(raw);
+      if (!o || typeof o !== "object") return { on: false, user: "", token: "", sayOnAd: true };
+      return {
+        on: !!o.on,
+        user: String(o.user || ""),
+        token: String(o.token || ""),
+        sayOnAd: (typeof o.sayOnAd === "boolean") ? o.sayOnAd : true
+      };
+    } catch (_) {
+      return { on: false, user: "", token: "", sayOnAd: true };
+    }
+  }
+
+  function saveBotCfg(cfg) {
+    try {
+      localStorage.setItem(BOT_STORE_KEY, JSON.stringify(cfg || {}));
+    } catch (_) {}
+  }
+
+  let botCfg = loadBotCfg();
+  const bot = new TwitchAuthIRC(
+    () => ({
+      on: !!(ctlBotOn?.value === "on"),
+      user: (ctlBotUser?.value || botCfg.user || "").trim(),
+      token: (ctlBotToken?.value || botCfg.token || "").trim(),
+      channel: (ctlTwitchChannel?.value || "").trim().replace(/^@/, "")
+    }),
+    (msg, ok) => setBotStatus(msg, ok)
+  );
+
+  function syncBotUIFromStore() {
+    if (ctlBotOn) ctlBotOn.value = botCfg.on ? "on" : "off";
+    if (ctlBotUser) ctlBotUser.value = botCfg.user || "";
+    if (ctlBotToken) ctlBotToken.value = botCfg.token || "";
+    if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
+    setBotStatus(botCfg.on ? "Bot listo" : "Bot OFF", !!botCfg.on);
+  }
+
+  function persistBotUIToStore() {
+    botCfg = {
+      on: !!(ctlBotOn?.value === "on"),
+      user: String(ctlBotUser?.value || "").trim(),
+      token: String(ctlBotToken?.value || "").trim(),
+      sayOnAd: !!(ctlBotSayOnAd?.value !== "off")
+    };
+    saveBotCfg(botCfg);
+  }
+
   // ✅ URL del stream (index.html) desde el panel
-  // Enviamos también voteUi (= lead + window) para que el overlay dure desde el aviso hasta el final del voto.
   function streamUrlFromHere() {
     const u = new URL(location.href);
     u.pathname = u.pathname.replace(/control\.html$/i, "index.html");
 
+    // básicos
     u.searchParams.set("mins", String(clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120)));
     u.searchParams.set("fit", ctlFit?.value || "cover");
     u.searchParams.set("hud", (ctlHud?.value === "off") ? "0" : "1");
@@ -199,7 +452,7 @@
     if (ctlAutoskip?.value === "off") u.searchParams.set("autoskip", "0");
     else u.searchParams.delete("autoskip");
 
-    // votación
+    // voto
     if (ctlVoteOn?.value === "on") u.searchParams.set("vote", "1");
     else u.searchParams.delete("vote");
 
@@ -208,15 +461,13 @@
     else u.searchParams.delete("twitch");
 
     const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-    const leadSec = clamp(parseInt(ctlVoteLead?.value || "5", 10) || 5, 0, 30);
+    const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
     const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
 
     u.searchParams.set("voteOverlay", (ctlVoteOverlay?.value === "off") ? "0" : "1");
     u.searchParams.set("voteWindow", String(windowSec));
     u.searchParams.set("voteLead", String(leadSec));
     u.searchParams.set("voteAt", String(voteAtSec));
-
-    // ✅ overlay visible total (pre-aviso + voto)
     u.searchParams.set("voteUi", String(windowSec + leadSec));
 
     if (ctlVoteCmd?.value) u.searchParams.set("voteCmd", ctlVoteCmd.value.trim());
@@ -229,13 +480,8 @@
 
     // ytCookies
     if (ctlYtCookies) {
-      let on = false;
-      if (ctlYtCookies.type === "checkbox") on = !!ctlYtCookies.checked;
-      else {
-        const v = String(ctlYtCookies.value || "").toLowerCase();
-        on = (v === "on" || v === "1" || v === "true" || v === "yes");
-      }
-      u.searchParams.set("ytCookies", on ? "1" : "0");
+      const v = String(ctlYtCookies.value || "off").toLowerCase();
+      u.searchParams.set("ytCookies", (v === "on") ? "1" : "0");
     }
 
     // bgm
@@ -243,13 +489,29 @@
     else u.searchParams.delete("bgm");
     if (ctlBgmVol?.value != null) u.searchParams.set("bgmVol", String(ctlBgmVol.value));
 
+    // chat/alerts
+    if (ctlChatOn?.value === "on") u.searchParams.set("chat", "1");
+    else u.searchParams.delete("chat");
+
+    if (ctlChatHideCmd?.value === "off") u.searchParams.set("chatHideCommands", "0");
+    else u.searchParams.delete("chatHideCommands");
+
+    if (ctlAlertsOn?.value === "on") u.searchParams.set("alerts", "1");
+    else u.searchParams.delete("alerts");
+
+    // ads overlay
+    if (ctlAdsOn?.value === "on") u.searchParams.set("ads", "1");
+    else u.searchParams.set("ads", "0");
+
+    if (ctlAdLead?.value != null) u.searchParams.set("adLead", String(clamp(parseInt(ctlAdLead.value || "30", 10) || 30, 0, 300)));
+    if (ctlAdShowDuring?.value === "off") u.searchParams.set("adShowDuring", "0");
+    else u.searchParams.set("adShowDuring", "1");
+
+    if (ctlAdChatText?.value) u.searchParams.set("adChatText", ctlAdChatText.value.trim());
+
     // key (IMPORTANTE: misma key que el player)
     if (P.key) u.searchParams.set("key", P.key);
     else u.searchParams.delete("key");
-
-    // chat overlay recomendado (por si quieres que el URL copiado lo incluya)
-    // u.searchParams.set("chat", "1");
-    // u.searchParams.set("chatHideCommands", "1");
 
     return u.toString();
   }
@@ -293,21 +555,16 @@
     // Vote state
     const vote = st?.vote || {};
     if (ctlTwitchChannel && typeof vote?.channel === "string") {
-      // solo auto-rellenar si está vacío o no lo estás editando
       if (!ctlTwitchChannel.value || !isEditing(ctlTwitchChannel)) safeSetValue(ctlTwitchChannel, vote.channel);
     }
-
     if (ctlVoteOn && !isEditing(ctlVoteOn)) ctlVoteOn.value = vote?.enabled ? "on" : "off";
     if (ctlVoteOverlay && !isEditing(ctlVoteOverlay)) ctlVoteOverlay.value = vote?.overlay ? "on" : "off";
-
     if (ctlVoteWindow && vote?.windowSec != null) safeSetValue(ctlVoteWindow, (vote.windowSec | 0));
     if (ctlVoteAt && vote?.voteAtSec != null) safeSetValue(ctlVoteAt, (vote.voteAtSec | 0));
     if (ctlVoteLead && vote?.leadSec != null) safeSetValue(ctlVoteLead, clamp((vote.leadSec | 0), 0, 30));
-
     if (ctlVoteCmd && typeof vote?.cmd === "string") {
       if (!isEditing(ctlVoteCmd)) ctlVoteCmd.value = vote.cmd || ctlVoteCmd.value;
     }
-
     if (ctlStayMins) {
       const sm =
         (vote?.stayMins != null) ? (vote.stayMins | 0)
@@ -316,20 +573,16 @@
       if (sm != null) safeSetValue(ctlStayMins, clamp(sm, 1, 120));
     }
 
-    if (ctlYtCookies) {
-      const ytCookies =
-        (st?.youtube?.cookies != null) ? !!st.youtube.cookies
-        : (st?.ytCookies != null) ? !!st.ytCookies
-        : null;
-
-      if (ytCookies != null) {
-        if (ctlYtCookies.type === "checkbox") {
-          if (!isEditing(ctlYtCookies)) ctlYtCookies.checked = ytCookies;
-        } else {
-          if (!isEditing(ctlYtCookies)) ctlYtCookies.value = ytCookies ? "on" : "off";
-        }
-      }
+    if (ctlYtCookies && st?.ytCookies != null && !isEditing(ctlYtCookies)) {
+      ctlYtCookies.value = st.ytCookies ? "on" : "off";
     }
+
+    // Chat/Alerts/Ads (si vienen en state)
+    if (ctlChatOn && st?.chat?.enabled != null && !isEditing(ctlChatOn)) ctlChatOn.value = st.chat.enabled ? "on" : "off";
+    if (ctlChatHideCmd && st?.chat?.hideCommands != null && !isEditing(ctlChatHideCmd)) ctlChatHideCmd.value = st.chat.hideCommands ? "on" : "off";
+    if (ctlAlertsOn && st?.alertsEnabled != null && !isEditing(ctlAlertsOn)) ctlAlertsOn.value = st.alertsEnabled ? "on" : "off";
+
+    if (ctlAdsOn && st?.ads?.enabled != null && !isEditing(ctlAdsOn)) ctlAdsOn.value = st.ads.enabled ? "on" : "off";
   }
 
   // Receive state
@@ -364,13 +617,24 @@
   function wire() {
     syncList("");
     syncBgmTracks();
+    syncBotUIFromStore();
 
     // defaults seguros
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
     if (ctlVoteWindow && !ctlVoteWindow.value) ctlVoteWindow.value = "60";
-    if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "0"; // si quieres 60 visual EXACTOS, lead=0
+    if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "0";
     if (ctlStayMins && !ctlStayMins.value) ctlStayMins.value = "5";
-    if (ctlYtCookies && !ctlYtCookies.value && ctlYtCookies.type !== "checkbox") ctlYtCookies.value = "on";
+    if (ctlYtCookies && !ctlYtCookies.value) ctlYtCookies.value = "on";
+
+    if (ctlChatOn && !ctlChatOn.value) ctlChatOn.value = "on";
+    if (ctlChatHideCmd && !ctlChatHideCmd.value) ctlChatHideCmd.value = "on";
+    if (ctlAlertsOn && !ctlAlertsOn.value) ctlAlertsOn.value = "on";
+
+    if (ctlAdsOn && !ctlAdsOn.value) ctlAdsOn.value = "on";
+    if (ctlAdLead && !ctlAdLead.value) ctlAdLead.value = "30";
+    if (ctlAdDur && !ctlAdDur.value) ctlAdDur.value = "30";
+    if (ctlAdShowDuring && !ctlAdShowDuring.value) ctlAdShowDuring.value = "on";
+    if (ctlAdChatText && !ctlAdChatText.value) ctlAdChatText.value = "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜";
 
     if (ctlSearch) ctlSearch.addEventListener("input", () => syncList(ctlSearch.value));
 
@@ -397,7 +661,6 @@
         if (id) sendCmd("GOTO_ID", { id });
       });
     }
-
     if (ctlBan) ctlBan.addEventListener("click", () => {
       const id = ctlSelect?.value || lastState?.cam?.id;
       if (id) sendCmd("BAN_ID", { id });
@@ -437,12 +700,6 @@
       const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
       const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
       const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
-
-      // Si quieres que “la pantalla de voto” dure EXACTAMENTE 60:
-      // - leadSec = 0
-      // - windowSec = 60
-      const uiSec = windowSec + leadSec;
-
       const stayMins = ctlStayMins ? clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120) : undefined;
 
       sendCmd("TWITCH_SET", {
@@ -452,9 +709,21 @@
         windowSec,
         voteAtSec,
         leadSec,
-        uiSec,
+        uiSec: windowSec + leadSec,
         cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim(),
-        stayMins
+        stayMins,
+        // chat/alerts toggles
+        chat: (ctlChatOn?.value === "on"),
+        chatHideCommands: (ctlChatHideCmd?.value !== "off"),
+        alerts: (ctlAlertsOn?.value === "on"),
+      });
+
+      // ads set (runtime)
+      sendCmd("ADS_SET", {
+        enabled: (ctlAdsOn?.value === "on"),
+        adLead: clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300),
+        adShowDuring: (ctlAdShowDuring?.value !== "off"),
+        adChatText: (ctlAdChatText?.value || "").trim(),
       });
     }
 
@@ -464,6 +733,64 @@
       const w = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
       const lead = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
       sendCmd("VOTE_START", { windowSec: w, leadSec: lead, uiSec: w + lead });
+    });
+
+    // ADS buttons (player overlay) + bot say opcional
+    function maybeBotSay(text) {
+      const botOn = (ctlBotOn?.value === "on");
+      const sayOnAd = (ctlBotSayOnAd?.value !== "off");
+      if (!botOn || !sayOnAd) return;
+      const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+      if (!ch) return;
+      const msg = String(text || "").trim();
+      if (!msg) return;
+      bot.say(msg, ch);
+    }
+
+    if (ctlAdNoticeBtn) ctlAdNoticeBtn.addEventListener("click", () => {
+      const lead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
+      sendCmd("AD_NOTICE", { leadSec: lead });
+      const msg = (ctlAdChatText?.value || "").trim();
+      if (lead > 0) maybeBotSay(msg || `⚠️ Anuncio en ${lead}s…`);
+      else maybeBotSay(msg || "⚠️ Anuncio en breve…");
+    });
+
+    if (ctlAdBeginBtn) ctlAdBeginBtn.addEventListener("click", () => {
+      const dur = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 600);
+      sendCmd("AD_BEGIN", { durationSec: dur });
+      maybeBotSay(`⏳ Anuncio en curso (${dur}s)…`);
+    });
+
+    if (ctlAdClearBtn) ctlAdClearBtn.addEventListener("click", () => {
+      sendCmd("AD_CLEAR", {});
+    });
+
+    // BOT UI
+    function onBotCfgChange() {
+      persistBotUIToStore();
+      if (ctlBotOn?.value === "on") bot.connect();
+      else bot.close();
+    }
+
+    if (ctlBotOn) ctlBotOn.addEventListener("change", onBotCfgChange);
+    if (ctlBotUser) ctlBotUser.addEventListener("input", () => { persistBotUIToStore(); });
+    if (ctlBotToken) ctlBotToken.addEventListener("input", () => { persistBotUIToStore(); });
+    if (ctlBotSayOnAd) ctlBotSayOnAd.addEventListener("change", () => { persistBotUIToStore(); });
+
+    if (ctlBotConnect) ctlBotConnect.addEventListener("click", () => {
+      persistBotUIToStore();
+      if (ctlBotOn?.value !== "on") { ctlBotOn.value = "on"; persistBotUIToStore(); }
+      bot.connect();
+    });
+
+    if (ctlBotTestSend) ctlBotTestSend.addEventListener("click", () => {
+      persistBotUIToStore();
+      const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+      const msg = (ctlBotTestText?.value || "✅ Bot OK").trim();
+      if (!ch) { setBotStatus("Pon canal primero", false); return; }
+      const ok = bot.say(msg, ch);
+      setBotStatus(ok ? "Enviado" : "No enviado", ok);
+      setTimeout(() => setBotStatus(bot.connected ? "Conectado (auth)" : "Bot listo", !!bot.connected), 900);
     });
 
     // Teclas pro
