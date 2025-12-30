@@ -1,4 +1,4 @@
-/* control.js — RLC Control v2.1.7 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE + KEY-NAMESPACE)
+/* control.js — RLC Control v2.1.8 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE + KEY-NAMESPACE + NEWS TICKER)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
@@ -10,6 +10,9 @@
    ✅ FIX v2.1.7:
       - La UI de votación NO sale antes de tiempo:
         voteUi/uiSec se limita a voteAtSec (y además voteWindow/lead también se acotan a voteAtSec)
+   ✅ NEW v2.1.8:
+      - Panel + storage + BC para configurar News Ticker (rlc_ticker_cfg_v1 + msg {type:"TICKER_CFG"})
+      - Copiar URL stream incluyendo params ticker*
 */
 (() => {
   "use strict";
@@ -17,7 +20,7 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V217";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V218";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -26,6 +29,7 @@
   const EVT_KEY_BASE = "rlc_evt_v1";
 
   const BOT_STORE_KEY_BASE = "rlc_bot_cfg_v1"; // solo control.html (no player)
+  const TICKER_CFG_KEY_BASE = "rlc_ticker_cfg_v1"; // ticker (player + control)
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -54,6 +58,10 @@
   const EVT_KEY_LEGACY = EVT_KEY_BASE;
 
   const BOT_STORE_KEY = KEY ? `${BOT_STORE_KEY_BASE}:${KEY}` : BOT_STORE_KEY_BASE;
+
+  // Ticker cfg (guardamos en keyed + base; el player/ticker suele leer base)
+  const TICKER_CFG_KEY = KEY ? `${TICKER_CFG_KEY_BASE}:${KEY}` : TICKER_CFG_KEY_BASE;
+  const TICKER_CFG_KEY_LEGACY = TICKER_CFG_KEY_BASE;
 
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
@@ -139,6 +147,17 @@
   const ctlBotSayOnAd = qs("#ctlBotSayOnAd");
   const ctlBotTestText = qs("#ctlBotTestText");
   const ctlBotTestSend = qs("#ctlBotTestSend");
+
+  // NEWS Ticker (si tu control.html aún no tiene estos ids, no pasa nada)
+  const ctlTickerOn = qs("#ctlTickerOn");
+  const ctlTickerLang = qs("#ctlTickerLang");
+  const ctlTickerSpeed = qs("#ctlTickerSpeed");
+  const ctlTickerRefresh = qs("#ctlTickerRefresh");
+  const ctlTickerTop = qs("#ctlTickerTop");
+  const ctlTickerHideOnVote = qs("#ctlTickerHideOnVote");
+  const ctlTickerSpan = qs("#ctlTickerSpan"); // opcional (si tu ticker.js lo soporta)
+  const ctlTickerApply = qs("#ctlTickerApply");
+  const ctlTickerCopyUrl = qs("#ctlTickerCopyUrl");
 
   // Data
   const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
@@ -307,6 +326,107 @@
     const uiSec = clamp(Math.min(windowSec + leadSec, voteAtSec), 1, 999999);
 
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
+  }
+
+  // ───────────────────────── NEWS TICKER (CFG + BC + URL PARAMS) ─────────────────────────
+  const TICKER_DEFAULTS = {
+    enabled: true,
+    lang: "auto",         // auto|es|en
+    speedPxPerSec: 55,    // 20..140
+    refreshMins: 12,      // 3..60
+    topPx: 10,            // 0..120
+    hideOnVote: true,
+    timespan: "1d"        // opcional (si tu ticker.js lo implementa)
+  };
+
+  function normalizeTickerCfg(inCfg) {
+    const c = Object.assign({}, TICKER_DEFAULTS, (inCfg || {}));
+    c.enabled = (c.enabled !== false);
+    c.lang = (c.lang === "es" || c.lang === "en" || c.lang === "auto") ? c.lang : "auto";
+    c.speedPxPerSec = clamp(num(c.speedPxPerSec, TICKER_DEFAULTS.speedPxPerSec), 20, 140);
+    c.refreshMins = clamp(num(c.refreshMins, TICKER_DEFAULTS.refreshMins), 3, 60);
+    c.topPx = clamp(num(c.topPx, TICKER_DEFAULTS.topPx), 0, 120);
+    c.hideOnVote = (c.hideOnVote !== false);
+
+    // opcional / futuro
+    c.timespan = String(c.timespan || TICKER_DEFAULTS.timespan).trim().toLowerCase();
+    if (!/^\d+(min|h|d|w|m)$/.test(c.timespan)) c.timespan = TICKER_DEFAULTS.timespan;
+
+    return c;
+  }
+
+  function loadTickerCfg() {
+    // prioridad: keyed -> base
+    try {
+      const rawKeyed = lsGet(TICKER_CFG_KEY);
+      if (rawKeyed) return normalizeTickerCfg(JSON.parse(rawKeyed));
+    } catch (_) {}
+    try {
+      const rawBase = lsGet(TICKER_CFG_KEY_BASE);
+      if (rawBase) return normalizeTickerCfg(JSON.parse(rawBase));
+    } catch (_) {}
+    return normalizeTickerCfg(TICKER_DEFAULTS);
+  }
+
+  function saveTickerCfg(cfg) {
+    const c = normalizeTickerCfg(cfg);
+    const raw = JSON.stringify(c);
+
+    // guardamos en keyed + base (el ticker del player suele leer base)
+    lsSet(TICKER_CFG_KEY, raw);
+    lsSet(TICKER_CFG_KEY_BASE, raw);
+    lsSet(TICKER_CFG_KEY_LEGACY, raw);
+
+    return c;
+  }
+
+  function sendTickerCfg(cfg, persist = true) {
+    const c = persist ? saveTickerCfg(cfg) : normalizeTickerCfg(cfg);
+    const msg = { type: "TICKER_CFG", ts: Date.now(), cfg: c };
+    // El ticker (player) no filtra key, pero dejarla no molesta.
+    if (KEY) msg.key = KEY;
+    busPost(msg);
+    return c;
+  }
+
+  let tickerCfg = loadTickerCfg();
+
+  function syncTickerUIFromStore() {
+    tickerCfg = loadTickerCfg();
+
+    if (ctlTickerOn) ctlTickerOn.value = tickerCfg.enabled ? "on" : "off";
+    if (ctlTickerLang) ctlTickerLang.value = tickerCfg.lang || "auto";
+    if (ctlTickerSpeed) ctlTickerSpeed.value = String(tickerCfg.speedPxPerSec ?? 55);
+    if (ctlTickerRefresh) ctlTickerRefresh.value = String(tickerCfg.refreshMins ?? 12);
+    if (ctlTickerTop) ctlTickerTop.value = String(tickerCfg.topPx ?? 10);
+    if (ctlTickerHideOnVote) ctlTickerHideOnVote.value = tickerCfg.hideOnVote ? "on" : "off";
+    if (ctlTickerSpan) ctlTickerSpan.value = String(tickerCfg.timespan || "1d");
+  }
+
+  function readTickerUI() {
+    // Si no hay panel UI, tiramos del store
+    const base = tickerCfg || loadTickerCfg();
+
+    const enabled = ctlTickerOn ? (ctlTickerOn.value !== "off") : base.enabled;
+    const lang = ctlTickerLang ? (ctlTickerLang.value || base.lang || "auto") : (base.lang || "auto");
+
+    const speedPxPerSec = ctlTickerSpeed
+      ? clamp(parseInt(ctlTickerSpeed.value || String(base.speedPxPerSec || 55), 10) || 55, 20, 140)
+      : (base.speedPxPerSec || 55);
+
+    const refreshMins = ctlTickerRefresh
+      ? clamp(parseInt(ctlTickerRefresh.value || String(base.refreshMins || 12), 10) || 12, 3, 60)
+      : (base.refreshMins || 12);
+
+    const topPx = ctlTickerTop
+      ? clamp(parseInt(ctlTickerTop.value || String(base.topPx || 10), 10) || 10, 0, 120)
+      : (base.topPx || 10);
+
+    const hideOnVote = ctlTickerHideOnVote ? (ctlTickerHideOnVote.value !== "off") : base.hideOnVote;
+
+    const timespan = ctlTickerSpan ? (ctlTickerSpan.value || base.timespan || "1d") : (base.timespan || "1d");
+
+    return normalizeTickerCfg({ enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan });
   }
 
   // ───────────────────────── BOT IRC (AUTH) ─────────────────────────
@@ -625,6 +745,23 @@
 
     if (ctlAdChatText?.value) u.searchParams.set("adChatText", ctlAdChatText.value.trim());
 
+    // ───────────── NEWS TICKER params
+    const tc = readTickerUI();
+
+    // Si OFF, forzamos ticker=0
+    if (!tc.enabled) u.searchParams.set("ticker", "0");
+    else u.searchParams.delete("ticker");
+
+    u.searchParams.set("tickerLang", tc.lang);
+    u.searchParams.set("tickerSpeed", String(tc.speedPxPerSec));
+    u.searchParams.set("tickerRefresh", String(tc.refreshMins));
+    u.searchParams.set("tickerTop", String(tc.topPx));
+    if (!tc.hideOnVote) u.searchParams.set("tickerHideOnVote", "0");
+    else u.searchParams.delete("tickerHideOnVote");
+
+    // opcional (si tu ticker.js lo soporta; si no, lo ignora)
+    if (tc.timespan) u.searchParams.set("tickerSpan", String(tc.timespan));
+
     // key
     if (KEY) u.searchParams.set("key", KEY);
     else u.searchParams.delete("key");
@@ -825,6 +962,12 @@
       } catch (_) {}
       return;
     }
+
+    // Ticker cfg cambiada en otra pestaña
+    if (e.key === TICKER_CFG_KEY || e.key === TICKER_CFG_KEY_BASE || e.key === TICKER_CFG_KEY_LEGACY) {
+      try { syncTickerUIFromStore(); } catch (_) {}
+      return;
+    }
   });
 
   // Watchdog
@@ -840,6 +983,10 @@
     syncList("");
     syncBgmTracks();
     syncBotUIFromStore();
+
+    // Ticker: cargar UI desde storage y mandar cfg (por si el player ya está abierto)
+    syncTickerUIFromStore();
+    try { sendTickerCfg(loadTickerCfg(), false); } catch (_) {}
 
     // defaults seguros
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
@@ -905,6 +1052,34 @@
         const ok = await copyToClipboard(url);
         ctlCopyStreamUrl.textContent = ok ? "✅ Copiado" : "❌";
         setTimeout(() => (ctlCopyStreamUrl.textContent = "Copiar URL stream"), 900);
+      });
+    }
+
+    // NEWS Ticker buttons
+    if (ctlTickerApply) {
+      ctlTickerApply.addEventListener("click", () => {
+        const cfg = readTickerUI();
+        tickerCfg = sendTickerCfg(cfg, true);
+
+        // refresca preview si está ON
+        try {
+          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
+        } catch (_) {}
+
+        try {
+          const old = ctlTickerApply.textContent || "Aplicar";
+          ctlTickerApply.textContent = "✅ Aplicado";
+          setTimeout(() => { ctlTickerApply.textContent = old; }, 850);
+        } catch (_) {}
+      });
+    }
+
+    if (ctlTickerCopyUrl) {
+      ctlTickerCopyUrl.addEventListener("click", async () => {
+        const url = streamUrlFromHere();
+        const ok = await copyToClipboard(url);
+        ctlTickerCopyUrl.textContent = ok ? "✅ Copiado" : "❌";
+        setTimeout(() => (ctlTickerCopyUrl.textContent = "Copiar URL Stream (con ticker)"), 900);
       });
     }
 

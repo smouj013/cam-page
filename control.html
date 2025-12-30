@@ -419,7 +419,7 @@
     <footer class="controlFooter" aria-label="Ayuda rápida">
       <span class="muted">Teclas: N siguiente · P anterior · Espacio pausa</span>
       <span class="dot">•</span>
-      <span class="muted mono">Canal: rlc_bus_v1</span>
+      <span class="muted mono" id="ctlBusName">Canal: rlc_bus_v1</span>
     </footer>
 
     <noscript>
@@ -434,7 +434,7 @@
   <script defer src="./music.js"></script>
   <script defer src="./control.js"></script>
 
-  <!-- ✅ NUEVO: panel/config del ticker -->
+  <!-- ✅ Ticker control (namespaced + legacy compatible) -->
   <script defer src="./newsTickerControl.js"></script>
 </body>
 </html>

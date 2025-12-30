@@ -1,17 +1,8 @@
-/* newsTicker.js — RLC Global News Ticker v1.2.0 (CONTROL + STORAGE + ROBUST)
-   ✅ Inserta ticker en #stage .layer-ui (o fallback)
-   ✅ Gratis (GDELT) + CORS robust (directo → allorigins → r.jina.ai)
-   ✅ Cache local (titulares) para resiliencia
-   ✅ Config desde Control Room:
-      - localStorage: rlc_ticker_cfg_v1
-      - BroadcastChannel: rlc_bus_v1, msg { type:"TICKER_CFG", cfg }
-   ✅ URL params (prioridad más alta):
-      ?ticker=0
-      ?tickerLang=es|en|auto
-      ?tickerSpeed=70
-      ?tickerRefresh=10
-      ?tickerTop=12
-      ?tickerHideOnVote=0
+/* newsTicker.js — RLC Global News Ticker v1.2.1 (FIX SORT + HIDE VIS + DEBUG)
+   ✅ FIX: sort=HybridRel (antes "hybrid" => podía dar vacío/error)
+   ✅ timespan configurable (por defecto 1d para noticias “frescas”)
+   ✅ HideOnVote robusto (no depende solo de class "hidden")
+   ✅ Debug opcional: ?tickerDebug=1
 */
 
 (() => {
@@ -19,7 +10,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V120";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V121";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS = "rlc_bus_v1";
@@ -56,12 +47,17 @@
       speed: safeStr(u.searchParams.get("tickerSpeed") || ""),
       refresh: safeStr(u.searchParams.get("tickerRefresh") || ""),
       top: safeStr(u.searchParams.get("tickerTop") || ""),
-      hideOnVote: safeStr(u.searchParams.get("tickerHideOnVote") || "")
+      hideOnVote: safeStr(u.searchParams.get("tickerHideOnVote") || ""),
+      span: safeStr(u.searchParams.get("tickerSpan") || ""),     // ej: 12h, 1d, 3d, 1w
+      debug: safeStr(u.searchParams.get("tickerDebug") || "")
     };
   }
 
   const P = parseParams();
   if (P.ticker === "0") return;
+
+  const DEBUG = (P.debug === "1" || P.debug === "true");
+  const log = (...a) => { if (DEBUG) console.log("[RLC:TICKER]", ...a); };
 
   const langAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
 
@@ -71,7 +67,8 @@
     speedPxPerSec: 55,      // 20..140
     refreshMins: 12,        // 3..60
     topPx: 10,              // 0..120
-    hideOnVote: true
+    hideOnVote: true,
+    timespan: "1d"          // ✅ nuevo: por defecto 1 día
   };
 
   function cfgFromUrl() {
@@ -81,7 +78,16 @@
     if (P.refresh) out.refreshMins = clamp(num(P.refresh, DEFAULTS.refreshMins), 3, 60);
     if (P.top) out.topPx = clamp(num(P.top, DEFAULTS.topPx), 0, 120);
     if (P.hideOnVote === "0") out.hideOnVote = false;
+    if (P.span) out.timespan = P.span;
     return out;
+  }
+
+  function normalizeTimespan(s) {
+    const t = safeStr(s).toLowerCase();
+    // formatos típicos: 15min, 2h, 12h, 1d, 3d, 1w, 2w, 1m...
+    if (!t) return DEFAULTS.timespan;
+    if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
+    return DEFAULTS.timespan;
   }
 
   function normalizeCfg(inCfg) {
@@ -92,6 +98,7 @@
     c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
     c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
     c.hideOnVote = (c.hideOnVote !== false);
+    c.timespan = normalizeTimespan(c.timespan);
     return c;
   }
 
@@ -101,8 +108,9 @@
   const API = {
     gdelt: {
       endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
-      // queries “safe” (sin términos sensibles/violentos explícitos) pero útiles
-      query_es: 'internacional OR mundo OR "última hora" OR cumbre OR economía OR tecnología OR ciencia OR clima OR salud OR mercados',
+      // queries “safe”
+      // (ojo: quito acentos para evitar rarezas con parse/encoding en algunos proxies)
+      query_es: 'internacional OR mundo OR "ultima hora" OR cumbre OR economia OR tecnologia OR ciencia OR clima OR salud OR mercados',
       query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
     },
     maxItems: 22
@@ -243,17 +251,22 @@
     document.head.appendChild(st);
   }
 
+  function pickHost() {
+    return (
+      qs("#stage .layer.layer-ui") ||
+      qs("#stage .layer-ui") ||
+      qs("#stage") ||
+      document.body
+    );
+  }
+
   function ensureUI() {
     injectStyles();
 
     let root = qs("#rlcNewsTicker");
     if (root) return root;
 
-    const host =
-      qs("#stage .layer.layer-ui") ||
-      qs("#stage .layer-ui") ||
-      qs("#stage") ||
-      document.body;
+    const host = pickHost();
 
     root = document.createElement("div");
     root.id = "rlcNewsTicker";
@@ -283,7 +296,6 @@
 
     root.classList.toggle("hidden", !on);
 
-    // Si se oculta, no empujamos overlays
     if (!on) {
       root.style.setProperty("--rlcTickerH", `0px`);
       document.documentElement.style.setProperty("--rlcTickerH", `0px`);
@@ -314,6 +326,26 @@
     return `https://r.jina.ai/https://${u}`;
   }
 
+  function tryParseJson(txt) {
+    const s = safeStr(txt);
+    if (!s) return null;
+
+    // JSONP: callback(...)
+    const m = s.match(/^[a-zA-Z_$][\w$]*\(([\s\S]+)\)\s*;?\s*$/);
+    if (m && m[1]) {
+      try { return JSON.parse(m[1]); } catch (_) {}
+    }
+
+    try { return JSON.parse(s); } catch (_) {}
+
+    const a = s.indexOf("{");
+    const b = s.lastIndexOf("}");
+    if (a >= 0 && b > a) {
+      try { return JSON.parse(s.slice(a, b + 1)); } catch (_) {}
+    }
+    return null;
+  }
+
   async function fetchJsonRobust(url) {
     const tries = [
       () => fetchText(url),
@@ -325,12 +357,8 @@
     for (const fn of tries) {
       try {
         const txt = await fn();
-        // parse directo
-        try { return JSON.parse(txt); } catch (_) {}
-        // intenta recortar JSON si viene envuelto
-        const a = txt.indexOf("{");
-        const b = txt.lastIndexOf("}");
-        if (a >= 0 && b > a) return JSON.parse(txt.slice(a, b + 1));
+        const obj = tryParseJson(txt);
+        if (obj) return obj;
         throw new Error("No JSON parseable");
       } catch (e) { lastErr = e; }
     }
@@ -358,10 +386,9 @@
 
   function normalizeSource(a) {
     const domain = safeStr(a?.domain || a?.source || "");
-    const sc = safeStr(a?.sourceCountry || "");
+    const sc = safeStr(a?.sourceCountry || a?.sourcecountry || "");
     const src = domain || sc || "";
     if (!src) return "NEWS";
-    // limpia dominio tipo "www.bbc.co.uk" => "BBC.CO.UK"
     const cleaned = src.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
     return cleaned.toUpperCase().slice(0, 22);
   }
@@ -370,24 +397,37 @@
     const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
     const q = (lang === "es") ? API.gdelt.query_es : API.gdelt.query_en;
 
-    // DOC API (ArtList) — sin API key
+    // ✅ DOC API: ArtList + JSON
+    // ✅ sort correcto: HybridRel (default moderno) :contentReference[oaicite:1]{index=1}
+    // ✅ timespan configurable (por defecto 1d)
     const url =
       `${API.gdelt.endpoint}` +
       `?query=${encodeURIComponent(q)}` +
       `&mode=ArtList` +
       `&format=json` +
-      `&sort=hybrid` +
+      `&sort=HybridRel` +
+      `&timespan=${encodeURIComponent(CFG.timespan)}` +
       `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`;
 
+    log("GDELT URL:", url);
+
     const data = await fetchJsonRobust(url);
+    log("GDELT raw:", data);
+
+    // Si viene error, lánzalo para que use cache/fallback
+    const errMsg = safeStr(data?.error || data?.message || data?.status || "");
+    if (errMsg && /error|invalid|failed/i.test(errMsg)) {
+      throw new Error(errMsg || "GDELT error");
+    }
 
     const articles = Array.isArray(data?.articles) ? data.articles
                    : Array.isArray(data?.results) ? data.results
+                   : Array.isArray(data?.artlist) ? data.artlist
                    : [];
 
     const mapped = articles.map(a => {
       const title = cleanTitle(a?.title || a?.name || "");
-      const link  = safeStr(a?.url || a?.link || "");
+      const link  = safeStr(a?.url || a?.link || a?.url_mobile || "");
       if (!title || !link) return null;
       return { title, url: link, source: normalizeSource(a) };
     }).filter(Boolean);
@@ -463,7 +503,6 @@
     root.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
     document.documentElement.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
 
-    // reset
     track.style.animation = "none";
     seg1.innerHTML = "";
     seg2.innerHTML = "";
@@ -471,20 +510,16 @@
     const frag = buildItemsDOM(items, lang);
     seg1.appendChild(frag);
 
-    // si el contenido es corto, repetimos dentro del seg1 hasta cubrir
     const vw = viewport ? (viewport.clientWidth || 900) : 900;
 
     let guard = 0;
     while ((seg1.scrollWidth || 0) < vw * 1.2 && guard < 8) {
-      // duplica contenido del seg1
       seg1.innerHTML += seg1.innerHTML;
       guard++;
     }
 
-    // clona seg1 en seg2 para loop perfecto
     seg2.innerHTML = seg1.innerHTML;
 
-    // calcula duración / end
     const segW = Math.max(1200, seg1.scrollWidth || 1200);
     const endPx = -segW;
     const durSec = Math.max(18, Math.min(220, Math.abs(endPx) / CFG.speedPxPerSec));
@@ -495,8 +530,18 @@
     requestAnimationFrame(() => { track.style.animation = ""; });
   }
 
-  // ───────────────────────────────────────── Hide on vote
+  // ───────────────────────────────────────── Hide on vote (robusto)
   let voteObs = null;
+  let domObs = null;
+
+  function isElementVisible(el) {
+    if (!el) return false;
+    const cs = window.getComputedStyle(el);
+    if (!cs) return false;
+    if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity || "1") <= 0) return false;
+    const r = el.getBoundingClientRect();
+    return (r.width > 0 && r.height > 0);
+  }
 
   function setupHideOnVote() {
     try { voteObs?.disconnect(); } catch (_) {}
@@ -508,15 +553,31 @@
     const apply = () => {
       if (!CFG.enabled) { setVisible(false); return; }
       if (!CFG.hideOnVote) { setVisible(true); return; }
-      const isVoteHidden = vote.classList.contains("hidden");
-      // Si voto visible => ocultar ticker
-      setVisible(isVoteHidden);
+
+      // ✅ si el voto está visible de verdad -> ocultar ticker
+      const voteVisible = isElementVisible(vote);
+      setVisible(!voteVisible);
     };
 
     apply();
 
     voteObs = new MutationObserver(apply);
-    voteObs.observe(vote, { attributes: true, attributeFilter: ["class"] });
+    voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
+  }
+
+  function watchForVoteBox() {
+    try { domObs?.disconnect(); } catch (_) {}
+    domObs = null;
+
+    domObs = new MutationObserver(() => {
+      const vote = qs("#voteBox");
+      if (vote) {
+        log("voteBox detected");
+        setupHideOnVote();
+      }
+    });
+
+    domObs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   // ───────────────────────────────────────── Cache
@@ -541,11 +602,11 @@
 
     const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
 
-    // cache-first si no force
     if (!force) {
       const cache = readCache();
       const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
       if (cache && cache.lang === lang && (Date.now() - (cache.ts || 0) <= maxAge)) {
+        log("cache hit");
         setTickerItems(cache.items);
         return;
       }
@@ -556,9 +617,11 @@
 
     try {
       const items = await getHeadlines();
+      log("items:", items?.length || 0);
       setTickerItems(items);
       writeCache(lang, items);
-    } catch (_) {
+    } catch (e) {
+      log("refresh error:", e?.message || e);
       const cache = readCache();
       if (cache?.items?.length) setTickerItems(cache.items);
       else setTickerItems([]);
@@ -611,10 +674,17 @@
       }
     });
 
+    // si #voteBox aún no existe, lo vigilamos
+    setupHideOnVote();
+    watchForVoteBox();
+
     // primera carga: si hay cache, pinta rápido
     const cache = readCache();
     if (cache?.items?.length) setTickerItems(cache.items);
+
     refresh(false);
+
+    log("boot cfg:", CFG);
   }
 
   if (document.readyState === "loading") {
