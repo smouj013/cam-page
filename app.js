@@ -1,40 +1,22 @@
-/* app.js — RLC Player v2.0.7 PRO (ADS NOTICE + TWITCH ALERTS + YT HEALTH + OWNER DETECT)
-   ✅ Autoskip hard (start timeout + stall timeout + cooldown)
-   ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR
+/* app.js — RLC Player v2.2.1 PRO (KEY-NAMESPACE + ADS NOTICE + TWITCH ALERTS + YT HEALTH + OWNER DETECT)
+   ✅ Compat con control.js (BUS/CMD/STATE) + soporte ?key=... (namespacing)
+      - Lee/escucha tanto keys “:key” como legacy (sin key) para no romper nada
+      - Publica STATE en ambos (incluye state.key para filtrar)
+   ✅ Autoskip hard (start timeout + stall timeout + cooldown BAD cache)
+   ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR (+ BOT_SAY si owner)
    ✅ IRC anon: chat overlay + votos + alerts (subs/gifts/raids)
-   ✅ FIX: si la votación termina con 0 votos O EMPATE → NEXT
+   ✅ FIX: si la votación termina con 0 votos o EMPATE → NEXT
    ✅ YouTube: handshake postMessage (mejor “video unavailable”)
-   ✅ NEW: Detecta tu cuenta (owner) si hay ?key=... y no se pasa ?twitch=...
-         - Prioridad: URL twitch > saved state > control bot cfg (rlc_bot_cfg_v1) > fallback globaleyetv
-         - Solo auto-activa chat/vote/alerts por defecto en modo owner (con key) si no estaban explícitos
-   ✅ NEW: En AD_NOTICE/AD_BEGIN, si hay key (owner) emite BOT_SAY (para que control.js mande el mensaje al chat)
+   ✅ Owner detect: si hay ?key=... y NO hay ?twitch=... → infiere canal (URL > state > bot cfg > fallback)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V207_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V221_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  // ───────────────────────── Bus ─────────────────────────
-  const BUS = "rlc_bus_v1";
-  const CMD_KEY = "rlc_cmd_v1";
-  const STATE_KEY = "rlc_state_v1";
-
-  // Config del bot (solo lectura aquí) — control.html lo escribe
-  const BOT_STORE_KEY = "rlc_bot_cfg_v1";
-
-  // ───────────────────────── Health / fail cache ─────────────────────────
-  const BAD_KEY = "rlc_bad_ids_v1";
-  const BAD_BASE_COOLDOWN_MS = 30 * 60 * 1000;
-  const BAD_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-  const START_TIMEOUT_MS = 12000;
-  const STALL_TIMEOUT_MS = 15000;
-  const MAX_STALLS = 2;
-
-  // Owner defaults
-  const OWNER_DEFAULT_TWITCH = "globaleyetv";
-
+  // ───────────────────────── Helpers ─────────────────────────
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const pad2 = (n) => String(n).padStart(2, "0");
@@ -72,6 +54,13 @@
     const adsParam = (u.searchParams.get("ads") ?? u.searchParams.get("ad"));
     const adsExplicit = (adsParam != null);
 
+    const key = (u.searchParams.get("key") || "").trim();
+
+    // Health override (opcionales)
+    const startTimeoutMs = clamp(parseInt(u.searchParams.get("startTimeoutMs") || "12000", 10) || 12000, 3000, 60000);
+    const stallTimeoutMs = clamp(parseInt(u.searchParams.get("stallTimeoutMs") || "15000", 10) || 15000, 4000, 90000);
+    const maxStalls = clamp(parseInt(u.searchParams.get("maxStalls") || "2", 10) || 2, 1, 6);
+
     return {
       mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
       fit: (u.searchParams.get("fit") || "cover"),
@@ -80,7 +69,7 @@
       autoskip: (u.searchParams.get("autoskip") ?? "1") !== "0",
       mode: (u.searchParams.get("mode") || "").toLowerCase(), // adfree
       debug: (u.searchParams.get("debug") === "1"),
-      key: u.searchParams.get("key") || "",
+      key,
 
       // YouTube embed mode
       ytCookies: (u.searchParams.get("ytCookies") ?? "0") === "1",
@@ -126,6 +115,11 @@
       adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
       adShowDuring: (u.searchParams.get("adShowDuring") ?? "1") !== "0",
       adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
+
+      // Health overrides
+      startTimeoutMs,
+      stallTimeoutMs,
+      maxStalls,
     };
   }
 
@@ -170,7 +164,63 @@
     return arr;
   }
 
-  // DOM
+  const P = parseParams();
+  const rnd = makeRng(P.seed);
+
+  // ───────────────────────── Bus + namespacing (?key=...) ─────────────────────────
+  const BUS_BASE = "rlc_bus_v1";
+  const CMD_KEY_BASE = "rlc_cmd_v1";
+  const STATE_KEY_BASE = "rlc_state_v1";
+
+  const KEY = String(P.key || "").trim();
+  const OWNER_MODE = !!KEY;
+
+  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  const CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
+  const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+
+  // Legacy (compat)
+  const BUS_LEGACY = BUS_BASE;
+  const CMD_KEY_LEGACY = CMD_KEY_BASE;
+  const STATE_KEY_LEGACY = STATE_KEY_BASE;
+
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+  // Config del bot (solo lectura aquí) — control.html lo escribe
+  const BOT_STORE_KEY_BASE = "rlc_bot_cfg_v1";
+  const BOT_STORE_KEY = KEY ? `${BOT_STORE_KEY_BASE}:${KEY}` : BOT_STORE_KEY_BASE;
+
+  // State keys (persist)
+  const STORAGE_KEY_BASE = "rlc_player_state_v2";
+  const STORAGE_KEY = KEY ? `${STORAGE_KEY_BASE}:${KEY}` : STORAGE_KEY_BASE;
+  const STORAGE_KEY_LEGACY = STORAGE_KEY_BASE;
+
+  const HUD_COLLAPSE_KEY_BASE = "rlc_hud_collapsed_v2";
+  const HUD_HIDE_KEY_BASE = "rlc_hud_hidden_v2";
+  const HUD_COLLAPSE_KEY = KEY ? `${HUD_COLLAPSE_KEY_BASE}:${KEY}` : HUD_COLLAPSE_KEY_BASE;
+  const HUD_HIDE_KEY = KEY ? `${HUD_HIDE_KEY_BASE}:${KEY}` : HUD_HIDE_KEY_BASE;
+
+  const BAN_KEY_BASE = "rlc_ban_ids_v1";
+  const BAN_KEY = KEY ? `${BAN_KEY_BASE}:${KEY}` : BAN_KEY_BASE;
+  const BAN_KEY_LEGACY = BAN_KEY_BASE;
+
+  // ───────────────────────── Health / fail cache ─────────────────────────
+  const BAD_KEY_BASE = "rlc_bad_ids_v1";
+  const BAD_KEY = KEY ? `${BAD_KEY_BASE}:${KEY}` : BAD_KEY_BASE;
+  const BAD_KEY_LEGACY = BAD_KEY_BASE;
+
+  const BAD_BASE_COOLDOWN_MS = 30 * 60 * 1000;
+  const BAD_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+  const START_TIMEOUT_MS = P.startTimeoutMs | 0;
+  const STALL_TIMEOUT_MS = P.stallTimeoutMs | 0;
+  const MAX_STALLS = P.maxStalls | 0;
+
+  // Owner defaults
+  const OWNER_DEFAULT_TWITCH = "globaleyetv";
+
+  // ───────────────────────── DOM ─────────────────────────
   const frame = qs("#frame");
   const video = qs("#video");
   const img = qs("#img");
@@ -200,37 +250,53 @@
   // Audio
   const bgmEl = qs("#bgm");
 
-  const P = parseParams();
-  const rnd = makeRng(P.seed);
+  // ───────────────────────── Merge helpers (keyed + legacy) ─────────────────────────
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} }
 
-  const OWNER_MODE = !!P.key; // “si hay key, es tu enlace (OBS/control)”
+  function loadJsonFirst(keys, fallbackVal = null) {
+    for (const k of keys) {
+      try {
+        const raw = lsGet(k);
+        if (!raw) continue;
+        return JSON.parse(raw);
+      } catch (_) {}
+    }
+    return fallbackVal;
+  }
 
-  // State keys
-  const STORAGE_KEY = "rlc_player_state_v2";
-  const HUD_COLLAPSE_KEY = "rlc_hud_collapsed_v2";
-  const HUD_HIDE_KEY = "rlc_hud_hidden_v2";
-  const BAN_KEY = "rlc_ban_ids_v1";
+  function loadSetMerged(keys) {
+    const out = new Set();
+    for (const k of keys) {
+      try {
+        const raw = lsGet(k);
+        if (!raw) continue;
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) for (const x of arr) out.add(String(x));
+      } catch (_) {}
+    }
+    return out;
+  }
 
-  // Cams
+  function saveSetBoth(keys, set) {
+    const arr = Array.from(set);
+    const raw = JSON.stringify(arr);
+    for (const k of keys) lsSet(k, raw);
+  }
+
+  // ───────────────────────── Cams + filters ─────────────────────────
   let allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
-  let banned = new Set();
-  try {
-    const raw = localStorage.getItem(BAN_KEY);
-    if (raw) banned = new Set(JSON.parse(raw));
-  } catch (_) {}
+
+  let banned = loadSetMerged([BAN_KEY, BAN_KEY_LEGACY]);
 
   // BAD cache
   let badMap = {};
   function loadBad() {
-    try {
-      const raw = localStorage.getItem(BAD_KEY);
-      badMap = raw ? JSON.parse(raw) : {};
-      if (!badMap || typeof badMap !== "object") badMap = {};
-    } catch (_) { badMap = {}; }
+    const obj = loadJsonFirst([BAD_KEY, BAD_KEY_LEGACY], {});
+    badMap = (obj && typeof obj === "object") ? obj : {};
   }
-  function saveBad() {
-    try { localStorage.setItem(BAD_KEY, JSON.stringify(badMap || {})); } catch (_) {}
-  }
+  function saveBad() { lsSet(BAD_KEY, JSON.stringify(badMap || {})); lsSet(BAD_KEY_LEGACY, JSON.stringify(badMap || {})); }
   function purgeBad() {
     const now = Date.now();
     let dirty = false;
@@ -269,6 +335,7 @@
     let list = allCams.filter(c => c && !banned.has(c.id) && !isBad(c.id));
     if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
 
+    // fallback si te quedas sin nada (pero mantén BAD fuera si puede)
     if (!list.length) {
       list = allCams.filter(c => c && !banned.has(c.id));
       if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
@@ -280,16 +347,12 @@
   loadBad();
   applyFilters();
 
-  // Playback state
+  // ───────────────────────── Playback state ─────────────────────────
   let idx = 0;
   let playing = true;
 
-  // base “mins”
-  let roundSeconds = P.mins * 60;
-
-  // segmento actual
-  let segmentSeconds = roundSeconds;
-
+  let roundSeconds = P.mins * 60;     // base mins
+  let segmentSeconds = roundSeconds;  // segmento actual
   let roundEndsAt = 0;
   let pausedRemaining = 0;
 
@@ -298,30 +361,6 @@
   let imgTimer = null;
   let hls = null;
   let switching = false;
-
-  // Comms
-  const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-  let lastCmdTs = 0;
-
-  // Helper: enviar comando al bus (para control/bot)
-  function busSendCmd(cmd, payload = {}) {
-    const msg = { type: "cmd", ts: Date.now(), cmd: String(cmd || ""), payload: payload || {} };
-    if (P.key) msg.key = P.key;
-    try { localStorage.setItem(CMD_KEY, JSON.stringify(msg)); } catch (_) {}
-    try { if (bc) bc.postMessage(msg); } catch (_) {}
-  }
-
-  function readBotCfgChannel() {
-    try {
-      const raw = localStorage.getItem(BOT_STORE_KEY);
-      if (!raw) return "";
-      const cfg = JSON.parse(raw);
-      if (!cfg || typeof cfg !== "object") return "";
-      const cand =
-        (cfg.twitch || cfg.channel || cfg.twitchChannel || cfg.username || cfg.user || cfg.login || cfg.name || "");
-      return String(cand || "").trim().replace(/^@/, "");
-    } catch (_) { return ""; }
-  }
 
   // Fit
   let currentFit = "cover";
@@ -342,18 +381,18 @@
       hudToggle.setAttribute("aria-label", collapsed ? "Expandir HUD" : "Contraer HUD");
     }
     if (hudDetails) hudDetails.style.display = collapsed ? "none" : "";
-    try { localStorage.setItem(HUD_COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (_) {}
-    postState();
+    lsSet(HUD_COLLAPSE_KEY, collapsed ? "1" : "0");
+    postState({ reason: "hud_collapsed" });
   }
 
   function setHudHidden(v) {
     const hidden = !!v;
     if (hud) hud.classList.toggle("hidden", hidden);
-    try { localStorage.setItem(HUD_HIDE_KEY, hidden ? "1" : "0"); } catch (_) {}
-    postState();
+    lsSet(HUD_HIDE_KEY, hidden ? "1" : "0");
+    postState({ reason: "hud_hidden" });
   }
 
-  // Timer helpers (con pausa REAL)
+  // Timer helpers (pausa REAL)
   function remainingSeconds() {
     if (!playing) return Math.max(0, pausedRemaining | 0);
     if (!roundEndsAt) return Math.max(0, segmentSeconds | 0);
@@ -418,12 +457,11 @@
       roundEndsAt = Date.now() + Math.max(1, rem) * 1000;
     }
     setCountdownUI();
-    postState();
+    postState({ reason: "play_toggle" });
   }
 
   function togglePlay() { setPlaying(!playing); }
 
-  // UI helpers
   function showOnly(kind) {
     if (frame) frame.classList.add("hidden");
     if (video) video.classList.add("hidden");
@@ -434,6 +472,30 @@
     else if (kind === "hls") { if (video) video.classList.remove("hidden"); }
     else if (kind === "image") { if (img) img.classList.remove("hidden"); }
     else { if (fallback) fallback.classList.remove("hidden"); }
+  }
+
+  // ───────────────────────── Comms: enviar cmd hacia control/bot ─────────────────────────
+  function busSendCmd(cmd, payload = {}) {
+    const msg = { type: "cmd", ts: Date.now(), cmd: String(cmd || ""), payload: payload || {} };
+    if (KEY) msg.key = KEY;
+
+    const raw = JSON.stringify(msg);
+
+    // escribe en ambos para compat (si hay KEY, el legacy lo filtras por msg.key)
+    lsSet(CMD_KEY, raw);
+    lsSet(CMD_KEY_LEGACY, raw);
+
+    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
+  }
+
+  function readBotCfgChannel() {
+    // intenta key primero, luego legacy
+    const cfg = loadJsonFirst([BOT_STORE_KEY, BOT_STORE_KEY_BASE], null);
+    if (!cfg || typeof cfg !== "object") return "";
+    const cand =
+      (cfg.twitch || cfg.channel || cfg.twitchChannel || cfg.username || cfg.user || cfg.login || cfg.name || "");
+    return String(cand || "").trim().replace(/^@/, "");
   }
 
   // ───────────────────────── Health watchdog ─────────────────────────
@@ -572,11 +634,6 @@
     if (cam && typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) return cam.maxSeconds | 0;
     if (cam && cam.kind === "image") return 60;
     return roundSeconds;
-  }
-
-  function resetVoteForNewCam() {
-    voteTriggeredForSegment = false;
-    voteReset();
   }
 
   // ───────────────────────── Alerts UI ─────────────────────────
@@ -814,7 +871,7 @@
     if (adRoot) adRoot.classList.add("on");
   }
 
-  function botAnnounceAd(kind, seconds) {
+  function botAnnounceAd(kind, seconds, twitchChannel) {
     // Solo owner (con key) — el bot real vive en control.js
     if (!OWNER_MODE) return;
     if (!adChatText) return;
@@ -828,11 +885,10 @@
       msg = `🔴 Anuncio en curso… ${adChatText}`;
     }
 
-    // cmd para que control.js (bot) lo mande al chat
     busSendCmd("BOT_SAY", { text: msg, channel: String(twitchChannel || "").trim() });
   }
 
-  function adStartLead(secondsLeft) {
+  function adStartLead(secondsLeft, twitchChannel) {
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
     adActive = true;
@@ -847,12 +903,10 @@
     if (adBarEl) adBarEl.style.width = "0%";
 
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
-
-    // NEW: mensaje chat (via bot en control)
-    botAnnounceAd("notice", left);
+    botAnnounceAd("notice", left, twitchChannel);
   }
 
-  function adStartLive(durationSec) {
+  function adStartLive(durationSec, twitchChannel) {
     if (!adsEnabled) return;
     const d = clamp(durationSec | 0, 5, 3600);
     adActive = true;
@@ -867,9 +921,7 @@
     if (adBarEl) adBarEl.style.width = "0%";
 
     if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
-
-    // NEW: mensaje chat (via bot en control)
-    botAnnounceAd("begin", d);
+    botAnnounceAd("begin", d, twitchChannel);
   }
 
   function adTick() {
@@ -920,10 +972,9 @@
 
       let data = ev.data;
       try { if (typeof data === "string") data = JSON.parse(data); } catch (_) {}
-
       if (!data || typeof data !== "object") return;
-      if (data.id && ytPlayerId && String(data.id) !== String(ytPlayerId)) return;
 
+      if (data.id && ytPlayerId && String(data.id) !== String(ytPlayerId)) return;
       if (ytExpectTok) healthProgress(ytExpectTok);
     }, false);
   }
@@ -944,241 +995,6 @@
     ytSend({ id: ytPlayerId, event: "command", func: "mute", args: [] });
     ytSend({ id: ytPlayerId, event: "command", func: "playVideo", args: [] });
   }
-
-  function playCam(cam) {
-    if (!cam) {
-      showFallback({ originUrl: "#" }, "Cam inválida. Saltando…");
-      setTimeout(() => nextCam("invalid_cam"), 500);
-      return;
-    }
-
-    clearMedia();
-    setHud(cam);
-
-    startRound(effectiveSeconds(cam));
-    resetVoteForNewCam();
-
-    playToken++;
-    const tok = playToken;
-
-    if (cam.kind === "youtube") {
-      showOnly("youtube");
-      healthExpectStart(tok, cam, "youtube");
-
-      const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
-      const src =
-        `${base}/embed/${encodeURIComponent(cam.youtubeId || "")}`
-        + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`
-        + `&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
-        + `&widgetid=1`;
-
-      if (!cam.youtubeId) { healthFail(tok, cam, "youtube_missing_id"); return; }
-
-      ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
-
-      if (frame) {
-        frame.onload = () => { ytHandshake(tok); };
-        frame.src = src;
-      } else { healthFail(tok, cam, "youtube_no_iframe"); return; }
-
-      postState();
-      return;
-    }
-
-    if (cam.kind === "image") {
-      showOnly("image");
-      healthExpectStart(tok, cam, "image");
-
-      const refreshMs = Math.max(5000, (cam.refreshMs | 0) || 60000);
-
-      const setSnap = () => {
-        const u = cam.url || "";
-        if (!u) { healthFail(tok, cam, "image_no_url"); return; }
-        const sep = (u.indexOf("?") >= 0) ? "&" : "?";
-        if (img) img.src = `${u}${sep}t=${Date.now()}`;
-      };
-
-      if (img) {
-        img.onload = () => healthProgress(tok);
-        img.onerror = () => { if (!autoskip) return; img.onerror = null; healthFail(tok, cam, "image_error"); };
-      }
-
-      setSnap();
-      imgTimer = setInterval(setSnap, refreshMs);
-      postState();
-      return;
-    }
-
-    if (cam.kind === "hls") {
-      showOnly("hls");
-
-      const url = cam.url || "";
-      const Hls = g.Hls;
-
-      if (!url || !video) { healthFail(tok, cam, "hls_no_url_or_video"); return; }
-
-      healthExpectStart(tok, cam, "hls");
-
-      video.onloadeddata = () => healthProgress(tok);
-      video.oncanplay = () => { healthProgress(tok); safePlayVideo(); };
-      video.onplaying = () => healthProgress(tok);
-      video.ontimeupdate = () => healthProgress(tok);
-
-      video.onwaiting = () => healthStall(tok, cam, "waiting");
-      video.onstalled = () => healthStall(tok, cam, "stalled");
-      video.onerror = () => healthFail(tok, cam, "video_error");
-
-      if (video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl")) {
-        try { video.src = url; } catch (_) {}
-        safePlayVideo();
-        postState();
-        return;
-      }
-
-      if (Hls && Hls.isSupported && Hls.isSupported()) {
-        try {
-          hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
-          hls.loadSource(url);
-          hls.attachMedia(video);
-
-          hls.on(Hls.Events.ERROR, (_ev, data) => {
-            if (!autoskip) return;
-            if (data && data.fatal) healthFail(tok, cam, `hls_fatal_${data.type || "err"}`);
-          });
-
-          hls.on(Hls.Events.MANIFEST_PARSED, () => healthProgress(tok));
-        } catch (_) { healthFail(tok, cam, "hls_exception"); return; }
-
-        postState();
-        return;
-      }
-
-      showFallback(cam, "HLS no soportado aquí.");
-      if (autoskip) setTimeout(() => healthFail(tok, cam, "hls_unsupported"), 700);
-      postState();
-      return;
-    }
-
-    showFallback(cam, "Tipo no soportado.");
-    postState({ error: "unsupported" });
-    if (autoskip) setTimeout(() => nextCam("unsupported"), 900);
-  }
-
-  function nextCam(reason) {
-    if (!cams.length || switching) return;
-    switching = true;
-    idx = (idx + 1) % cams.length;
-    if (P.debug) console.log("[player] next:", reason, idx, cams[idx]);
-    playCam(cams[idx]);
-    setTimeout(() => { switching = false; }, 250);
-  }
-
-  function prevCam() {
-    if (!cams.length || switching) return;
-    switching = true;
-    idx = (idx - 1 + cams.length) % cams.length;
-    playCam(cams[idx]);
-    setTimeout(() => { switching = false; }, 250);
-  }
-
-  function reshuffle() {
-    const curId = cams[idx] && cams[idx].id;
-    shuffle(cams, rnd);
-    const n = cams.findIndex(c => c.id === curId);
-    idx = (n >= 0) ? n : 0;
-    playCam(cams[idx]);
-  }
-
-  function setRoundMins(mins) {
-    const m = clamp(parseInt(mins, 10) || 5, 1, 120);
-    roundSeconds = m * 60;
-
-    const rem = remainingSeconds();
-    const next = Math.min(rem || roundSeconds, roundSeconds);
-    startRound(next);
-    postState();
-  }
-
-  function goToId(id) {
-    const n = cams.findIndex(c => c && c.id === id);
-    if (n >= 0) { idx = n; playCam(cams[idx]); }
-  }
-
-  function banId(id) {
-    if (!id) return;
-    banned.add(id);
-    try { localStorage.setItem(BAN_KEY, JSON.stringify(Array.from(banned))); } catch (_) {}
-    applyFilters();
-    idx = idx % Math.max(1, cams.length);
-    playCam(cams[idx]);
-  }
-
-  function resetState() {
-    try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-    idx = 0;
-    modeAdfree = false;
-    autoskip = true;
-
-    applyFilters();
-    setFit("cover");
-    setRoundMins(5);
-    setHudHidden(false);
-    setHudCollapsed(true);
-    setPlaying(true);
-    adHide();
-    playCam(cams[idx]);
-  }
-
-  // ───────────────────────── BGM ─────────────────────────
-  const bgmList = Array.isArray(g.BGM_LIST) ? g.BGM_LIST.slice() : [];
-  let bgmEnabled = !!P.bgm;
-  let bgmVol = P.bgmVol;
-  let bgmIdx = 0;
-  let bgmPlaying = false;
-
-  function bgmSetVol(v) {
-    bgmVol = clamp(+v || 0, 0, 1);
-    try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
-    postState();
-  }
-
-  function bgmLoadTrack(i) {
-    if (!bgmList.length || !bgmEl) return;
-    bgmIdx = (i % bgmList.length + bgmList.length) % bgmList.length;
-    const t = bgmList[bgmIdx];
-    try { bgmEl.src = t.url; bgmEl.load(); } catch (_) {}
-    postState();
-  }
-
-  async function bgmPlay() {
-    if (!bgmEnabled || !bgmList.length || !bgmEl) return;
-    try {
-      if (!bgmEl.src) bgmLoadTrack(bgmIdx);
-      const p = bgmEl.play();
-      if (p && typeof p.then === "function") await p;
-      bgmPlaying = true;
-    } catch (_) { bgmPlaying = false; }
-    postState();
-  }
-
-  function bgmPause() {
-    try { if (bgmEl) bgmEl.pause(); } catch (_) {}
-    bgmPlaying = false;
-    postState();
-  }
-
-  function bgmPlayPause() { bgmPlaying ? bgmPause() : bgmPlay(); }
-  function bgmNext() { bgmLoadTrack(bgmIdx + 1); if (bgmEnabled) bgmPlay(); }
-  function bgmPrev() { bgmLoadTrack(bgmIdx - 1); if (bgmEnabled) bgmPlay(); }
-  function bgmShuffle() {
-    if (bgmList.length < 2) return;
-    shuffle(bgmList, rnd);
-    bgmIdx = 0;
-    bgmLoadTrack(0);
-    if (bgmEnabled) bgmPlay();
-  }
-
-  bgmEl?.addEventListener?.("ended", () => { if (bgmEnabled) bgmNext(); });
 
   // ───────────────────────── Chat Overlay ─────────────────────────
   let chatEnabled = !!P.chat;
@@ -1298,7 +1114,7 @@
     }
 
     ensureIrc();
-    postState();
+    postState({ reason: "chat_toggle" });
   }
 
   function isHiddenChatCommand(msg) {
@@ -1558,7 +1374,7 @@
     const sec = clamp((stayMins | 0) * 60, 60, 120 * 60);
     startRound(sec);
     voteTriggeredForSegment = false;
-    postState();
+    postState({ reason: "stay" });
   }
 
   function voteFinish() {
@@ -1569,9 +1385,7 @@
     votePhase = "idle";
     renderVote();
 
-    // ✅ FIX pedido:
-    //  - 0 votos => NEXT
-    //  - empate => NEXT
+    // ✅ 0 votos o empate => NEXT
     if (y === 0 && n === 0) { nextCam("vote_no_votes"); return; }
     if (y === n) { nextCam("vote_tie"); return; }
 
@@ -1669,16 +1483,272 @@
         if (nice) chatAdd("TWITCH", nice);
         return;
       }
-      return;
     }
   }
 
+  // ───────────────────────── BGM ─────────────────────────
+  const bgmList = Array.isArray(g.BGM_LIST) ? g.BGM_LIST.slice() : [];
+  let bgmEnabled = !!P.bgm;
+  let bgmVol = P.bgmVol;
+  let bgmIdx = 0;
+  let bgmPlaying = false;
+
+  function bgmSetVol(v) {
+    bgmVol = clamp(+v || 0, 0, 1);
+    try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
+    postState({ reason: "bgm_vol" });
+  }
+
+  function bgmLoadTrack(i) {
+    if (!bgmList.length || !bgmEl) return;
+    bgmIdx = (i % bgmList.length + bgmList.length) % bgmList.length;
+    const t = bgmList[bgmIdx];
+    try { bgmEl.src = t.url; bgmEl.load(); } catch (_) {}
+    postState({ reason: "bgm_track" });
+  }
+
+  async function bgmPlay() {
+    if (!bgmEnabled || !bgmList.length || !bgmEl) return;
+    try {
+      if (!bgmEl.src) bgmLoadTrack(bgmIdx);
+      const p = bgmEl.play();
+      if (p && typeof p.then === "function") await p;
+      bgmPlaying = true;
+    } catch (_) { bgmPlaying = false; }
+    postState({ reason: "bgm_play" });
+  }
+
+  function bgmPause() {
+    try { if (bgmEl) bgmEl.pause(); } catch (_) {}
+    bgmPlaying = false;
+    postState({ reason: "bgm_pause" });
+  }
+
+  function bgmPlayPause() { bgmPlaying ? bgmPause() : bgmPlay(); }
+  function bgmNext() { bgmLoadTrack(bgmIdx + 1); if (bgmEnabled) bgmPlay(); }
+  function bgmPrev() { bgmLoadTrack(bgmIdx - 1); if (bgmEnabled) bgmPlay(); }
+  function bgmShuffle() {
+    if (bgmList.length < 2) return;
+    shuffle(bgmList, rnd);
+    bgmIdx = 0;
+    bgmLoadTrack(0);
+    if (bgmEnabled) bgmPlay();
+  }
+
+  bgmEl?.addEventListener?.("ended", () => { if (bgmEnabled) bgmNext(); });
+
+  // ───────────────────────── Vote helpers ─────────────────────────
+  function resetVoteForNewCam() {
+    voteTriggeredForSegment = false;
+    voteReset();
+  }
+
+  // ───────────────────────── Play cam ─────────────────────────
+  function playCam(cam) {
+    if (!cam) {
+      showFallback({ originUrl: "#" }, "Cam inválida. Saltando…");
+      setTimeout(() => nextCam("invalid_cam"), 500);
+      return;
+    }
+
+    clearMedia();
+    setHud(cam);
+
+    startRound(effectiveSeconds(cam));
+    resetVoteForNewCam();
+
+    playToken++;
+    const tok = playToken;
+
+    if (cam.kind === "youtube") {
+      showOnly("youtube");
+      healthExpectStart(tok, cam, "youtube");
+
+      const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
+      const ytId = cam.youtubeId || "";
+      if (!ytId) { healthFail(tok, cam, "youtube_missing_id"); return; }
+
+      const src =
+        `${base}/embed/${encodeURIComponent(ytId)}`
+        + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`
+        + `&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
+        + `&widgetid=1`;
+
+      ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
+
+      if (frame) {
+        frame.onload = () => { ytHandshake(tok); };
+        frame.src = src;
+      } else {
+        healthFail(tok, cam, "youtube_no_iframe");
+        return;
+      }
+
+      postState({ reason: "play_youtube" });
+      return;
+    }
+
+    if (cam.kind === "image") {
+      showOnly("image");
+      healthExpectStart(tok, cam, "image");
+
+      const refreshMs = Math.max(5000, (cam.refreshMs | 0) || 60000);
+
+      const setSnap = () => {
+        const u = cam.url || "";
+        if (!u) { healthFail(tok, cam, "image_no_url"); return; }
+        const sep = (u.indexOf("?") >= 0) ? "&" : "?";
+        if (img) img.src = `${u}${sep}t=${Date.now()}`;
+      };
+
+      if (img) {
+        img.onload = () => healthProgress(tok);
+        img.onerror = () => { if (!autoskip) return; img.onerror = null; healthFail(tok, cam, "image_error"); };
+      }
+
+      setSnap();
+      imgTimer = setInterval(setSnap, refreshMs);
+      postState({ reason: "play_image" });
+      return;
+    }
+
+    if (cam.kind === "hls") {
+      showOnly("hls");
+
+      const url = cam.url || "";
+      const Hls = g.Hls;
+
+      if (!url || !video) { healthFail(tok, cam, "hls_no_url_or_video"); return; }
+      healthExpectStart(tok, cam, "hls");
+
+      video.onloadeddata = () => healthProgress(tok);
+      video.oncanplay = () => { healthProgress(tok); safePlayVideo(); };
+      video.onplaying = () => healthProgress(tok);
+      video.ontimeupdate = () => healthProgress(tok);
+
+      video.onwaiting = () => healthStall(tok, cam, "waiting");
+      video.onstalled = () => healthStall(tok, cam, "stalled");
+      video.onerror = () => healthFail(tok, cam, "video_error");
+
+      if (video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl")) {
+        try { video.src = url; } catch (_) {}
+        safePlayVideo();
+        postState({ reason: "play_hls_native" });
+        return;
+      }
+
+      if (Hls && Hls.isSupported && Hls.isSupported()) {
+        try {
+          hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+
+          hls.on(Hls.Events.ERROR, (_ev, data) => {
+            if (!autoskip) return;
+            if (data && data.fatal) healthFail(tok, cam, `hls_fatal_${data.type || "err"}`);
+          });
+
+          hls.on(Hls.Events.MANIFEST_PARSED, () => healthProgress(tok));
+        } catch (_) { healthFail(tok, cam, "hls_exception"); return; }
+
+        postState({ reason: "play_hls_hlsjs" });
+        return;
+      }
+
+      showFallback(cam, "HLS no soportado aquí.");
+      if (autoskip) setTimeout(() => healthFail(tok, cam, "hls_unsupported"), 700);
+      postState({ reason: "play_hls_unsupported" });
+      return;
+    }
+
+    showFallback(cam, "Tipo no soportado.");
+    postState({ error: "unsupported" });
+    if (autoskip) setTimeout(() => nextCam("unsupported"), 900);
+  }
+
+  function nextCam(reason) {
+    if (!cams.length || switching) return;
+    switching = true;
+    idx = (idx + 1) % cams.length;
+    if (P.debug) console.log("[player] next:", reason, idx, cams[idx]);
+    playCam(cams[idx]);
+    setTimeout(() => { switching = false; }, 250);
+  }
+
+  function prevCam() {
+    if (!cams.length || switching) return;
+    switching = true;
+    idx = (idx - 1 + cams.length) % cams.length;
+    playCam(cams[idx]);
+    setTimeout(() => { switching = false; }, 250);
+  }
+
+  function reshuffle() {
+    const curId = cams[idx] && cams[idx].id;
+    shuffle(cams, rnd);
+    const n = cams.findIndex(c => c.id === curId);
+    idx = (n >= 0) ? n : 0;
+    playCam(cams[idx]);
+  }
+
+  function setRoundMins(mins) {
+    const m = clamp(parseInt(mins, 10) || 5, 1, 120);
+    roundSeconds = m * 60;
+
+    const rem = remainingSeconds();
+    const next = Math.min(rem || roundSeconds, roundSeconds);
+    startRound(next);
+    postState({ reason: "set_mins" });
+  }
+
+  function goToId(id) {
+    const n = cams.findIndex(c => c && c.id === id);
+    if (n >= 0) { idx = n; playCam(cams[idx]); }
+  }
+
+  function banId(id) {
+    if (!id) return;
+    banned.add(id);
+    saveSetBoth([BAN_KEY, BAN_KEY_LEGACY], banned);
+    applyFilters();
+    idx = idx % Math.max(1, cams.length);
+    playCam(cams[idx]);
+  }
+
+  function resetState() {
+    lsDel(STORAGE_KEY);
+    lsDel(STORAGE_KEY_LEGACY);
+
+    idx = 0;
+    modeAdfree = false;
+    autoskip = true;
+
+    applyFilters();
+    setFit("cover");
+    setRoundMins(5);
+    setHudHidden(false);
+    setHudCollapsed(true);
+    setPlaying(true);
+    adHide();
+    playCam(cams[idx]);
+    postState({ reason: "reset" });
+  }
+
   // ───────────────────────── State publish ─────────────────────────
-  function postState(extra = {}) {
+  let lastPostAt = 0;
+  function postState(extra = {}, force = true) {
+    const now = Date.now();
+    if (!force) {
+      if ((now - lastPostAt) < 500) return;
+    }
+    lastPostAt = now;
+
     const cam = cams[idx] || {};
     const state = {
       type: "state",
-      ts: Date.now(),
+      ts: now,
+      key: KEY || undefined,
+      version: "2.2.1",
       playing,
       idx,
       total: cams.length,
@@ -1690,6 +1760,7 @@
       autoskip,
       adfree: modeAdfree,
       ytCookies: !!P.ytCookies,
+
       cam: {
         id: cam.id, title: cam.title, place: cam.place, source: cam.source,
         originUrl: cam.originUrl, kind: cam.kind
@@ -1716,10 +1787,10 @@
         overlay: voteOverlay,
         channel: twitchChannel || "",
         windowSec: voteWindowSec,
-        voteAtSec: voteAtSec,
+        voteAtSec,
         leadSec: voteLeadSec,
         uiSec: voteUiSec,
-        stayMins: stayMins,
+        stayMins,
         cmd: voteCmdStr,
         sessionActive: voteSessionActive,
         phase: votePhase,
@@ -1732,23 +1803,35 @@
         active: adActive,
         phase: adPhase,
         adLead: adLeadDefaultSec,
-        adShowDuring: adShowDuring,
-        adChatText: adChatText
+        adShowDuring,
+        adChatText
       },
 
       alertsEnabled,
+      owner: OWNER_MODE ? 1 : 0,
 
       ...extra
     };
 
-    try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch (_) {}
-    try { if (bc) bc.postMessage(state); } catch (_) {}
+    const raw = JSON.stringify(state);
+
+    // ✅ Publica en namespaced + legacy (compat)
+    lsSet(STATE_KEY, raw);
+    lsSet(STATE_KEY_LEGACY, raw);
+
+    try { if (bcMain) bcMain.postMessage(state); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(state); } catch (_) {}
   }
 
   // ───────────────────────── Commands ─────────────────────────
-  function cmdKeyOk(msg) {
-    if (!P.key) return true;
-    return (msg && msg.key === P.key);
+  let lastCmdTs = 0;
+
+  function cmdKeyOk(msg, isMainChannel) {
+    if (!KEY) return true;
+    // En canal/clave main (namespaced), aceptamos incluso si el msg no trae key
+    if (isMainChannel) return true;
+    // En legacy, exige key igual para evitar cross-talk
+    return (msg && msg.key === KEY);
   }
 
   function applyCommand(cmd, payload) {
@@ -1761,10 +1844,10 @@
       case "SHUFFLE": reshuffle(); break;
 
       case "SET_MINS": setRoundMins(payload?.mins); break;
-      case "SET_FIT": setFit(payload?.fit); postState(); break;
+      case "SET_FIT": setFit(payload?.fit); postState({ reason: "set_fit" }); break;
       case "SET_HUD": setHudHidden(payload?.on === false); break;
       case "SET_HUD_DETAILS": setHudCollapsed(payload?.collapsed !== false); break;
-      case "SET_AUTOSKIP": autoskip = !!payload?.on; postState(); break;
+      case "SET_AUTOSKIP": autoskip = !!payload?.on; postState({ reason: "set_autoskip" }); break;
 
       case "SET_ADFREE":
         modeAdfree = !!payload?.on;
@@ -1819,7 +1902,7 @@
 
         ensureIrc();
         voteReset();
-        postState();
+        postState({ reason: "twitch_set" });
         break;
       }
 
@@ -1828,36 +1911,36 @@
         const w = clamp(parseInt(payload?.windowSec ?? voteWindowSec, 10) || voteWindowSec, 5, 180);
         const lead = clamp(parseInt(payload?.leadSec ?? voteLeadSec, 10) || voteLeadSec, 0, 30);
         voteStartSequence(w, lead);
-        postState();
+        postState({ reason: "vote_start" });
         break;
       }
 
-      // ADS overlay (runtime)
+      // ADS overlay
       case "ADS_SET": {
         if (payload?.enabled != null) adsEnabled = !!payload.enabled;
         if (payload?.adLead != null) adLeadDefaultSec = clamp(parseInt(payload.adLead, 10) || adLeadDefaultSec, 0, 300);
         if (payload?.adShowDuring != null) adShowDuring = !!payload.adShowDuring;
         if (payload?.adChatText != null) adChatText = String(payload.adChatText || "").trim() || adChatText;
         if (!adsEnabled) adHide();
-        postState();
+        postState({ reason: "ads_set" });
         break;
       }
 
       case "AD_NOTICE": {
         const lead = (payload?.leadSec != null) ? (payload.leadSec | 0) : adLeadDefaultSec;
         adTotalLead = Math.max(1, clamp(lead | 0, 0, 3600));
-        adStartLead(adTotalLead);
-        postState();
+        adStartLead(adTotalLead, twitchChannel);
+        postState({ reason: "ad_notice" });
         break;
       }
       case "AD_BEGIN": {
-        adStartLive((payload?.durationSec ?? payload?.duration_seconds ?? 30) | 0);
-        postState();
+        adStartLive((payload?.durationSec ?? payload?.duration_seconds ?? 30) | 0, twitchChannel);
+        postState({ reason: "ad_begin" });
         break;
       }
       case "AD_CLEAR": {
         adHide();
-        postState();
+        postState({ reason: "ad_clear" });
         break;
       }
 
@@ -1865,7 +1948,7 @@
       case "ALERT": {
         const t = payload?.type || payload?.alertType || "info";
         alertsPush(t, payload?.title || "Alerta", payload?.text || payload?.message || "");
-        postState();
+        postState({ reason: "alert" });
         break;
       }
 
@@ -1873,36 +1956,33 @@
     }
   }
 
-  if (bc) {
-    bc.onmessage = (ev) => {
-      const msg = ev?.data;
-      if (!msg || msg.type !== "cmd") return;
-      if ((msg.ts | 0) <= (lastCmdTs | 0)) return;
-      if (!cmdKeyOk(msg)) return;
-      lastCmdTs = msg.ts | 0;
-      applyCommand(msg.cmd, msg.payload || {});
-    };
+  function onCmd(msg, isMainChannel) {
+    if (!msg || msg.type !== "cmd") return;
+    if ((msg.ts | 0) <= (lastCmdTs | 0)) return;
+    if (!cmdKeyOk(msg, isMainChannel)) return;
+    lastCmdTs = msg.ts | 0;
+    applyCommand(msg.cmd, msg.payload || {});
+  }
+
+  if (bcMain) {
+    bcMain.onmessage = (ev) => onCmd(ev?.data, true);
+  }
+  if (bcLegacy) {
+    bcLegacy.onmessage = (ev) => onCmd(ev?.data, false);
   }
 
   window.addEventListener("storage", (e) => {
-    if (!e || e.key !== CMD_KEY || !e.newValue) return;
+    if (!e || !e.key || !e.newValue) return;
+    if (e.key !== CMD_KEY && e.key !== CMD_KEY_LEGACY) return;
     try {
       const msg = JSON.parse(e.newValue);
-      if (!msg || msg.type !== "cmd") return;
-      if ((msg.ts | 0) <= (lastCmdTs | 0)) return;
-      if (!cmdKeyOk(msg)) return;
-      lastCmdTs = msg.ts | 0;
-      applyCommand(msg.cmd, msg.payload || {});
+      onCmd(msg, e.key === CMD_KEY);
     } catch (_) {}
   });
 
-  // Persist player state
+  // ───────────────────────── Persist player state ─────────────────────────
   function loadPlayerState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (_) { return null; }
+    return loadJsonFirst([STORAGE_KEY, STORAGE_KEY_LEGACY], null);
   }
 
   function savePlayerState() {
@@ -1946,13 +2026,18 @@
         adShowDuring: adShowDuring ? 1 : 0,
         adChatText,
 
+        key: KEY || "",
         ts: Date.now(),
-        v: 207
+        v: 221
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
+
+      const raw = JSON.stringify(st);
+      lsSet(STORAGE_KEY, raw);
+      lsSet(STORAGE_KEY_LEGACY, raw);
     } catch (_) {}
   }
 
+  // ───────────────────────── Tick ─────────────────────────
   function tick() {
     setCountdownUI();
     adTick();
@@ -1963,12 +2048,12 @@
     if (playing && rem <= 0) {
       if (voteSessionActive && votePhase === "vote") {
         voteFinish();
-        postState();
+        postState({ reason: "segment_end_vote" });
         return;
       }
       voteReset();
       nextCam("timer");
-      postState();
+      postState({ reason: "segment_end" });
       return;
     }
 
@@ -2014,22 +2099,34 @@
       voteReset();
     }
 
-    postState();
+    // Post state throttled (evita machacar localStorage 4 veces/s)
+    postState({}, false);
   }
 
+  // ───────────────────────── Boot ─────────────────────────
   function boot() {
     if (!allCams.length) {
       showFallback({ originUrl: "#" }, "No hay cámaras definidas (revisa cams.js).");
+      postState({ ready: false, error: "no_cams" });
       return;
     }
 
     setFit(P.fit);
 
-    // HUD prefs
+    // HUD prefs (keyed, con fallback legacy si no existe)
     let collapsed = true;
     let hidden = !P.hud;
-    try { collapsed = (localStorage.getItem(HUD_COLLAPSE_KEY) ?? "1") === "1"; } catch (_) {}
-    try { hidden = (localStorage.getItem(HUD_HIDE_KEY) ?? (P.hud ? "0" : "1")) === "1"; } catch (_) {}
+
+    try {
+      const v = lsGet(HUD_COLLAPSE_KEY);
+      collapsed = (v != null) ? (v === "1") : ((lsGet(HUD_COLLAPSE_KEY_BASE) ?? "1") === "1");
+    } catch (_) {}
+
+    try {
+      const v = lsGet(HUD_HIDE_KEY);
+      hidden = (v != null) ? (v === "1") : ((lsGet(HUD_HIDE_KEY_BASE) ?? (P.hud ? "0" : "1")) === "1");
+    } catch (_) {}
+
     setHudCollapsed(collapsed);
     setHudHidden(hidden);
 
@@ -2044,25 +2141,23 @@
 
     const st = loadPlayerState();
 
-    // ─────────────── OWNER DETECT: canal twitch automático ───────────────
+    // OWNER DETECT: canal twitch automático
     // Prioridad: URL twitch > saved state > bot cfg > fallback (solo si OWNER_MODE)
     let inferredTwitch = String(P.twitch || "").trim().replace(/^@/, "");
     if (!inferredTwitch) inferredTwitch = String(st?.twitchChannel || "").trim().replace(/^@/, "");
     if (!inferredTwitch) inferredTwitch = readBotCfgChannel();
-
     if (!inferredTwitch && OWNER_MODE) inferredTwitch = OWNER_DEFAULT_TWITCH;
 
-    // Si URL no traía twitch, aplicamos inferencia
     if (!P.twitchExplicit && inferredTwitch) twitchChannel = inferredTwitch;
 
-    // Auto-defaults solo en owner mode si no se pasaron explícitos y no hay state que los defina
+    // Auto-defaults solo en owner mode si no se pasaron explícitos y no hay state
     if (OWNER_MODE && twitchChannel) {
       if (!P.chatExplicit && (st?.chatEnabled == null)) chatEnabled = true;
       if (!P.voteExplicit && (st?.voteEnabled == null)) { voteEnabled = true; voteOverlay = true; }
       if (!P.alertsExplicit && (st?.alertsEnabled == null)) alertsEnabled = true;
     }
 
-    // ─────────────── Restore ───────────────
+    // Restore
     if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length) {
       idx = st.idx | 0;
       playing = !!st.playing;
@@ -2083,7 +2178,6 @@
       // Vote restore
       voteEnabled = (st.voteEnabled ?? 0) !== 0 || voteEnabled;
       voteOverlay = (st.voteOverlay ?? 1) !== 0;
-      // twitchChannel ya inferido arriba si hacía falta
       if (st.twitchChannel && !P.twitchExplicit) twitchChannel = String(st.twitchChannel || twitchChannel).trim().replace(/^@/, "");
 
       voteWindowSec = clamp((st.voteWindowSec | 0) || voteWindowSec, 5, 180);
@@ -2170,7 +2264,6 @@
     try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
     if (bgmList.length) bgmLoadTrack(bgmIdx);
     if (bgmEnabled && bgmPlaying) bgmPlay();
-    if (bgmEnabled && !bgmPlaying) postState();
 
     // IRC init
     ensureIrc();
@@ -2181,10 +2274,10 @@
     tickTimer = setInterval(tick, 250);
 
     if (saveTimer) clearInterval(saveTimer);
-    saveTimer = setInterval(() => { savePlayerState(); postState(); }, 2000);
+    saveTimer = setInterval(() => { savePlayerState(); postState({ reason: "heartbeat" }, true); }, 2000);
 
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) { savePlayerState(); postState(); }
+      if (document.hidden) { savePlayerState(); postState({ reason: "hidden" }, true); }
     });
 
     // Teclas
@@ -2198,7 +2291,7 @@
       else if (k === "c") chatSetEnabled(!chatEnabled);
     });
 
-    postState({ ready: true, owner: OWNER_MODE ? 1 : 0 });
+    postState({ ready: true }, true);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
