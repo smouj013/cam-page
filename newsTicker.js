@@ -1,12 +1,13 @@
-/* newsTicker.js — RLC Global News Ticker v1.1.0 (CONTROL + STORAGE)
-   ✅ Se integra dentro de #stage .layer-ui
-   ✅ Gratis (GDELT)
-   ✅ Ahora soporta configuración desde Control Room:
+/* newsTicker.js — RLC Global News Ticker v1.2.0 (CONTROL + STORAGE + ROBUST)
+   ✅ Inserta ticker en #stage .layer-ui (o fallback)
+   ✅ Gratis (GDELT) + CORS robust (directo → allorigins → r.jina.ai)
+   ✅ Cache local (titulares) para resiliencia
+   ✅ Config desde Control Room:
       - localStorage: rlc_ticker_cfg_v1
       - BroadcastChannel: rlc_bus_v1, msg { type:"TICKER_CFG", cfg }
-   ✅ URL params siguen funcionando y tienen prioridad:
+   ✅ URL params (prioridad más alta):
       ?ticker=0
-      ?tickerLang=es|en
+      ?tickerLang=es|en|auto
       ?tickerSpeed=70
       ?tickerRefresh=10
       ?tickerTop=12
@@ -18,15 +19,16 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V110";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V120";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS = "rlc_bus_v1";
   const CFG_KEY = "rlc_ticker_cfg_v1";
+  const CACHE_KEY = "rlc_ticker_cache_v1"; // { ts, lang, items }
 
-  const qs = (s, r=document) => r.querySelector(s);
-  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  const safeStr = (v)=> (typeof v==="string") ? v.trim() : "";
+  const qs = (s, r = document) => r.querySelector(s);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
   const num = (v, fb) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : fb;
@@ -34,19 +36,16 @@
 
   const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
 
-  function readStoredCfg() {
+  function readJson(key) {
     try {
-      const raw = localStorage.getItem(CFG_KEY);
+      const raw = localStorage.getItem(key);
       if (!raw) return null;
       const obj = JSON.parse(raw);
       return (obj && typeof obj === "object") ? obj : null;
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
-
-  function writeStoredCfg(cfg) {
-    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (_) {}
+  function writeJson(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
 
   function parseParams() {
@@ -77,7 +76,7 @@
 
   function cfgFromUrl() {
     const out = {};
-    if (P.lang === "es" || P.lang === "en") out.lang = P.lang;
+    if (P.lang === "es" || P.lang === "en" || P.lang === "auto") out.lang = P.lang;
     if (P.speed) out.speedPxPerSec = clamp(num(P.speed, DEFAULTS.speedPxPerSec), 20, 140);
     if (P.refresh) out.refreshMins = clamp(num(P.refresh, DEFAULTS.refreshMins), 3, 60);
     if (P.top) out.topPx = clamp(num(P.top, DEFAULTS.topPx), 0, 120);
@@ -96,30 +95,29 @@
     return c;
   }
 
-  // Merge priority: defaults <- localStorage <- URL params
-  let CFG = normalizeCfg(Object.assign(
-    {},
-    DEFAULTS,
-    readStoredCfg() || {},
-    cfgFromUrl()
-  ));
+  // Prioridad: defaults <- localStorage <- URL
+  let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readJson(CFG_KEY) || {}, cfgFromUrl()));
 
   const API = {
     gdelt: {
       endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
-      query_es: 'mundo OR internacional OR "última hora" OR conflicto OR cumbre OR economía OR tecnología OR clima',
-      query_en: 'world OR international OR "breaking news" OR conflict OR summit OR economy OR technology OR climate'
+      // queries “safe” (sin términos sensibles/violentos explícitos) pero útiles
+      query_es: 'internacional OR mundo OR "última hora" OR cumbre OR economía OR tecnología OR ciencia OR clima OR salud OR mercados',
+      query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
     },
-    maxItems: 24
+    maxItems: 22
   };
 
-  // ───────────────────────────────────────── UI
+  // ───────────────────────────────────────── UI / CSS
   function injectStyles() {
     if (qs("#rlcNewsTickerStyle")) return;
+
     const st = document.createElement("style");
     st.id = "rlcNewsTickerStyle";
     st.textContent = `
 #stage.stage{ position: relative; }
+
+/* Ticker */
 #rlcNewsTicker{
   position: absolute;
   left: 10px;
@@ -148,17 +146,19 @@
   padding: 0 12px;
   border-right: 1px solid rgba(255,255,255,.10);
   background: linear-gradient(90deg, rgba(255,55,95,.20), rgba(255,55,95,0));
-  font: 800 12px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  font: 900 12px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
   letter-spacing: .14em;
   text-transform: uppercase;
   color: rgba(255,255,255,.92);
   user-select:none;
+  white-space: nowrap;
 }
 #rlcNewsTicker .dot{
   width: 8px; height: 8px; border-radius: 999px;
   background: #ff375f;
   box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
 }
+
 #rlcNewsTicker .viewport{
   position: relative;
   overflow:hidden;
@@ -188,11 +188,17 @@
 }
 #rlcNewsTicker:hover .track{ animation-play-state: paused; }
 
+#rlcNewsTicker .seg{
+  display:flex;
+  align-items:center;
+  gap: 18px;
+  white-space: nowrap;
+}
 #rlcNewsTicker .item{
   display:inline-flex;
   align-items:center;
   gap: 10px;
-  font: 700 12px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  font: 800 12px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
   color: rgba(255,255,255,.88);
   text-decoration: none;
   opacity: .92;
@@ -204,18 +210,36 @@
   box-shadow: 0 0 0 3px rgba(255,255,255,.06);
 }
 #rlcNewsTicker .src{
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(255,255,255,.70);
   letter-spacing: .02em;
 }
+
 @keyframes rlcTickerMove{
   from{ transform: translate3d(0,0,0); }
-  to{ transform: translate3d(var(--rlcTickerEnd, -1000px),0,0); }
+  to{ transform: translate3d(var(--rlcTickerEnd, -1200px),0,0); }
 }
+
 @media (prefers-reduced-motion: reduce){
   #rlcNewsTicker .track{ animation: none !important; transform:none !important; }
 }
+
+/* ✅ Empuja overlays de arriba para que queden por debajo del ticker */
+:root{
+  --rlcTickerH: 34px;
+  --rlcTickerGap: 10px;
+}
+#voteBox,
+.vote{
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
+}
+
+/* Intento seguro para overlays de anuncios (si existen con estos IDs comunes) */
+#adsBox, #adBox, #adsNotice, #adNotice, #rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
+}
 `.trim();
+
     document.head.appendChild(st);
   }
 
@@ -237,12 +261,15 @@
     root.innerHTML = `
       <div class="label" title="Noticias internacionales">
         <span class="dot" aria-hidden="true"></span>
-        <span id="rlcNewsTickerLabel">${(CFG.lang === "en" || (CFG.lang==="auto" && langAuto==="en")) ? "News" : "Noticias"}</span>
+        <span id="rlcNewsTickerLabel"></span>
       </div>
       <div class="viewport">
         <div class="fadeL" aria-hidden="true"></div>
         <div class="fadeR" aria-hidden="true"></div>
-        <div class="track" id="rlcNewsTickerTrack" aria-live="polite"></div>
+        <div class="track" id="rlcNewsTickerTrack" aria-live="polite">
+          <div class="seg" id="rlcNewsTickerSeg"></div>
+          <div class="seg" id="rlcNewsTickerSeg2" aria-hidden="true"></div>
+        </div>
       </div>
     `.trim();
 
@@ -253,10 +280,20 @@
   function setVisible(on) {
     const root = ensureUI();
     if (!root) return;
+
     root.classList.toggle("hidden", !on);
+
+    // Si se oculta, no empujamos overlays
+    if (!on) {
+      root.style.setProperty("--rlcTickerH", `0px`);
+      document.documentElement.style.setProperty("--rlcTickerH", `0px`);
+    } else {
+      root.style.setProperty("--rlcTickerH", `34px`);
+      document.documentElement.style.setProperty("--rlcTickerH", `34px`);
+    }
   }
 
-  // ───────────────────────────────────────── Fetch
+  // ───────────────────────────────────────── Fetch (robusto)
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -267,10 +304,10 @@
     } finally { clearTimeout(t); }
   }
 
-  function allOrigins(url){
+  function allOrigins(url) {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   }
-  function jina(url){
+  function jina(url) {
     const u = safeStr(url);
     if (u.startsWith("https://")) return `https://r.jina.ai/https://${u.slice("https://".length)}`;
     if (u.startsWith("http://"))  return `https://r.jina.ai/http://${u.slice("http://".length)}`;
@@ -284,10 +321,13 @@
       () => fetchText(jina(url))
     ];
     let lastErr = null;
+
     for (const fn of tries) {
       try {
         const txt = await fn();
+        // parse directo
         try { return JSON.parse(txt); } catch (_) {}
+        // intenta recortar JSON si viene envuelto
         const a = txt.indexOf("{");
         const b = txt.lastIndexOf("}");
         if (a >= 0 && b > a) return JSON.parse(txt.slice(a, b + 1));
@@ -311,15 +351,26 @@
 
   function cleanTitle(s) {
     let t = safeStr(s).replace(/\s+/g, " ").trim();
-    if (t.length < 18) return "";
+    if (t.length < 14) return "";
     if (t.length > 140) t = t.slice(0, 137).trim() + "…";
     return t;
+  }
+
+  function normalizeSource(a) {
+    const domain = safeStr(a?.domain || a?.source || "");
+    const sc = safeStr(a?.sourceCountry || "");
+    const src = domain || sc || "";
+    if (!src) return "NEWS";
+    // limpia dominio tipo "www.bbc.co.uk" => "BBC.CO.UK"
+    const cleaned = src.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+    return cleaned.toUpperCase().slice(0, 22);
   }
 
   async function getHeadlines() {
     const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
     const q = (lang === "es") ? API.gdelt.query_es : API.gdelt.query_en;
 
+    // DOC API (ArtList) — sin API key
     const url =
       `${API.gdelt.endpoint}` +
       `?query=${encodeURIComponent(q)}` +
@@ -337,41 +388,30 @@
     const mapped = articles.map(a => {
       const title = cleanTitle(a?.title || a?.name || "");
       const link  = safeStr(a?.url || a?.link || "");
-      const src   = safeStr(a?.sourceCountry || a?.source || a?.domain || "");
       if (!title || !link) return null;
-      return { title, url: link, source: src };
+      return { title, url: link, source: normalizeSource(a) };
     }).filter(Boolean);
 
-    return uniqBy(mapped, x => (x.title + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
+    const uniq = uniqBy(mapped, x => (x.title + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
+    return uniq;
   }
 
-  // ───────────────────────────────────────── Render
-  function setTickerItems(items) {
-    const root = ensureUI();
-    const track = qs("#rlcNewsTickerTrack", root);
-    if (!track) return;
-
-    // label segun idioma final
-    const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
+  // ───────────────────────────────────────── Render (loop suave)
+  function setLabel(root, lang) {
     const label = qs("#rlcNewsTickerLabel", root);
-    if (label) label.textContent = (lang === "en") ? "News" : "Noticias";
+    if (label) label.textContent = (lang === "en") ? "NEWS" : "NOTICIAS";
+  }
 
-    // top offset
-    root.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
-
-    const safeItems = Array.isArray(items) ? items : [];
-    const list = (safeItems.length ? safeItems : [
+  function buildItemsDOM(items, lang) {
+    const list = (Array.isArray(items) && items.length) ? items : [
       {
         title: (lang === "es")
-          ? "Sin conexión: reintentando cargar titulares internacionales…"
-          : "Offline: retrying to load international headlines…",
+          ? "Conectando a noticias internacionales…"
+          : "Connecting to international news…",
         url: "#",
         source: "RLC"
       }
-    ]);
-
-    track.style.animation = "none";
-    track.innerHTML = "";
+    ];
 
     const frag = document.createDocumentFragment();
 
@@ -396,35 +436,57 @@
 
       const src = document.createElement("span");
       src.className = "src";
-      src.textContent = it.source ? String(it.source).toUpperCase() : "NEWS";
+      src.textContent = it.source || "NEWS";
 
       a.appendChild(sep);
       a.appendChild(title);
       a.appendChild(src);
+
       frag.appendChild(a);
     }
 
-    track.appendChild(frag);
+    return frag;
+  }
 
-    // Duplicar para loop suave
-    const viewport = track.parentElement;
-    const viewportW = viewport ? (viewport.clientWidth || 800) : 800;
+  function setTickerItems(items) {
+    const root = ensureUI();
+    const track = qs("#rlcNewsTickerTrack", root);
+    const seg1 = qs("#rlcNewsTickerSeg", root);
+    const seg2 = qs("#rlcNewsTickerSeg2", root);
+    const viewport = track ? track.parentElement : null;
 
-    let baseHTML = track.innerHTML;
-    let baseW = track.scrollWidth || 1200;
+    if (!root || !track || !seg1 || !seg2) return;
+
+    const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
+    setLabel(root, lang);
+
+    root.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
+    document.documentElement.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
+
+    // reset
+    track.style.animation = "none";
+    seg1.innerHTML = "";
+    seg2.innerHTML = "";
+
+    const frag = buildItemsDOM(items, lang);
+    seg1.appendChild(frag);
+
+    // si el contenido es corto, repetimos dentro del seg1 hasta cubrir
+    const vw = viewport ? (viewport.clientWidth || 900) : 900;
 
     let guard = 0;
-    while (baseW < viewportW * 1.6 && guard < 6) {
-      track.innerHTML += baseHTML;
-      baseHTML = track.innerHTML;
-      baseW = track.scrollWidth || baseW;
+    while ((seg1.scrollWidth || 0) < vw * 1.2 && guard < 8) {
+      // duplica contenido del seg1
+      seg1.innerHTML += seg1.innerHTML;
       guard++;
     }
 
-    const finalBaseW = track.scrollWidth || 1600;
-    track.innerHTML += track.innerHTML;
+    // clona seg1 en seg2 para loop perfecto
+    seg2.innerHTML = seg1.innerHTML;
 
-    const endPx = -Math.max(900, finalBaseW);
+    // calcula duración / end
+    const segW = Math.max(1200, seg1.scrollWidth || 1200);
+    const endPx = -segW;
     const durSec = Math.max(18, Math.min(220, Math.abs(endPx) / CFG.speedPxPerSec));
 
     track.style.setProperty("--rlcTickerEnd", `${endPx}px`);
@@ -435,6 +497,7 @@
 
   // ───────────────────────────────────────── Hide on vote
   let voteObs = null;
+
   function setupHideOnVote() {
     try { voteObs?.disconnect(); } catch (_) {}
     voteObs = null;
@@ -445,9 +508,9 @@
     const apply = () => {
       if (!CFG.enabled) { setVisible(false); return; }
       if (!CFG.hideOnVote) { setVisible(true); return; }
-      const isHidden = vote.classList.contains("hidden");
-      // si el voto está visible (NO hidden) => ocultar ticker
-      setVisible(isHidden);
+      const isVoteHidden = vote.classList.contains("hidden");
+      // Si voto visible => ocultar ticker
+      setVisible(isVoteHidden);
     };
 
     apply();
@@ -456,46 +519,77 @@
     voteObs.observe(vote, { attributes: true, attributeFilter: ["class"] });
   }
 
-  // ───────────────────────────────────────── Loop refresh
-  let refreshTimer = null;
+  // ───────────────────────────────────────── Cache
+  function readCache() {
+    const c = readJson(CACHE_KEY);
+    if (!c || typeof c !== "object") return null;
+    if (!Array.isArray(c.items)) return null;
+    return c;
+  }
 
-  async function refresh() {
+  function writeCache(lang, items) {
+    writeJson(CACHE_KEY, { ts: Date.now(), lang, items });
+  }
+
+  // ───────────────────────────────────────── Refresh loop
+  let refreshTimer = null;
+  let refreshInFlight = false;
+
+  async function refresh(force = false) {
     if (!CFG.enabled) { setVisible(false); return; }
     setVisible(true);
+
+    const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
+
+    // cache-first si no force
+    if (!force) {
+      const cache = readCache();
+      const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
+      if (cache && cache.lang === lang && (Date.now() - (cache.ts || 0) <= maxAge)) {
+        setTickerItems(cache.items);
+        return;
+      }
+    }
+
+    if (refreshInFlight) return;
+    refreshInFlight = true;
+
     try {
       const items = await getHeadlines();
       setTickerItems(items);
+      writeCache(lang, items);
     } catch (_) {
-      setTickerItems([]);
+      const cache = readCache();
+      if (cache?.items?.length) setTickerItems(cache.items);
+      else setTickerItems([]);
+    } finally {
+      refreshInFlight = false;
     }
   }
 
   function startTimer() {
     if (refreshTimer) clearInterval(refreshTimer);
     const every = Math.max(180000, CFG.refreshMins * 60 * 1000);
-    refreshTimer = setInterval(refresh, every);
+    refreshTimer = setInterval(() => refresh(false), every);
   }
 
   function applyCfg(nextCfg, persist = false) {
     CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
-    if (persist) writeStoredCfg(CFG);
+    if (persist) writeJson(CFG_KEY, CFG);
 
-    if (!CFG.enabled) {
-      setVisible(false);
-    } else {
-      setVisible(true);
-    }
+    if (!CFG.enabled) setVisible(false);
+    else setVisible(true);
 
     setupHideOnVote();
     startTimer();
-    refresh();
+    refresh(true);
   }
 
   function boot() {
     ensureUI();
     applyCfg(CFG, false);
 
-    // Escucha config desde Control Room
+    // Config desde Control Room
     try {
       if (bc) {
         bc.addEventListener("message", (ev) => {
@@ -508,14 +602,19 @@
       }
     } catch (_) {}
 
-    // Fallback: si cambian keys en localStorage (otra pestaña)
+    // storage event (otra pestaña)
     window.addEventListener("storage", (e) => {
       if (!e) return;
       if (e.key === CFG_KEY) {
-        const stored = readStoredCfg();
+        const stored = readJson(CFG_KEY);
         if (stored) applyCfg(stored, false);
       }
     });
+
+    // primera carga: si hay cache, pinta rápido
+    const cache = readCache();
+    if (cache?.items?.length) setTickerItems(cache.items);
+    refresh(false);
   }
 
   if (document.readyState === "loading") {

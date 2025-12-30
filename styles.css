@@ -1,7 +1,9 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.1
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
-   🎯 Objetivo: cero solapes, textos legibles (wrap), HUD simple+moderno, look “nuevo” sin imágenes
+   🎯 Fix clave v3.1:
+   - Reserva “zona superior” si existe #rlcNewsTicker (para que VOTE/ADS/alerts queden DEBAJO)
+   - Sin tocar ningún otro script
 */
 
 /* ───────────────────────── Theme Tokens ───────────────────────── */
@@ -53,6 +55,23 @@
   /* Crispness */
   --line: 1.28;
   --letter: .01em;
+
+  /* ───────────────────────── Ticker stacking (NEW) ─────────────────────────
+     👉 Reservamos altura para el rótulo de noticias (newsTicker.js suele ser 34px).
+     Esto evita que el panel de VOTO / ADS / alerts “choque” por arriba.
+     Si el ticker se oculta, intentamos quitar la reserva con :has (si hay soporte).
+  */
+  --ticker-h: 34px;
+  --ticker-gap: 12px;
+  --ui-top-offset: calc(var(--ticker-h) + var(--ticker-gap));
+}
+
+/* Si el navegador soporta :has(), quitamos la reserva cuando NO hay ticker o está hidden */
+@supports selector(:has(*)) {
+  body:not(:has(#rlcNewsTicker)),
+  body:has(#rlcNewsTicker.hidden){
+    --ui-top-offset: 0px;
+  }
 }
 
 *{ box-sizing: border-box; }
@@ -363,7 +382,8 @@ input[type="range"]{ accent-color: var(--accent); }
 
 .vote{
   position:absolute;
-  top: max(12px, env(safe-area-inset-top));
+  /* ✅ DEBAJO del ticker */
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
   right: max(12px, env(safe-area-inset-right));
   width: min(320px, calc(100vw - 24px));
   z-index: 6;
@@ -445,6 +465,17 @@ input[type="range"]{ accent-color: var(--accent); }
   min-width: 0;
 }
 .voteBarLabel > *{ min-width:0; }
+
+/* ───────────────────────── ADS/ALERT overlays (compat genérica) ─────────────────────────
+   No tocamos scripts. Esto “atrapa” IDs/clases típicas si ya existen en tu proyecto.
+   Si alguno no existe, no pasa nada.
+*/
+#adsBox, #adBox, #adOverlay, #adsOverlay, #rlcAdsBox, #rlcAdBox, #rlcAdOverlay, #rlcAdsOverlay,
+.adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice, .alertBox, .alertsBox, .alertOverlay{
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+  z-index: 6;
+}
 
 /* ───────────────────────── Chat Overlay ───────────────────────── */
 
@@ -676,7 +707,6 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── Optional: better rendering on OLED ───────────────────────── */
-/* (no rompe nada; solo hace el negro más “profundo” en algunos móviles) */
 @media (dynamic-range: high){
   :root{ --bg:#03040a; }
 }

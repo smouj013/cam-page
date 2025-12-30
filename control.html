@@ -1,29 +1,30 @@
 <!doctype html>
-<html lang="es" data-theme="dark">
+<html lang="es" data-theme="dark" data-ui="neo-atlas">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
   <meta name="format-detection" content="telephone=no" />
+  <meta name="robots" content="noindex,nofollow" />
 
   <title>Random Live Cams — Control</title>
 
   <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.1.4";</script>
+  <script>window.APP_VERSION = "2.2.0";</script>
 </head>
 
 <body class="mode-control">
-  <main class="controlWrap">
+  <main class="controlWrap" role="application" aria-label="Random Live Cams — Control Room">
     <header class="controlHeader">
       <div class="controlTitle">
         <div class="kicker">CONTROL ROOM</div>
         <div class="name">Random Live Cams</div>
       </div>
-      <div class="pill mono" id="ctlStatus">Conectando…</div>
+      <div class="pill mono" id="ctlStatus" aria-live="polite">Conectando…</div>
     </header>
 
-    <section class="controlGrid">
+    <section class="controlGrid" aria-label="Panel de control">
       <!-- NOW -->
       <div class="card">
         <div class="cardTitle">Ahora</div>
@@ -43,9 +44,9 @@
       <div class="card">
         <div class="cardTitle">Transporte</div>
         <div class="controls3">
-          <button class="btn" id="ctlPrev" type="button">◀</button>
-          <button class="btn" id="ctlPlay" type="button">⏸</button>
-          <button class="btn" id="ctlNext" type="button">▶</button>
+          <button class="btn" id="ctlPrev" type="button" aria-label="Anterior">◀</button>
+          <button class="btn" id="ctlPlay" type="button" aria-label="Pausa/Reanudar">⏸</button>
+          <button class="btn" id="ctlNext" type="button" aria-label="Siguiente">▶</button>
         </div>
         <button class="btn ghost full" id="ctlShuffle" type="button">🎲 Mezclar</button>
       </div>
@@ -54,13 +55,13 @@
       <div class="card">
         <div class="cardTitle">Ajustes</div>
 
-        <label class="row">
+        <label class="row" for="ctlMins">
           <span>Duración (min)</span>
           <input id="ctlMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
         </label>
         <button id="ctlApplyMins" class="btn full" type="button">Aplicar duración</button>
 
-        <label class="row">
+        <label class="row" for="ctlFit">
           <span>Fit</span>
           <select id="ctlFit" class="select">
             <option value="cover">Cover</option>
@@ -68,7 +69,7 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlHud">
           <span>HUD</span>
           <select id="ctlHud" class="select">
             <option value="on">Mostrar</option>
@@ -76,7 +77,7 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlHudDetails">
           <span>Detalles HUD</span>
           <select id="ctlHudDetails" class="select">
             <option value="collapsed">Colapsado</option>
@@ -84,7 +85,7 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlAutoskip">
           <span>Autoskip (errores)</span>
           <select id="ctlAutoskip" class="select">
             <option value="on">ON</option>
@@ -92,7 +93,7 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlAdfree">
           <span>Adfree</span>
           <select id="ctlAdfree" class="select">
             <option value="off">OFF</option>
@@ -104,21 +105,21 @@
       </div>
 
       <!-- ✅ NEWS TICKER (CONFIG) -->
-      <div class="card">
+      <div class="card card--ticker">
         <div class="cardTitle">Noticias (ticker)</div>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlTickerOn">
             <span>Ticker</span>
             <select id="ctlTickerOn" class="select">
               <option value="on">ON</option>
               <option value="off">OFF</option>
             </select>
           </label>
-          <div class="pill mono" id="ctlTickerStatus">Ticker: —</div>
+          <div class="pill mono" id="ctlTickerStatus" aria-live="polite">Ticker: —</div>
         </div>
 
-        <label class="row">
+        <label class="row" for="ctlTickerLang">
           <span>Idioma</span>
           <select id="ctlTickerLang" class="select">
             <option value="auto">AUTO</option>
@@ -128,22 +129,22 @@
         </label>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlTickerSpeed">
             <span>Velocidad (px/s)</span>
             <input id="ctlTickerSpeed" class="input" type="number" min="20" max="140" step="1" value="55" inputmode="numeric" />
           </label>
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlTickerRefresh">
             <span>Refresh (min)</span>
             <input id="ctlTickerRefresh" class="input" type="number" min="3" max="60" step="1" value="12" inputmode="numeric" />
           </label>
         </div>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlTickerTop">
             <span>Offset top (px)</span>
             <input id="ctlTickerTop" class="input" type="number" min="0" max="120" step="1" value="10" inputmode="numeric" />
           </label>
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlTickerHideOnVote">
             <span>Ocultar en voto</span>
             <select id="ctlTickerHideOnVote" class="select">
               <option value="on">ON</option>
@@ -177,7 +178,7 @@
       <!-- PREVIEW -->
       <div class="card">
         <div class="cardTitle">Preview (opcional)</div>
-        <label class="row">
+        <label class="row" for="ctlPreviewOn">
           <span>Mostrar</span>
           <select id="ctlPreviewOn" class="select">
             <option value="off">OFF</option>
@@ -200,7 +201,7 @@
       <div class="card">
         <div class="cardTitle">Música ambiente (BGM)</div>
 
-        <label class="row">
+        <label class="row" for="ctlBgmOn">
           <span>Enable</span>
           <select id="ctlBgmOn" class="select">
             <option value="off">OFF</option>
@@ -208,20 +209,20 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlBgmVol">
           <span>Volumen</span>
           <input id="ctlBgmVol" class="input" type="range" min="0" max="1" step="0.01" value="0.25" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlBgmTrack">
           <span>Track</span>
           <select id="ctlBgmTrack" class="select" aria-label="Track BGM"></select>
         </label>
 
         <div class="controls3">
-          <button class="btn" id="ctlBgmPrev" type="button">⏮</button>
-          <button class="btn" id="ctlBgmPlay" type="button">▶/⏸</button>
-          <button class="btn" id="ctlBgmNext" type="button">⏭</button>
+          <button class="btn" id="ctlBgmPrev" type="button" aria-label="Track anterior">⏮</button>
+          <button class="btn" id="ctlBgmPlay" type="button" aria-label="Play/Pausa BGM">▶/⏸</button>
+          <button class="btn" id="ctlBgmNext" type="button" aria-label="Siguiente track">⏭</button>
         </div>
         <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
 
@@ -232,20 +233,20 @@
       <div class="card">
         <div class="cardTitle">Twitch (votos / chat / alerts)</div>
 
-        <label class="row">
+        <label class="row" for="ctlTwitchChannel">
           <span>Canal</span>
           <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" autocomplete="off" />
         </label>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlVoteOn">
             <span>Votos</span>
             <select id="ctlVoteOn" class="select">
               <option value="off">OFF</option>
               <option value="on">ON</option>
             </select>
           </label>
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlVoteOverlay">
             <span>Overlay voto</span>
             <select id="ctlVoteOverlay" class="select">
               <option value="on">ON</option>
@@ -255,14 +256,14 @@
         </div>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlChatOn">
             <span>Chat overlay</span>
             <select id="ctlChatOn" class="select">
               <option value="on">ON</option>
               <option value="off">OFF</option>
             </select>
           </label>
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlChatHideCmd">
             <span>Ocultar cmds</span>
             <select id="ctlChatHideCmd" class="select">
               <option value="on">ON</option>
@@ -271,7 +272,7 @@
           </label>
         </div>
 
-        <label class="row">
+        <label class="row" for="ctlAlertsOn">
           <span>Alerts Twitch</span>
           <select id="ctlAlertsOn" class="select">
             <option value="on">ON</option>
@@ -279,27 +280,27 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlVoteWindow">
           <span>Duración voto (s)</span>
           <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="60" inputmode="numeric" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlVoteAt">
           <span>Auto (a falta)</span>
           <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" inputmode="numeric" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlVoteLead">
           <span>Pre-aviso (s)</span>
           <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" inputmode="numeric" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlStayMins">
           <span>STAY → re-voto (min)</span>
           <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlYtCookies">
           <span>YouTube cookies</span>
           <select id="ctlYtCookies" class="select">
             <option value="on">ON (sesión)</option>
@@ -307,7 +308,7 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlVoteCmd">
           <span>Cmds voto</span>
           <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" autocomplete="off" />
         </label>
@@ -326,7 +327,7 @@
       <div class="card">
         <div class="cardTitle">Anuncios (overlay en stream)</div>
 
-        <label class="row">
+        <label class="row" for="ctlAdsOn">
           <span>Ads overlay</span>
           <select id="ctlAdsOn" class="select">
             <option value="on">ON</option>
@@ -335,17 +336,17 @@
         </label>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlAdLead">
             <span>Lead (s)</span>
             <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" inputmode="numeric" />
           </label>
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlAdDur">
             <span>Duración (s)</span>
             <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" inputmode="numeric" />
           </label>
         </div>
 
-        <label class="row">
+        <label class="row" for="ctlAdShowDuring">
           <span>Mostrar durante</span>
           <select id="ctlAdShowDuring" class="select">
             <option value="on">ON</option>
@@ -353,7 +354,7 @@
           </select>
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlAdChatText">
           <span>Msg chat (lead)</span>
           <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" autocomplete="off" />
         </label>
@@ -374,27 +375,27 @@
         <div class="cardTitle">Bot (manda mensajes al chat)</div>
 
         <div class="row2">
-          <label class="row" style="margin:0">
+          <label class="row" style="margin:0" for="ctlBotOn">
             <span>Bot</span>
             <select id="ctlBotOn" class="select">
               <option value="off">OFF</option>
               <option value="on">ON</option>
             </select>
           </label>
-          <div class="pill mono" id="ctlBotStatus">Bot OFF</div>
+          <div class="pill mono" id="ctlBotStatus" aria-live="polite">Bot OFF</div>
         </div>
 
-        <label class="row">
+        <label class="row" for="ctlBotUser">
           <span>Usuario bot</span>
           <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" autocomplete="username" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlBotToken">
           <span>OAuth token</span>
           <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" autocomplete="current-password" />
         </label>
 
-        <label class="row">
+        <label class="row" for="ctlBotSayOnAd">
           <span>Escribir en Ads</span>
           <select id="ctlBotSayOnAd" class="select">
             <option value="on">ON</option>
@@ -415,11 +416,18 @@
       </div>
     </section>
 
-    <footer class="controlFooter">
+    <footer class="controlFooter" aria-label="Ayuda rápida">
       <span class="muted">Teclas: N siguiente · P anterior · Espacio pausa</span>
       <span class="dot">•</span>
       <span class="muted mono">Canal: rlc_bus_v1</span>
     </footer>
+
+    <noscript>
+      <div class="card" style="margin-top:12px">
+        <div class="cardTitle">JavaScript desactivado</div>
+        <div class="hint">Este panel requiere JavaScript para funcionar.</div>
+      </div>
+    </noscript>
   </main>
 
   <script defer src="./cams.js"></script>
