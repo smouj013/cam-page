@@ -1,48 +1,58 @@
 (() => {
   "use strict";
 
+  // ───────────────────────── Guard anti doble carga ─────────────────────────
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
+  const LOAD_GUARD = "__RANDOM_LIVE_CAMS_APPJS_LOADED_V101";
+  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  // ───────────────────── Helpers ─────────────────────
+  // ───────────────────────── Helpers ─────────────────────────
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const pad2 = (n) => String(n).padStart(2, "0");
   const fmtMMSS = (sec) => {
-    sec = Math.max(0, sec|0);
+    sec = Math.max(0, sec | 0);
     const m = (sec / 60) | 0;
     const s = sec - m * 60;
     return `${pad2(m)}:${pad2(s)}`;
   };
 
-  function parseParams(){
+  function parseParams() {
     const u = new URL(location.href);
-    const mins = clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 60);
+    const mins = clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120);
+
     const admin = (u.searchParams.get("admin") === "1");
     const hideHud = (u.searchParams.get("hud") === "0");
     const fit = (u.searchParams.get("fit") || "cover"); // cover | contain
     const seedStr = u.searchParams.get("seed") || "";
     const debug = (u.searchParams.get("debug") === "1");
-    return { mins, admin, hideHud, fit, seedStr, debug };
+
+    // ✅ autoskip: solo para errores reales en image/hls (por defecto ON)
+    const autoskip = (u.searchParams.get("autoskip") ?? "1") !== "0";
+
+    // ✅ modo "adfree": filtra YouTube para evitar ads de YouTube (legítimo)
+    //    si no tienes HLS/image suficientes, se quedará con lo que haya.
+    const mode = (u.searchParams.get("mode") || "").toLowerCase(); // "adfree" | ""
+    return { mins, admin, hideHud, fit, seedStr, debug, autoskip, mode };
   }
 
   // RNG (seed opcional)
-  function makeRng(seedStr){
-    // xmur3 + sfc32 (simple y estable)
-    function xmur3(str){
+  function makeRng(seedStr) {
+    function xmur3(str) {
       let h = 1779033703 ^ str.length;
-      for (let i=0;i<str.length;i++){
+      for (let i = 0; i < str.length; i++) {
         h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
         h = (h << 13) | (h >>> 19);
       }
-      return function(){
+      return function () {
         h = Math.imul(h ^ (h >>> 16), 2246822507);
         h = Math.imul(h ^ (h >>> 13), 3266489909);
         h ^= h >>> 16;
         return h >>> 0;
       };
     }
-    function sfc32(a,b,c,d){
-      return function(){
+    function sfc32(a, b, c, d) {
+      return function () {
         a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
         let t = (a + b) | 0;
         a = b ^ (b >>> 9);
@@ -59,15 +69,15 @@
     return sfc32(h(), h(), h(), h());
   }
 
-  function shuffle(arr, rnd){
-    for (let i = arr.length - 1; i > 0; i--){
+  function shuffle(arr, rnd) {
+    for (let i = arr.length - 1; i > 0; i--) {
       const j = (rnd() * (i + 1)) | 0;
       const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
     }
     return arr;
   }
 
-  // ───────────────────── DOM ─────────────────────
+  // ───────────────────────── DOM ─────────────────────────
   const frame = qs("#frame");
   const video = qs("#video");
   const img = qs("#img");
@@ -89,28 +99,38 @@
   const btnNext = qs("#btnNext");
   const btnShuffle = qs("#btnShuffle");
 
-  // ───────────────────── State ─────────────────────
+  // ───────────────────────── State ─────────────────────────
   const P = parseParams();
   const ROUND_SECONDS = P.mins * 60;
-
   const STORAGE_KEY = "random_live_cams_state_v1";
 
   const rnd = makeRng(P.seedStr);
+
   let cams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
 
+  // ✅ modo adfree: elimina youtube
+  if (P.mode === "adfree") {
+    cams = cams.filter(c => c && c.kind && c.kind !== "youtube");
+  }
+
   let idx = 0;
-  let remaining = ROUND_SECONDS;
   let playing = true;
 
-  let timer = null;
+  // Timer por deadline (anti “se acelera / se corta”)
+  let roundEndsAt = 0;
+
+  // Timers
+  let tickTimer = null;
   let imgTimer = null;
-  let failTimer = null;
 
   // HLS
   let hls = null;
 
-  // ───────────────────── UI helpers ─────────────────────
-  function showOnly(kind){
+  // locks
+  let switching = false;
+
+  // ───────────────────────── UI helpers ─────────────────────────
+  function showOnly(kind) {
     frame.classList.add("hidden");
     video.classList.add("hidden");
     img.classList.add("hidden");
@@ -122,29 +142,20 @@
     else if (kind === "fallback") fallback.classList.remove("hidden");
   }
 
-  function setFit(mode){
+  function setFit(mode) {
     const m = (mode === "contain") ? "contain" : "cover";
     frame.style.objectFit = m;
     video.style.objectFit = m;
     img.style.objectFit = m;
   }
 
-  function clearMedia(){
-    // stop fail watchdog
-    if (failTimer){ clearTimeout(failTimer); failTimer = null; }
+  function clearMedia() {
+    if (imgTimer) { clearInterval(imgTimer); imgTimer = null; }
 
-    // stop image refresh
-    if (imgTimer){ clearInterval(imgTimer); imgTimer = null; }
-
-    // stop hls
     try {
-      if (hls){
-        hls.destroy();
-        hls = null;
-      }
+      if (hls) { hls.destroy(); hls = null; }
     } catch (_) {}
 
-    // reset elements
     try { frame.src = "about:blank"; } catch (_) {}
     try {
       video.pause();
@@ -152,9 +163,13 @@
       video.load();
     } catch (_) {}
     try { img.removeAttribute("src"); } catch (_) {}
+
+    // limpia handlers (para que no se acumulen)
+    try { img.onerror = null; } catch (_) {}
+    try { video.onerror = null; } catch (_) {}
   }
 
-  function setHud(cam){
+  function setHud(cam) {
     hudTitle.textContent = cam.title || "Live Cam";
     hudPlace.textContent = cam.place || "—";
     hudSource.textContent = cam.source || "—";
@@ -164,60 +179,60 @@
     hudIndex.textContent = `${idx + 1}/${cams.length}`;
   }
 
-  function setCountdownUI(){
-    hudCountdown.textContent = fmtMMSS(remaining);
-    const pct = 100 * (1 - (remaining / ROUND_SECONDS));
+  function remainingSeconds() {
+    if (!roundEndsAt) return ROUND_SECONDS;
+    const ms = roundEndsAt - Date.now();
+    return Math.max(0, Math.ceil(ms / 1000));
+  }
+
+  function setCountdownUI() {
+    const rem = remainingSeconds();
+    hudCountdown.textContent = fmtMMSS(rem);
+    const pct = 100 * (1 - (rem / ROUND_SECONDS));
     progressBar.style.width = `${clamp(pct, 0, 100).toFixed(2)}%`;
   }
 
-  function scheduleFailSkip(cam){
-    // Si en ~12s no hay “señales”, saltamos (útil para embeds caídos)
-    if (failTimer) clearTimeout(failTimer);
-    failTimer = setTimeout(() => {
-      // mostramos fallback un momento y cambiamos
-      showFallback(cam, "No hay señal (timeout).");
-      setTimeout(() => nextCam("timeout"), 1200);
-    }, 12_000);
+  function startRound(seconds) {
+    const s = clamp(seconds | 0, 1, ROUND_SECONDS);
+    roundEndsAt = Date.now() + s * 1000;
+    setCountdownUI();
   }
 
-  function showFallback(cam, msg){
+  function showFallback(cam, msg) {
     clearMedia();
     showOnly("fallback");
-    fallback.querySelector(".fallbackText").textContent = msg || "Saltando…";
-    fallbackLink.href = cam && cam.originUrl ? cam.originUrl : "#";
+    const t = fallback.querySelector(".fallbackText");
+    if (t) t.textContent = msg || "Saltando…";
+    fallbackLink.href = (cam && cam.originUrl) ? cam.originUrl : "#";
     fallbackLink.style.pointerEvents = (cam && cam.originUrl) ? "auto" : "none";
     fallbackLink.style.opacity = (cam && cam.originUrl) ? "1" : ".6";
   }
 
-  async function safePlayVideo(){
+  async function safePlayVideo() {
     try {
       const p = video.play();
       if (p && typeof p.then === "function") await p;
-    } catch (_) {
-      // autoplay bloqueado en algunos navegadores, pero en OBS suele ir bien
-    }
+    } catch (_) {}
   }
 
-  // ───────────────────── Playback ─────────────────────
-  function playCam(cam){
+  // ───────────────────────── Playback ─────────────────────────
+  function playCam(cam) {
     clearMedia();
     setHud(cam);
 
-    // watchdog
-    scheduleFailSkip(cam);
-
-    if (cam.kind === "youtube"){
+    if (cam.kind === "youtube") {
       showOnly("youtube");
-      // youtube-nocookie + autoplay muted
-      const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cam.youtubeId)}`
+      // IMPORTANTE: aquí NO hacemos autoskip por "timeout" para evitar cortes falsos.
+      const src =
+        `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cam.youtubeId)}`
         + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`;
       frame.src = src;
       return;
     }
 
-    if (cam.kind === "image"){
+    if (cam.kind === "image") {
       showOnly("image");
-      const refreshMs = Math.max(5_000, (cam.refreshMs|0) || 60_000);
+      const refreshMs = Math.max(5000, (cam.refreshMs | 0) || 60000);
 
       const setSnap = () => {
         const u = cam.url;
@@ -228,18 +243,18 @@
       setSnap();
       imgTimer = setInterval(setSnap, refreshMs);
 
-      // si falla cargar, saltar
-      img.onerror = () => {
-        img.onerror = null;
-        showFallback(cam, "Imagen no disponible (error). Saltando…");
-        setTimeout(() => nextCam("img_error"), 900);
-      };
+      if (P.autoskip) {
+        img.onerror = () => {
+          img.onerror = null;
+          showFallback(cam, "Imagen no disponible (error). Saltando…");
+          setTimeout(() => nextCam("img_error"), 900);
+        };
+      }
       return;
     }
 
-    if (cam.kind === "hls"){
+    if (cam.kind === "hls") {
       showOnly("hls");
-
       const url = cam.url;
       const Hls = g.Hls;
 
@@ -256,86 +271,81 @@
         hls.attachMedia(video);
 
         hls.on(Hls.Events.ERROR, (_ev, data) => {
-          if (!data) return;
-          if (data.fatal) {
-            showFallback(cam, "Stream HLS no disponible (fatal). Saltando…");
+          if (!P.autoskip) return;
+          if (data && data.fatal) {
+            showFallback(cam, "Stream HLS no disponible. Saltando…");
             setTimeout(() => nextCam("hls_fatal"), 900);
           }
         });
 
-        video.addEventListener("canplay", () => safePlayVideo(), { once:true });
+        video.addEventListener("canplay", () => safePlayVideo(), { once: true });
       } else {
-        showFallback(cam, "Tu navegador no soporta HLS aquí. Saltando…");
-        setTimeout(() => nextCam("hls_unsupported"), 900);
+        showFallback(cam, "HLS no soportado aquí.");
+        if (P.autoskip) setTimeout(() => nextCam("hls_unsupported"), 900);
       }
 
-      video.onerror = () => {
-        video.onerror = null;
-        showFallback(cam, "Stream no disponible (error). Saltando…");
-        setTimeout(() => nextCam("vid_error"), 900);
-      };
-
+      if (P.autoskip) {
+        video.onerror = () => {
+          video.onerror = null;
+          showFallback(cam, "Stream no disponible (error). Saltando…");
+          setTimeout(() => nextCam("vid_error"), 900);
+        };
+      }
       return;
     }
 
-    // desconocido -> fallback
-    showFallback(cam, "Tipo de cámara no soportado. Saltando…");
-    setTimeout(() => nextCam("unsupported"), 900);
+    showFallback(cam, "Tipo de cámara no soportado.");
+    if (P.autoskip) setTimeout(() => nextCam("unsupported"), 900);
   }
 
-  // ───────────────────── Rotation ─────────────────────
-  function tick(){
-    if (!playing) return;
-    remaining -= 1;
-    if (remaining <= 0){
-      nextCam("timer");
-      return;
-    }
-    setCountdownUI();
-  }
+  // ───────────────────────── Rotation ─────────────────────────
+  function nextCam(reason) {
+    if (!cams.length || switching) return;
+    switching = true;
 
-  function startTimer(){
-    if (timer) clearInterval(timer);
-    timer = setInterval(tick, 1000);
-  }
-
-  function resetRound(){
-    remaining = ROUND_SECONDS;
-    setCountdownUI();
-  }
-
-  function nextCam(reason){
-    if (!cams.length) return;
     idx = (idx + 1) % cams.length;
-    resetRound();
+    startRound(ROUND_SECONDS);
+
     if (P.debug) console.log("[cams] next:", reason, idx, cams[idx]);
     playCam(cams[idx]);
+
+    // libera lock
+    setTimeout(() => { switching = false; }, 250);
   }
 
-  function prevCam(){
-    if (!cams.length) return;
+  function prevCam() {
+    if (!cams.length || switching) return;
+    switching = true;
+
     idx = (idx - 1 + cams.length) % cams.length;
-    resetRound();
+    startRound(ROUND_SECONDS);
     playCam(cams[idx]);
+
+    setTimeout(() => { switching = false; }, 250);
   }
 
-  function togglePlay(){
+  function togglePlay() {
     playing = !playing;
-    btnToggle && (btnToggle.textContent = playing ? "⏸" : "▶");
-    // si reanudamos, no queremos “saltar” por un timeout viejo
-    if (playing) scheduleFailSkip(cams[idx]);
+    if (btnToggle) btnToggle.textContent = playing ? "⏸" : "▶";
+
+    // si reanudas, recomputa deadline manteniendo remaining actual
+    if (playing) {
+      const rem = remainingSeconds();
+      startRound(rem || 1);
+    }
   }
 
-  function reshuffle(){
+  function reshuffle() {
     const curId = cams[idx] && cams[idx].id;
     shuffle(cams, rnd);
-    idx = Math.max(0, cams.findIndex(c => c.id === curId));
-    resetRound();
+    const n = cams.findIndex(c => c.id === curId);
+    idx = (n >= 0) ? n : 0;
+    startRound(ROUND_SECONDS);
     playCam(cams[idx]);
   }
 
-  // ───────────────────── Persistence ─────────────────────
-  function loadState(){
+  // ───────────────────────── Persistence ─────────────────────────
+  function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
@@ -343,46 +353,63 @@
     } catch (_) { return null; }
   }
 
-  function saveState(){
+  function saveState() {
     try {
-      const st = { idx, remaining, playing, ts: Date.now(), version: 1 };
+      const rem = remainingSeconds();
+      const st = { idx, remaining: rem, playing, ts: Date.now(), version: 1, mode: P.mode || "" };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
     } catch (_) {}
   }
 
-  // ───────────────────── Boot ─────────────────────
-  function boot(){
-    if (!cams.length){
-      showFallback({ originUrl:"#"}, "No hay cámaras definidas en cams.js");
+  // ───────────────────────── Tick ─────────────────────────
+  function tick() {
+    if (!playing) return;
+
+    const rem = remainingSeconds();
+    setCountdownUI();
+
+    if (rem <= 0) {
+      nextCam("timer");
+    }
+  }
+
+  function startTick() {
+    if (tickTimer) clearInterval(tickTimer);
+    tickTimer = setInterval(tick, 250); // más suave, y no “salta” por drift
+  }
+
+  // ───────────────────────── Boot ─────────────────────────
+  function boot() {
+    if (!cams.length) {
+      showFallback({ originUrl: "#" }, "No hay cámaras definidas (revisa cams.js o mode=adfree).");
       return;
     }
 
     setFit(P.fit);
 
-    // admin panel
     if (P.admin) adminPanel.classList.remove("hidden");
     if (P.hideHud) hud.classList.add("hidden");
 
-    // mezcla inicial para que sea “random”
+    // mezcla inicial para random
     shuffle(cams, rnd);
 
-    // cargar estado previo (si existe)
+    // carga estado previo
     const st = loadState();
-    if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length){
-      idx = st.idx|0;
-      remaining = clamp(st.remaining|0, 1, ROUND_SECONDS);
+    if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length) {
+      idx = st.idx | 0;
       playing = !!st.playing;
+      const rem = clamp((st.remaining | 0) || ROUND_SECONDS, 1, ROUND_SECONDS);
+      startRound(rem);
     } else {
       idx = 0;
-      remaining = ROUND_SECONDS;
       playing = true;
+      startRound(ROUND_SECONDS);
     }
 
-    setCountdownUI();
     playCam(cams[idx]);
-    startTimer();
+    startTick();
 
-    // eventos admin
+    // admin
     if (btnNext) btnNext.addEventListener("click", () => nextCam("admin"));
     if (btnPrev) btnPrev.addEventListener("click", () => prevCam());
     if (btnToggle) btnToggle.addEventListener("click", () => togglePlay());
@@ -391,21 +418,15 @@
     // teclado
     window.addEventListener("keydown", (e) => {
       const k = (e.key || "").toLowerCase();
-      if (k === " "){ e.preventDefault(); togglePlay(); }
-      else if (k === "n"){ nextCam("key"); }
-      else if (k === "p"){ prevCam(); }
-      else if (k === "h"){
-        hud.classList.toggle("hidden");
-      }
+      if (k === " ") { e.preventDefault(); togglePlay(); }
+      else if (k === "n") { nextCam("key"); }
+      else if (k === "p") { prevCam(); }
+      else if (k === "h") { hud.classList.toggle("hidden"); }
     });
 
-    // guardar a menudo
+    // guardado
     setInterval(saveState, 2000);
-
-    // si el tab se oculta, evitamos “drift” raro
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) saveState();
-    });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) saveState(); });
   }
 
   if (document.readyState === "loading") {
