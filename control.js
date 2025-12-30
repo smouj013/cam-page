@@ -8,7 +8,8 @@
    ✅ BOT_SAY desde Player (cmd) => Control lo envía al chat (con anti-spam)
    ✅ Anuncio automático al chat cuando cambia la cámara (anti-spam)
    ✅ FIX v2.1.7:
-      - La UI de votación NO sale antes de tiempo: voteUi/uiSec se limita a voteAtSec
+      - La UI de votación NO sale antes de tiempo:
+        voteUi/uiSec se limita a voteAtSec (y además voteWindow/lead también se acotan a voteAtSec)
 */
 (() => {
   "use strict";
@@ -293,10 +294,16 @@
     const totalSec = getTotalCamSecFallback();
 
     const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, totalSec);
-    const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-    const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
+
+    // ✅ extra-hardening: window/lead no pueden “sobrepasar” voteAtSec
+    const windowWanted = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
+    const leadWanted = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
+
+    const leadSec = clamp(leadWanted, 0, Math.max(0, voteAtSec - 1));
+    const windowSec = clamp(windowWanted, 1, voteAtSec); // <= voteAtSec evita UI/ventana antes de tiempo
 
     // ✅ CLAVE: la UI nunca puede durar más que el tiempo “hasta votar”
+    // (si voteUi > voteAt, algunos players la muestran desde el inicio)
     const uiSec = clamp(Math.min(windowSec + leadSec, voteAtSec), 1, 999999);
 
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
@@ -576,7 +583,7 @@
     u.searchParams.set("voteLead", String(leadSec));
     u.searchParams.set("voteAt", String(voteAtSec));
 
-    // ✅ FIX: voteUi no puede ser mayor que voteAt (si no, la UI puede salir “antes”)
+    // ✅ FIX: voteUi no puede ser mayor que voteAt (y window/lead ya van acotados)
     u.searchParams.set("voteUi", String(uiSec));
 
     if (ctlVoteCmd?.value) u.searchParams.set("voteCmd", ctlVoteCmd.value.trim());
@@ -644,7 +651,7 @@
     if (ctlPlay) ctlPlay.textContent = st?.playing ? "⏸" : "▶";
 
     // ⚠️ NO pisar inputs si el usuario los está editando
-    if (ctlMins && st?.mins) safeSetValue(ctlMins, st.mins);
+    if (ctlMins && typeof st?.mins === "number") safeSetValue(ctlMins, st.mins);
     if (ctlFit && st?.fit && !isEditing(ctlFit)) ctlFit.value = st.fit;
 
     if (ctlHud && !isEditing(ctlHud)) ctlHud.value = st?.hudHidden ? "off" : "on";

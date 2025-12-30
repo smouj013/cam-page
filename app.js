@@ -1,28 +1,15 @@
-/* app.js — RLC Player v2.2.3 PRO (VOTE FIX + ADMIN APPLY + BGM ON + YT COOKIES DEFAULT)
-   ✅ Compat con control.js (BUS/CMD/STATE) + soporte ?key=... (namespacing)
-      - Lee/escucha tanto keys “:key” como legacy (sin key) para no romper nada (configurable)
-      - Publica STATE en ambos (incluye state.key para filtrar)
-   ✅ Autoskip hard (start timeout + stall timeout + cooldown BAD cache) — runtime configurable (SET_HEALTH)
-   ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR (emite EVENTS a Control => bot escribe)
-   ✅ IRC anon: chat overlay + votos + alerts (subs/gifts/raids)
-   ✅ FIX CRÍTICO: si el timer llega a 0 con votación/TagVote activa, NO hace next directo:
-      - fuerza cierre de votación y aplica resultado (evita “saltos” antes de votar)
-   ✅ FIX: si la votación termina con 0 votos o EMPATE → NEXT
-   ✅ YouTube:
-      - Handshake postMessage + escucha onStateChange/onError/infoDelivery
-      - Solo cuenta “OK” si PLAYING/BUFFERING o avanza currentTime
-      - onError/ended => autoskip al siguiente
-      - ytCookies/ytSession ON por defecto (youtube.com) + comando runtime para cambiarlo
-   ✅ BOT (vía control):
-      - !help / !commands / !now
-      - !callvote (requiere 5) => inicia votación NEXT/KEEP
-      - !tagvote (requiere 5) => votación 3 tags (!1 !2 !3) => cambia a cam aleatoria del tag ganador
+/* app.js — RLC Player v2.2.4 PRO (VOTE UI GATE FIX)
+   ✅ FIX: la UI de Vote NO se muestra “antes de tiempo”
+      - Se fuerza hidden desde el arranque (evita flash si tu CSS no trae .hidden)
+      - Se añade .hidden global (display:none)
+      - Soporta “ventana visual” con voteUiSec: la UI solo aparece en los últimos N segundos de la secuencia (lead+vote)
+        (por defecto mantiene comportamiento: visible durante toda la secuencia)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V223_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V224_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -35,6 +22,17 @@
     const s = sec - m * 60;
     return `${pad2(m)}:${pad2(s)}`;
   };
+
+  function injectCoreStylesOnce() {
+    if (document.getElementById("rlcCoreStyles")) return;
+    const st = document.createElement("style");
+    st.id = "rlcCoreStyles";
+    st.textContent = `
+      .hidden{ display:none !important; }
+    `;
+    try { (document.head || document.documentElement).appendChild(st); } catch (_) {}
+  }
+  injectCoreStylesOnce();
 
   function parseBoolParam(v, def = false) {
     if (v == null) return def;
@@ -274,6 +272,11 @@
 
   // Audio
   const bgmEl = qs("#bgm");
+
+  // ✅ Anti “flash”: fuerza oculto desde el primer frame (por si el HTML/CSS lo deja visible)
+  try {
+    if (voteBox) { voteBox.classList.add("hidden"); voteBox.style.display = "none"; }
+  } catch (_) {}
 
   // ───────────────────────── Merge helpers (keyed + legacy) ─────────────────────────
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
@@ -1287,7 +1290,10 @@
   let voteWindowCfgSec = P.voteWindow | 0;
   let voteAtCfgSec = P.voteAt | 0;
   let voteLeadCfgSec = P.voteLead | 0;
+
+  // ✅ votoUi: “ventana visible” (segundos) dentro de (lead + vote). Si 0 => default = lead+vote.
   let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : (voteLeadCfgSec + voteWindowCfgSec);
+
   let stayMins = P.stayMins | 0;
 
   // Segment schedule (auto-ajustada por duración)
@@ -1299,6 +1305,7 @@
   // Active session (lo que se está usando en la votación actual)
   let voteWindowActiveSec = voteWindowCfgSec;
   let voteLeadActiveSec = voteLeadCfgSec;
+  let voteUiActiveSec = voteUiCfgSec; // ✅ usada para gatear UI
 
   let voteCmdStr = String(P.voteCmd || "!next,!cam|!stay,!keep").trim();
   let cmdYes = new Set(["!next","!cam"]);
@@ -1495,13 +1502,17 @@
     voteAtSegSec = clamp(voteAtCfgSec | 0, 5, latestAt);
 
     voteUiSegSec = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : (voteLeadSegSec + voteWindowSegSec);
+    const totalVoteSeq = Math.max(1, (voteLeadSegSec | 0) + (voteWindowSegSec | 0));
+    if (voteUiSegSec <= 0) voteUiSegSec = totalVoteSeq;
+    voteUiSegSec = clamp(voteUiSegSec | 0, 1, totalVoteSeq);
+
     if (!fits) {
-      // marca como “no auto”
       voteAtSegSec = 999999;
     }
   }
 
-  function voteStartSequence(windowSec, leadSec) {
+  // ✅ Ahora acepta uiSec (ventana visible en segundos dentro de lead+vote)
+  function voteStartSequence(windowSec, leadSec, uiSec) {
     if (!voteEnabled || !twitchChannel) return;
 
     const w = clamp(windowSec | 0, 5, 180);
@@ -1509,6 +1520,12 @@
 
     voteWindowActiveSec = w;
     voteLeadActiveSec = lead;
+
+    const totalSeq = Math.max(1, (lead | 0) + (w | 0));
+    let ui = (uiSec != null) ? (uiSec | 0) : (voteUiSegSec | 0);
+    ui = clamp(ui, 0, 300);
+    if (ui <= 0) ui = totalSeq;
+    voteUiActiveSec = clamp(ui, 1, totalSeq);
 
     votesYes = 0; votesNo = 0;
     voters = new Set();
@@ -1550,10 +1567,23 @@
     else restartStaySegment();
   }
 
+  // ✅ Gate de UI: solo aparece cuando faltan <= voteUiActiveSec de la secuencia (lead+vote)
   function renderVote() {
     if (!voteBox) return;
-    const show = voteOverlay && voteEnabled && !!twitchChannel && voteSessionActive;
-    voteBox.classList.toggle("hidden", !show);
+
+    const baseShow = voteOverlay && voteEnabled && !!twitchChannel && voteSessionActive;
+
+    let show = baseShow;
+    if (show && voteEndsAt) {
+      const showFromMs = (voteEndsAt | 0) - Math.max(0, (voteUiActiveSec | 0)) * 1000;
+      if (Date.now() < showFromMs) show = false;
+    }
+
+    try {
+      voteBox.classList.toggle("hidden", !show);
+      voteBox.style.display = show ? "" : "none";
+    } catch (_) {}
+
     if (!show) return;
 
     const now = Date.now();
@@ -1612,7 +1642,7 @@
       callVoteCooldownUntil = now + REQUEST_COOLDOWN_MS;
 
       voteTriggeredForSegment = true;
-      voteStartSequence(voteWindowSegSec, 0);
+      voteStartSequence(voteWindowSegSec, 0, voteUiSegSec);
 
       const yes0 = [...cmdYes][0] || "!next";
       const no0  = [...cmdNo][0]  || "!stay";
@@ -1727,7 +1757,6 @@
       .rlcTagNum{ flex:0 0 auto; font-weight:900; font-size:12px; color: rgba(255,255,255,.88); width: 26px; text-align:right; }
       .rlcTagBar{ flex:0 0 44%; height: 7px; border-radius:999px; background: rgba(255,255,255,.10); overflow:hidden; }
       .rlcTagBar > i{ display:block; height:100%; width:0%; background: linear-gradient(90deg, rgba(77,215,255,.85), rgba(255,206,87,.85)); }
-      .hidden{ display:none !important; }
       @media (max-width:520px){
         .rlcTagBar{ flex-basis: 40%; }
       }
@@ -1780,6 +1809,9 @@
     tagVoteN1 = document.getElementById("rlcTagN1");
     tagVoteN2 = document.getElementById("rlcTagN2");
     tagVoteN3 = document.getElementById("rlcTagN3");
+
+    // ✅ Anti flash extra
+    try { if (tagVoteBox && !tagVoteActive) { tagVoteBox.classList.add("hidden"); tagVoteBox.style.display = "none"; } } catch (_) {}
   }
 
   function tagVoteRender() {
@@ -1787,7 +1819,10 @@
     if (!tagVoteBox) return;
 
     const show = tagVoteActive && tagVoteTags.length === 3;
-    tagVoteBox.classList.toggle("hidden", !show);
+    try {
+      tagVoteBox.classList.toggle("hidden", !show);
+      tagVoteBox.style.display = show ? "" : "none";
+    } catch (_) {}
     if (!show) return;
 
     const now = Date.now();
@@ -2029,7 +2064,6 @@
     if (!bgmEnabled || !bgmList.length || !bgmEl) return;
     try {
       if (!bgmEl.src) bgmLoadTrack(bgmIdx);
-      // fade-in suave
       try { bgmEl.volume = 0; } catch(_) {}
       const p = bgmEl.play();
       if (p && typeof p.then === "function") await p;
@@ -2042,7 +2076,6 @@
   function bgmPause() {
     try {
       if (bgmEl) {
-        // fade-out suave
         fadeAudioTo(bgmEl, 0, 220);
         setTimeout(() => { try { bgmEl.pause(); } catch(_) {} }, 240);
       }
@@ -2279,7 +2312,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.3",
+      version: "2.2.4",
       playing,
       idx,
       total: cams.length,
@@ -2328,12 +2361,14 @@
         voteAtSec: voteAtCfgSec,
         leadSec: voteLeadCfgSec,
         uiSec: voteUiCfgSec,
+        uiActiveSec: voteUiActiveSec,
         stayMins,
         cmd: voteCmdStr,
         // segment-adjusted
         segWindowSec: voteWindowSegSec,
         segVoteAtSec: voteAtSegSec,
         segLeadSec: voteLeadSegSec,
+        segUiSec: voteUiSegSec,
         sessionActive: voteSessionActive,
         phase: votePhase,
         yes: votesYes,
@@ -2375,10 +2410,7 @@
     if (!KEY) return true;
     if (msg && msg.key === KEY) return true;
 
-    // Compat legacy (sin key) si el usuario lo permite
     if (ALLOW_LEGACY && !isMainChannel && msg && !msg.key) return true;
-
-    // Si viene del canal main pero no trae key (raro), aceptamos solo si ALLOW_LEGACY
     if (ALLOW_LEGACY && isMainChannel && msg && !msg.key) return true;
 
     return false;
@@ -2491,7 +2523,8 @@
         {
           const w = clamp((payload?.windowSec ?? voteWindowSegSec) | 0, 5, 180);
           const lead = clamp((payload?.leadSec ?? voteLeadSegSec) | 0, 0, 30);
-          voteStartSequence(w, lead);
+          const ui = clamp((payload?.uiSec ?? voteUiSegSec) | 0, 0, 300) || ((lead | 0) + (w | 0));
+          voteStartSequence(w, lead, ui);
         }
         postState({ reason: "vote_start" });
         break;
@@ -2632,7 +2665,6 @@
           const v = !!(payload?.enabled ?? payload?.value ?? payload ?? true);
           ytCookiesEnabled = v;
 
-          // si estamos en YT ahora, recarga la misma cam para aplicar dominio
           const cam = cams[idx] || {};
           if (cam.kind === "youtube") playCam(cam);
 
@@ -2827,13 +2859,17 @@
       const now = Date.now();
       if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) {
         votePhase = "vote";
-        renderVote();
       }
       if (voteEndsAt && now >= voteEndsAt) voteFinish();
+      // ✅ actualizar UI/contador (y aplicar gate cuando toque)
+      renderVote();
     }
 
-    // TagVote tick
-    if (tagVoteActive && tagVoteEndsAt && Date.now() >= tagVoteEndsAt) tagVoteFinish();
+    // TagVote tick (actualiza contador)
+    if (tagVoteActive) {
+      if (tagVoteEndsAt && Date.now() >= tagVoteEndsAt) tagVoteFinish();
+      tagVoteRender();
+    }
 
     // Ads tick
     adTick();
@@ -2853,7 +2889,7 @@
       const elapsed = Math.max(0, (segmentSeconds | 0) - rem);
       if (!voteTriggeredForSegment && elapsed >= (voteAtSegSec | 0)) {
         voteTriggeredForSegment = true;
-        voteStartSequence(voteWindowSegSec, voteLeadSegSec);
+        voteStartSequence(voteWindowSegSec, voteLeadSegSec, voteUiSegSec);
       }
     }
 
@@ -2898,19 +2934,16 @@
       if (saved.autoskip != null) autoskip = !!saved.autoskip;
       if (saved.adfree != null) modeAdfree = !!saved.adfree;
 
-      // ytCookies: si viene de save v3+ o si el param no fue explícito
       if (!P.ytCookiesExplicit) {
         if ((saved.v | 0) >= 3 && typeof saved.ytCookies === "boolean") ytCookiesEnabled = !!saved.ytCookies;
       }
 
-      // health
       if (saved.health && typeof saved.health === "object") {
         if (saved.health.startTimeoutMs != null) startTimeoutMs = clamp(saved.health.startTimeoutMs | 0, 3000, 120000);
         if (saved.health.stallTimeoutMs != null) stallTimeoutMs = clamp(saved.health.stallTimeoutMs | 0, 4000, 120000);
         if (saved.health.maxStalls != null) maxStalls = clamp(saved.health.maxStalls | 0, 1, 8);
       }
 
-      // vote
       if (!P.voteExplicit && saved.vote && typeof saved.vote === "object") {
         voteEnabled = !!saved.vote.enabled;
       }
@@ -2924,7 +2957,6 @@
         if (saved.vote.cmd != null) parseVoteCmds(String(saved.vote.cmd || ""));
       }
 
-      // chat
       if (!P.chatExplicit && saved.chat && typeof saved.chat === "object") {
         chatEnabled = !!saved.chat.enabled;
       }
@@ -2934,7 +2966,6 @@
         if (!P.chatTtlExplicit && saved.chat.ttl != null) chatTtlSec = clamp(saved.chat.ttl | 0, 5, 30);
       }
 
-      // ads
       if (!P.adsExplicit && saved.ads && typeof saved.ads === "object") {
         adsEnabled = !!saved.ads.enabled;
       }
@@ -2944,7 +2975,6 @@
         if (saved.ads.chatText != null) adChatText = String(saved.ads.chatText || "").trim();
       }
 
-      // bgm
       if (saved.bgm && typeof saved.bgm === "object") {
         if (saved.bgm.enabled != null) bgmEnabled = !!saved.bgm.enabled;
         if (saved.bgm.vol != null) bgmSetVol(saved.bgm.vol);
@@ -2952,9 +2982,11 @@
       }
     }
 
-    // Defaults “nuevos” si no hay explícito
     if (!P.ytCookiesExplicit && (!saved || (saved.v | 0) < 3)) ytCookiesEnabled = true;
     if (!saved || !saved.bgm) bgmEnabled = true;
+
+    // ✅ recalcula seg + ui
+    voteUiCfgSec = clamp(voteUiCfgSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
 
     applyFilters();
 
@@ -2968,6 +3000,10 @@
     if (chatEnabled) { ensureChatUI(); chatRoot?.classList?.add?.("chat--on"); }
     ensureAlertsUI();
     ensureIrc();
+
+    // ✅ fuerza hide inicial (por si algo quedó visible)
+    voteReset();
+    tagVoteRender();
 
     if (bgmEnabled && bgmList.length) {
       const tryStart = () => {
