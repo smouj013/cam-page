@@ -29,6 +29,41 @@
     try { el.classList.toggle("hidden", !show); } catch (_) {}
   };
 
+  // ───────────────────────── News Ticker bridge (SAFE) ─────────────────────────
+  // ✅ Compatible con newsTicker.js sin acoplarse:
+  // - Dispara CustomEvent("RLC_PLAYER_EVENT") con { kind, data }
+  // - Si existe window.RLCNewsTicker / window.NewsTicker / window.newsTicker, llama hooks opcionales
+  // - STATE va throttled (~1s) para no spamear el ticker
+  const TICKER_EVT = "RLC_PLAYER_EVENT";
+  let lastTickerStateAt = 0;
+
+  function tickerNotify(kind, data) {
+    // kind: "STATE" | "EVENT" | "CAM"
+    try {
+      const api = g.RLCNewsTicker || g.NewsTicker || g.newsTicker || null;
+
+      // Hooks opcionales (no obligatorios)
+      if (api) {
+        if (typeof api.onPlayerEvent === "function") api.onPlayerEvent(kind, data);
+        if (typeof api.emit === "function") api.emit(kind, data);
+        if (kind === "STATE" && typeof api.onState === "function") api.onState(data);
+        if (kind === "EVENT" && typeof api.onEvent === "function") api.onEvent(data);
+      }
+    } catch (_) {}
+
+    // CustomEvent universal (el ticker puede escuchar esto)
+    try {
+      window.dispatchEvent(new CustomEvent(TICKER_EVT, { detail: { kind, data } }));
+    } catch (_) {}
+  }
+
+  function tickerState(state, force) {
+    const now = Date.now();
+    if (!force && (now - lastTickerStateAt) < 950) return;
+    lastTickerStateAt = now;
+    tickerNotify("STATE", state);
+  }
+
   function parseBoolParam(v, def = false) {
     if (v == null) return def;
     const s = String(v).trim().toLowerCase();
@@ -301,6 +336,9 @@
     lsSet(EVT_KEY_LEGACY, raw);
     try { if (bcMain) bcMain.postMessage(evt); } catch (_) {}
     try { if (bcLegacy) bcLegacy.postMessage(evt); } catch (_) {}
+
+    // ✅ News ticker hook (no rompe nada si no existe)
+    tickerNotify("EVENT", evt);
   }
 
   // ───────────────────────── Cams + filters ─────────────────────────
@@ -1750,6 +1788,24 @@
     clearMedia();
     setHud(cam);
 
+    // ✅ News ticker: evento “CAM” (no rompe si no existe)
+    try {
+      tickerNotify("CAM", {
+        ts: Date.now(),
+        key: KEY || "",
+        idx: idx,
+        total: Math.max(1, cams.length),
+        cam: {
+          id: cam.id || "",
+          kind: cam.kind || "",
+          title: cam.title || "",
+          place: cam.place || "",
+          source: cam.source || "",
+          originUrl: cam.originUrl || ""
+        }
+      });
+    } catch (_) {}
+
     startRound(effectiveSeconds(cam));
     resetVoteForNewCam();
 
@@ -2009,6 +2065,12 @@
 
     try { if (bcMain) bcMain.postMessage(state); } catch (_) {}
     try { if (bcLegacy) bcLegacy.postMessage(state); } catch (_) {}
+
+    // ✅ Exponer último state para el ticker (lectura inmediata si quiere)
+    try { g.__RLC_LAST_STATE = state; } catch (_) {}
+
+    // ✅ News ticker hook (STATE throttled)
+    tickerState(state, !!force);
   }
 
   // ───────────────────────── Commands ─────────────────────────
