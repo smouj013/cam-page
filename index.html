@@ -2,26 +2,103 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Cam Window</title>
-  <style>
-    html,body{margin:0;height:100%;background:#000;overflow:hidden}
-    #wrap{position:fixed;inset:0}
-    iframe,video{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
-    #hud{
-      position:absolute;left:16px;top:16px;z-index:10;
-      padding:10px 12px;border-radius:12px;
-      background:rgba(0,0,0,.55);color:#fff;font:14px system-ui;
-      backdrop-filter: blur(6px);
-    }
-    #hud small{opacity:.8;display:block;margin-top:4px}
-  </style>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0b0f14" />
+  <title>Random Live Cams</title>
+
+  <link rel="stylesheet" href="./styles.css" />
+
+  <!-- hls.js (solo se usa si añades cámaras HLS .m3u8 en cams.js) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+
+  <script>window.APP_VERSION = "1.0.0";</script>
 </head>
 <body>
-  <div id="wrap">
-    <div id="hud">Cámara: <b id="camLabel">—</b><small id="status">conectando…</small></div>
-    <iframe id="frame" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
-  </div>
-  <script src="./page.js"></script>
+  <main id="app" class="app">
+    <section id="stage" class="stage" aria-label="Reproductor de cámara">
+      <!-- YouTube / Iframe -->
+      <iframe
+        id="frame"
+        class="media hidden"
+        title="Live Cam"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allow="autoplay; encrypted-media; picture-in-picture"
+        allowfullscreen
+      ></iframe>
+
+      <!-- HLS / Vídeo -->
+      <video
+        id="video"
+        class="media hidden"
+        autoplay
+        muted
+        playsinline
+        webkit-playsinline
+      ></video>
+
+      <!-- Imagen (snapshots) -->
+      <img id="img" class="media hidden" alt="Webcam snapshot" />
+
+      <!-- Fallback -->
+      <div id="fallback" class="fallback hidden">
+        <div class="fallbackCard">
+          <div class="fallbackTitle">Esta cámara no se puede mostrar aquí</div>
+          <div class="fallbackText">
+            Puede estar offline o bloquear el embed. Saltando automáticamente…
+          </div>
+          <a id="fallbackLink" class="btn" href="#" target="_blank" rel="noopener">Ver en origen</a>
+        </div>
+      </div>
+
+      <!-- HUD -->
+      <div id="hud" class="hud">
+        <div class="hudTop">
+          <div class="badge" id="badgeLive">EN DIRECTO</div>
+          <div class="hudTitle" id="hudTitle">Cargando cámara…</div>
+        </div>
+
+        <div class="hudRow">
+          <div class="hudLabel">Lugar</div>
+          <div class="hudValue" id="hudPlace">—</div>
+        </div>
+
+        <div class="hudRow">
+          <div class="hudLabel">Fuente</div>
+          <div class="hudValue">
+            <span id="hudSource">—</span>
+            <span class="dot">•</span>
+            <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
+          </div>
+        </div>
+
+        <div class="hudRow">
+          <div class="hudLabel">Siguiente en</div>
+          <div class="hudValue mono" id="hudCountdown">05:00</div>
+        </div>
+
+        <div class="progress">
+          <div id="progressBar" class="progressBar"></div>
+        </div>
+
+        <div class="hudFooter">
+          <span id="hudIndex">—</span>
+          <span class="dot">•</span>
+          <span class="muted">Teclas: Espacio pausa · N siguiente · H HUD</span>
+        </div>
+      </div>
+
+      <!-- Mini panel (solo visible con ?admin=1) -->
+      <div id="admin" class="admin hidden">
+        <button class="btn" id="btnPrev">◀</button>
+        <button class="btn" id="btnToggle">⏯</button>
+        <button class="btn" id="btnNext">▶</button>
+        <button class="btn ghost" id="btnShuffle">🎲 Mezclar</button>
+      </div>
+    </section>
+  </main>
+
+  <script defer src="./cams.js"></script>
+  <script defer src="./app.js"></script>
 </body>
 </html>

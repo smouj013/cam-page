@@ -1,0 +1,202 @@
+:root{
+  --bg:#0b0f14;
+  --panel: rgba(10,14,20,.62);
+  --panel2: rgba(10,14,20,.82);
+  --text:#e7edf6;
+  --muted:#a9b6c7;
+  --accent:#25d38a;
+  --warn:#ffcc66;
+  --border: rgba(255,255,255,.10);
+  --shadow: 0 18px 60px rgba(0,0,0,.55);
+  --radius: 14px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+  --sans: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", Arial, sans-serif;
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  font-family: var(--sans);
+  background: radial-gradient(1200px 600px at 70% 20%, rgba(37,211,138,.12), transparent 55%),
+              radial-gradient(900px 500px at 20% 80%, rgba(90,160,255,.10), transparent 55%),
+              var(--bg);
+  color: var(--text);
+  overflow:hidden;
+}
+
+.app{
+  height:100%;
+  width:100%;
+}
+
+.stage{
+  position:relative;
+  height:100%;
+  width:100%;
+  background: #000;
+  overflow:hidden;
+}
+
+.media{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  border:0;
+  background:#000;
+  object-fit: cover; /* cambia a contain si quieres */
+}
+
+.hidden{ display:none !important; }
+
+.hud{
+  position:absolute;
+  top: 16px;
+  left: 16px;
+  width: min(520px, calc(100vw - 32px));
+  padding: 12px 12px 10px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.hudTop{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.badge{
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing:.6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(37,211,138,.16);
+  border: 1px solid rgba(37,211,138,.35);
+  color: #bff9df;
+}
+
+.hudTitle{
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  opacity: .98;
+  text-shadow: 0 2px 10px rgba(0,0,0,.55);
+}
+
+.hudRow{
+  display:flex;
+  gap:10px;
+  align-items:baseline;
+  padding: 6px 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+.hudRow:first-of-type{ border-top: 0; }
+
+.hudLabel{
+  width: 92px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hudValue{
+  flex:1;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.hudLink{
+  color: #cfe4ff;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(207,228,255,.45);
+}
+.hudLink:hover{ opacity:.9; }
+
+.mono{ font-family: var(--mono); }
+.muted{ color: var(--muted); }
+.dot{ margin: 0 6px; opacity:.55; }
+
+.progress{
+  margin-top:10px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  overflow:hidden;
+  border: 1px solid rgba(255,255,255,.10);
+}
+.progressBar{
+  height:100%;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(37,211,138,.85), rgba(90,160,255,.85));
+}
+
+.hudFooter{
+  margin-top:10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.admin{
+  position:absolute;
+  left: 16px;
+  bottom: 16px;
+  display:flex;
+  gap:10px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--panel2);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.btn{
+  appearance:none;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor:pointer;
+  font-weight:700;
+  letter-spacing:.2px;
+}
+.btn:hover{ background: rgba(255,255,255,.14); }
+.btn:active{ transform: translateY(1px); }
+
+.btn.ghost{
+  background: transparent;
+  border-style: dashed;
+  opacity: .9;
+}
+
+.fallback{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: radial-gradient(800px 400px at 50% 30%, rgba(255,204,102,.12), transparent 60%),
+              rgba(0,0,0,.75);
+}
+.fallbackCard{
+  width: min(520px, calc(100vw - 32px));
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  text-align:left;
+}
+.fallbackTitle{ font-weight:900; font-size: 16px; margin-bottom: 6px; }
+.fallbackText{ color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+
+@media (max-width: 520px){
+  .hudLabel{ width: 78px; }
+  .btn{ padding: 10px 10px; }
+}
