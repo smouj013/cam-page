@@ -1,11 +1,8 @@
-/* newsTickerControl.js — RLC Ticker Control v1.2.0 (KEY-NAMESPACE + LEGACY)
+/* newsTickerControl.js — RLC Ticker Control v1.2.0 (KEY-NAMESPACE + LEGACY COMPAT)
    ✅ Solo para control.html
-   ✅ Guarda config en localStorage (rlc_ticker_cfg_v1 + opcional :key)
-   ✅ Emite config por BroadcastChannel:
-      - rlc_bus_v1
-      - rlc_bus_v1:<key> (si hay key)
-   ✅ Fallback storage “ping” cross-tab
-   ✅ No rompe si faltan elementos UI
+   ✅ Guarda config en localStorage (namespaced si ?key=)
+   ✅ Emite config por BroadcastChannel (namespaced si ?key=) + legacy
+   ✅ No toca control.js / app.js
 */
 
 (() => {
@@ -29,73 +26,55 @@
 
   function parseParams() {
     const u = new URL(location.href);
-    return { key: (u.searchParams.get("key") || "").trim() };
+    return { key: safeStr(u.searchParams.get("key") || "") };
   }
   const P = parseParams();
   const KEY = String(P.key || "").trim();
 
-  const BUS_MAIN = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  // Namespaced (si hay key) + legacy (compat)
+  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const BUS_LEGACY = BUS_BASE;
 
   const CFG_KEY = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
   const CFG_KEY_LEGACY = CFG_KEY_BASE;
 
-  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_MAIN) : null;
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-
-  function busPost(msg) {
-    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
-    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
-  }
 
   const DEFAULTS = {
     enabled: true,
-    lang: "auto",       // auto|es|en
-    speedPxPerSec: 55,  // 20..140
-    refreshMins: 12,    // 3..60
-    topPx: 10,          // 0..120
-    hideOnVote: true
+    lang: "auto",
+    speedPxPerSec: 55,
+    refreshMins: 12,
+    topPx: 10,
+    hideOnVote: true,
+    timespan: "12h" // más “última hora” por defecto
   };
 
-  function readCfgFirst(keys) {
-    for (const k of keys) {
-      try {
-        const raw = localStorage.getItem(k);
-        if (!raw) continue;
-        const obj = JSON.parse(raw);
-        if (obj && typeof obj === "object") return obj;
-      } catch (_) {}
-    }
+  function readCfgAny() {
+    // prioridad: namespaced -> legacy
+    try {
+      const rawA = localStorage.getItem(CFG_KEY);
+      if (rawA) {
+        const objA = JSON.parse(rawA);
+        if (objA && typeof objA === "object") return objA;
+      }
+    } catch (_) {}
+
+    try {
+      const rawB = localStorage.getItem(CFG_KEY_LEGACY);
+      if (rawB) {
+        const objB = JSON.parse(rawB);
+        if (objB && typeof objB === "object") return objB;
+      }
+    } catch (_) {}
+
     return null;
   }
 
-  function normalizeCfg(inCfg) {
-    const c = Object.assign({}, DEFAULTS, inCfg || {});
-    c.enabled = (c.enabled !== false);
-
-    const lang = safeStr(c.lang).toLowerCase();
-    c.lang = (lang === "es" || lang === "en" || lang === "auto") ? lang : "auto";
-
-    c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
-    c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
-    c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
-    c.hideOnVote = (c.hideOnVote !== false);
-
-    return c;
-  }
-
-  function readCfg() {
-    // prioridad: keyed -> legacy
-    const obj = readCfgFirst([CFG_KEY, CFG_KEY_LEGACY]);
-    return obj ? normalizeCfg(obj) : null;
-  }
-
   function writeCfg(cfg) {
-    const c = normalizeCfg(cfg);
-    const raw = JSON.stringify(c);
-    try { localStorage.setItem(CFG_KEY, raw); } catch (_) {}
-    try { localStorage.setItem(CFG_KEY_LEGACY, raw); } catch (_) {}
-    return c;
+    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (_) {}
+    try { localStorage.setItem(CFG_KEY_LEGACY, JSON.stringify(cfg)); } catch (_) {} // compat
   }
 
   function clearCfg() {
@@ -103,37 +82,46 @@
     try { localStorage.removeItem(CFG_KEY_LEGACY); } catch (_) {}
   }
 
-  function sendCfg(cfg, persist = true) {
-    const c = persist ? writeCfg(cfg) : normalizeCfg(cfg);
-    const msg = { type: "TICKER_CFG", cfg: c, ts: Date.now() };
-    if (KEY) msg.key = KEY; // no hace daño; algunos listeners lo ignoran
-    busPost(msg);
+  function sendCfg(cfg) {
+    const msg = { type: "TICKER_CFG", cfg, ts: Date.now() };
+    if (KEY) msg.key = KEY;
 
-    // fallback: “ping” para disparar storage events cross-tab (otras pestañas)
+    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
+
+    // fallback storage ping cross-tab
     try { localStorage.setItem("__rlc_ticker_ping", String(Date.now())); } catch (_) {}
-    return c;
   }
 
-  function setStatus(text, state = "neutral") {
+  function setStatus(text, ok = true) {
     const el = qs("#ctlTickerStatus");
     if (!el) return;
     el.textContent = text;
-
-    // state: ok|bad|neutral
-    el.classList.toggle("pill--ok", state === "ok");
-    el.classList.toggle("pill--bad", state === "bad");
+    el.classList.toggle("pill--ok", !!ok);
+    el.classList.toggle("pill--bad", !ok);
   }
 
-  function isEditing(el) {
-    if (!el) return false;
-    try { return document.activeElement === el || el.matches(":focus"); }
-    catch (_) { return document.activeElement === el; }
+  function normalizeTimespan(s) {
+    const t = safeStr(s).toLowerCase();
+    if (!t) return DEFAULTS.timespan;
+    if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
+    return DEFAULTS.timespan;
   }
 
-  function safeSetValue(el, v) {
-    if (!el) return;
-    if (isEditing(el)) return;
-    el.value = String(v);
+  function normalizeCfg(inCfg) {
+    const c = Object.assign({}, DEFAULTS, inCfg || {});
+    c.enabled = (c.enabled !== false);
+
+    const lang = safeStr(c.lang);
+    c.lang = (lang === "es" || lang === "en" || lang === "auto") ? lang : "auto";
+
+    c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
+    c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
+    c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
+    c.hideOnVote = (c.hideOnVote !== false);
+    c.timespan = normalizeTimespan(c.timespan);
+
+    return c;
   }
 
   function applyUIFromCfg(cfg) {
@@ -146,18 +134,14 @@
     const top = qs("#ctlTickerTop");
     const hideOnVote = qs("#ctlTickerHideOnVote");
 
-    if (on && !isEditing(on)) on.value = (c.enabled ? "on" : "off");
-    if (lang && !isEditing(lang)) lang.value = c.lang;
+    if (on) on.value = (c.enabled ? "on" : "off");
+    if (lang) lang.value = c.lang;
+    if (speed) speed.value = String(c.speedPxPerSec);
+    if (refresh) refresh.value = String(c.refreshMins);
+    if (top) top.value = String(c.topPx);
+    if (hideOnVote) hideOnVote.value = (c.hideOnVote ? "on" : "off");
 
-    if (speed) safeSetValue(speed, c.speedPxPerSec);
-    if (refresh) safeSetValue(refresh, c.refreshMins);
-    if (top) safeSetValue(top, c.topPx);
-
-    if (hideOnVote && !isEditing(hideOnVote)) hideOnVote.value = (c.hideOnVote ? "on" : "off");
-
-    // status
-    if (c.enabled) setStatus("Ticker: ON", "ok");
-    else setStatus("Ticker: OFF", "neutral");
+    setStatus(c.enabled ? "Ticker: ON" : "Ticker: OFF", c.enabled);
   }
 
   function collectCfgFromUI() {
@@ -168,60 +152,50 @@
     const topPx = num(qs("#ctlTickerTop")?.value, DEFAULTS.topPx);
     const hideOnVote = (qs("#ctlTickerHideOnVote")?.value || "on") !== "off";
 
-    return normalizeCfg({
+    const cfg = normalizeCfg({
       enabled: (on !== "off"),
-      lang,
+      lang: (lang === "es" || lang === "en" || lang === "auto") ? lang : "auto",
       speedPxPerSec: speed,
       refreshMins: refresh,
       topPx,
       hideOnVote
+      // timespan no está en UI aquí: queda por defecto (12h) o del storage previo
     });
-  }
 
-  // Debounce suave para input/change
-  let liveTimer = null;
-  function liveApplySoon() {
-    try { if (liveTimer) clearTimeout(liveTimer); } catch (_) {}
-    liveTimer = setTimeout(() => {
-      liveTimer = null;
-      const cfg = collectCfgFromUI();
-      const applied = sendCfg(cfg, true);
-      applyUIFromCfg(applied);
-    }, 140);
+    // mantiene timespan si existía guardado
+    const saved = readCfgAny();
+    if (saved && saved.timespan) cfg.timespan = normalizeTimespan(saved.timespan);
+
+    return cfg;
   }
 
   function boot() {
-    // Si el panel no está, salimos sin romper
     if (!qs("#ctlTickerApply") || !qs("#ctlTickerOn")) return;
 
-    // Footer bus label (si existe)
-    try {
-      const el = qs("#ctlBusName");
-      if (el) el.textContent = `Canal: ${BUS_MAIN}`;
-    } catch (_) {}
+    // Migración suave: si hay key y no hay cfg namespaced pero sí legacy, se replica al namespaced
+    const savedAny = normalizeCfg(readCfgAny() || DEFAULTS);
+    writeCfg(savedAny);
+    applyUIFromCfg(savedAny);
 
-    const saved = readCfg() || normalizeCfg(DEFAULTS);
-    writeCfg(saved);       // asegura estructura (keyed+legacy)
-    applyUIFromCfg(saved);
-
-    // Empuja config al player al entrar (por si ya está abierto)
-    try { sendCfg(saved, false); } catch (_) {}
-
-    qs("#ctlTickerApply")?.addEventListener("click", () => {
+    const doApply = (persist = true) => {
       const cfg = collectCfgFromUI();
-      const applied = sendCfg(cfg, true);
-      applyUIFromCfg(applied);
-    });
+      if (persist) writeCfg(cfg);
+      sendCfg(cfg);
+      applyUIFromCfg(cfg);
+    };
+
+    qs("#ctlTickerApply")?.addEventListener("click", () => doApply(true));
 
     qs("#ctlTickerReset")?.addEventListener("click", () => {
       clearCfg();
       const cfg = normalizeCfg(DEFAULTS);
-      const applied = sendCfg(cfg, true);
-      applyUIFromCfg(applied);
+      writeCfg(cfg);
+      sendCfg(cfg);
+      applyUIFromCfg(cfg);
     });
 
     // Apply en vivo (suave)
-    const liveSelectors = [
+    const liveEls = [
       "#ctlTickerOn",
       "#ctlTickerLang",
       "#ctlTickerSpeed",
@@ -230,23 +204,20 @@
       "#ctlTickerHideOnVote"
     ];
 
-    for (const sel of liveSelectors) {
+    for (const sel of liveEls) {
       const el = qs(sel);
       if (!el) continue;
-
-      el.addEventListener("change", liveApplySoon);
-
-      // inputs num: también por input
-      if (el.tagName === "INPUT") {
-        el.addEventListener("input", liveApplySoon);
-      }
+      el.addEventListener("change", () => doApply(true));
+      el.addEventListener("input", () => {
+        if (el.tagName === "INPUT") doApply(true);
+      });
     }
 
-    // Si otra pestaña cambia config (keyed o legacy)
+    // Si otra pestaña cambia config
     window.addEventListener("storage", (e) => {
       if (!e) return;
       if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
-        const c = readCfg();
+        const c = readCfgAny();
         if (c) applyUIFromCfg(c);
       }
     });

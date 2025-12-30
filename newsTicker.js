@@ -1,8 +1,9 @@
-/* newsTicker.js — RLC Global News Ticker v1.2.1 (FIX SORT + HIDE VIS + DEBUG)
-   ✅ FIX: sort=HybridRel (antes "hybrid" => podía dar vacío/error)
-   ✅ timespan configurable (por defecto 1d para noticias “frescas”)
-   ✅ HideOnVote robusto (no depende solo de class "hidden")
-   ✅ Debug opcional: ?tickerDebug=1
+/* newsTicker.js — RLC Global News Ticker v1.3.0 (JSONP FALLBACK + KEY-NAMESPACE + LATEST-FIRST)
+   ✅ Si fetch falla (CORS/OBS/SW), usa JSONP a GDELT => entran noticias
+   ✅ Fallback de queries + sort DateDesc para “última hora”
+   ✅ timespan configurable (default 12h)
+   ✅ HideOnVote robusto
+   ✅ Debug: ?tickerDebug=1
 */
 
 (() => {
@@ -10,12 +11,12 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V121";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V130";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  const BUS = "rlc_bus_v1";
-  const CFG_KEY = "rlc_ticker_cfg_v1";
-  const CACHE_KEY = "rlc_ticker_cache_v1"; // { ts, lang, items }
+  const BUS_BASE = "rlc_bus_v1";
+  const CFG_KEY_BASE = "rlc_ticker_cfg_v1";
+  const CACHE_KEY_BASE = "rlc_ticker_cache_v1"; // { ts, lang, items, timespan }
 
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -25,36 +26,43 @@
     return Number.isFinite(n) ? n : fb;
   };
 
-  const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-
-  function readJson(key) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return null;
-      const obj = JSON.parse(raw);
-      return (obj && typeof obj === "object") ? obj : null;
-    } catch (_) { return null; }
-  }
-  function writeJson(key, obj) {
-    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
-  }
-
   function parseParams() {
     const u = new URL(location.href);
     return {
       ticker: u.searchParams.get("ticker") ?? "",
+      key: safeStr(u.searchParams.get("key") || ""),
       lang: safeStr(u.searchParams.get("tickerLang") || ""),
       speed: safeStr(u.searchParams.get("tickerSpeed") || ""),
       refresh: safeStr(u.searchParams.get("tickerRefresh") || ""),
       top: safeStr(u.searchParams.get("tickerTop") || ""),
       hideOnVote: safeStr(u.searchParams.get("tickerHideOnVote") || ""),
-      span: safeStr(u.searchParams.get("tickerSpan") || ""),     // ej: 12h, 1d, 3d, 1w
+      span: safeStr(u.searchParams.get("tickerSpan") || ""),     // 12h, 1d, 3d...
       debug: safeStr(u.searchParams.get("tickerDebug") || "")
     };
   }
 
   const P = parseParams();
   if (P.ticker === "0") return;
+
+  const KEY = String(P.key || "").trim();
+
+  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  const BUS_LEGACY = BUS_BASE;
+
+  const CFG_KEY = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
+  const CFG_KEY_LEGACY = CFG_KEY_BASE;
+
+  const CACHE_KEY = KEY ? `${CACHE_KEY_BASE}:${KEY}` : CACHE_KEY_BASE;
+  const CACHE_KEY_LEGACY = CACHE_KEY_BASE;
+
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+  function keyOk(msg, isMainChannel) {
+    if (!KEY) return true;
+    if (isMainChannel) return true;          // en canal namespaced aceptamos aunque msg no traiga key
+    return (msg && msg.key === KEY);         // en legacy exige key
+  }
 
   const DEBUG = (P.debug === "1" || P.debug === "true");
   const log = (...a) => { if (DEBUG) console.log("[RLC:TICKER]", ...a); };
@@ -68,8 +76,24 @@
     refreshMins: 12,        // 3..60
     topPx: 10,              // 0..120
     hideOnVote: true,
-    timespan: "1d"          // ✅ nuevo: por defecto 1 día
+    timespan: "12h"         // 🔥 “última hora” (mejor que 1d)
   };
+
+  function readJsonAny(keys) {
+    for (const k of keys) {
+      try {
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === "object") return obj;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function writeJson(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
+  }
 
   function cfgFromUrl() {
     const out = {};
@@ -84,7 +108,6 @@
 
   function normalizeTimespan(s) {
     const t = safeStr(s).toLowerCase();
-    // formatos típicos: 15min, 2h, 12h, 1d, 3d, 1w, 2w, 1m...
     if (!t) return DEFAULTS.timespan;
     if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
     return DEFAULTS.timespan;
@@ -102,16 +125,26 @@
     return c;
   }
 
-  // Prioridad: defaults <- localStorage <- URL
-  let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readJson(CFG_KEY) || {}, cfgFromUrl()));
+  // Prioridad: defaults <- localStorage(namespaced) <- localStorage(legacy) <- URL
+  let CFG = normalizeCfg(Object.assign(
+    {},
+    DEFAULTS,
+    readJsonAny([CFG_KEY, CFG_KEY_LEGACY]) || {},
+    cfgFromUrl()
+  ));
+
+  // Persistencia suave para que quede consistente
+  try {
+    writeJson(CFG_KEY, CFG);
+    writeJson(CFG_KEY_LEGACY, CFG);
+  } catch (_) {}
 
   const API = {
     gdelt: {
       endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
       // queries “safe”
-      // (ojo: quito acentos para evitar rarezas con parse/encoding en algunos proxies)
-      query_es: 'internacional OR mundo OR "ultima hora" OR cumbre OR economia OR tecnologia OR ciencia OR clima OR salud OR mercados',
-      query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
+      query_es: 'mundo OR internacional OR "ultima hora" OR cumbre OR economia OR tecnologia OR ciencia OR clima OR salud OR mercados',
+      query_en: 'world OR international OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
     },
     maxItems: 22
   };
@@ -232,7 +265,7 @@
   #rlcNewsTicker .track{ animation: none !important; transform:none !important; }
 }
 
-/* ✅ Empuja overlays de arriba para que queden por debajo del ticker */
+/* Empuja overlays de arriba para que queden por debajo del ticker */
 :root{
   --rlcTickerH: 34px;
   --rlcTickerGap: 10px;
@@ -241,8 +274,6 @@
 .vote{
   top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
 }
-
-/* Intento seguro para overlays de anuncios (si existen con estos IDs comunes) */
 #adsBox, #adBox, #adsNotice, #adNotice, #rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
   top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
 }
@@ -305,12 +336,16 @@
     }
   }
 
-  // ───────────────────────────────────────── Fetch (robusto)
+  // ───────────────────────────────────────── Fetch + JSONP fallback
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const r = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+      const r = await fetch(url, {
+        signal: ctrl.signal,
+        cache: "no-store",
+        headers: { "accept": "application/json,text/plain,*/*" }
+      });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return await r.text();
     } finally { clearTimeout(t); }
@@ -318,12 +353,6 @@
 
   function allOrigins(url) {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-  }
-  function jina(url) {
-    const u = safeStr(url);
-    if (u.startsWith("https://")) return `https://r.jina.ai/https://${u.slice("https://".length)}`;
-    if (u.startsWith("http://"))  return `https://r.jina.ai/http://${u.slice("http://".length)}`;
-    return `https://r.jina.ai/https://${u}`;
   }
 
   function tryParseJson(txt) {
@@ -349,11 +378,10 @@
   async function fetchJsonRobust(url) {
     const tries = [
       () => fetchText(url),
-      () => fetchText(allOrigins(url)),
-      () => fetchText(jina(url))
+      () => fetchText(allOrigins(url))
     ];
-    let lastErr = null;
 
+    let lastErr = null;
     for (const fn of tries) {
       try {
         const txt = await fn();
@@ -363,6 +391,51 @@
       } catch (e) { lastErr = e; }
     }
     throw lastErr || new Error("fetchJsonRobust failed");
+  }
+
+  function jsonp(url, timeoutMs = 9500) {
+    return new Promise((resolve, reject) => {
+      const cb = `__rlc_gdelt_cb_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+      const u = new URL(url);
+
+      // GDELT JSONP
+      u.searchParams.set("format", "jsonp");
+      u.searchParams.set("callback", cb);
+
+      let done = false;
+      const cleanup = () => {
+        try { delete g[cb]; } catch (_) { g[cb] = undefined; }
+        try { script.remove(); } catch (_) {}
+      };
+
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(new Error("JSONP timeout"));
+      }, timeoutMs);
+
+      g[cb] = (data) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        cleanup();
+        resolve(data);
+      };
+
+      const script = document.createElement("script");
+      script.async = true;
+      script.src = u.toString();
+      script.onerror = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        cleanup();
+        reject(new Error("JSONP error"));
+      };
+
+      document.head.appendChild(script);
+    });
   }
 
   function uniqBy(arr, keyFn) {
@@ -379,13 +452,13 @@
 
   function cleanTitle(s) {
     let t = safeStr(s).replace(/\s+/g, " ").trim();
-    if (t.length < 14) return "";
-    if (t.length > 140) t = t.slice(0, 137).trim() + "…";
+    if (t.length < 10) return "";
+    if (t.length > 160) t = t.slice(0, 157).trim() + "…";
     return t;
   }
 
   function normalizeSource(a) {
-    const domain = safeStr(a?.domain || a?.source || "");
+    const domain = safeStr(a?.domain || a?.source || a?.sourceDomain || "");
     const sc = safeStr(a?.sourceCountry || a?.sourcecountry || "");
     const src = domain || sc || "";
     if (!src) return "NEWS";
@@ -393,50 +466,91 @@
     return cleaned.toUpperCase().slice(0, 22);
   }
 
-  async function getHeadlines() {
-    const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
-    const q = (lang === "es") ? API.gdelt.query_es : API.gdelt.query_en;
+  function extractArticles(data) {
+    if (!data || typeof data !== "object") return [];
+    if (Array.isArray(data.articles)) return data.articles;
+    if (Array.isArray(data.results)) return data.results;
+    if (Array.isArray(data.artlist)) return data.artlist;
+    if (Array.isArray(data.data)) return data.data;
+    return [];
+  }
 
-    // ✅ DOC API: ArtList + JSON
-    // ✅ sort correcto: HybridRel (default moderno) :contentReference[oaicite:1]{index=1}
-    // ✅ timespan configurable (por defecto 1d)
-    const url =
+  function buildGdeltUrl(q, sort) {
+    // sort recomendado para “última hora”: DateDesc
+    return (
       `${API.gdelt.endpoint}` +
       `?query=${encodeURIComponent(q)}` +
       `&mode=ArtList` +
       `&format=json` +
-      `&sort=HybridRel` +
+      `&sort=${encodeURIComponent(sort)}` +
       `&timespan=${encodeURIComponent(CFG.timespan)}` +
-      `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`;
-
-    log("GDELT URL:", url);
-
-    const data = await fetchJsonRobust(url);
-    log("GDELT raw:", data);
-
-    // Si viene error, lánzalo para que use cache/fallback
-    const errMsg = safeStr(data?.error || data?.message || data?.status || "");
-    if (errMsg && /error|invalid|failed/i.test(errMsg)) {
-      throw new Error(errMsg || "GDELT error");
-    }
-
-    const articles = Array.isArray(data?.articles) ? data.articles
-                   : Array.isArray(data?.results) ? data.results
-                   : Array.isArray(data?.artlist) ? data.artlist
-                   : [];
-
-    const mapped = articles.map(a => {
-      const title = cleanTitle(a?.title || a?.name || "");
-      const link  = safeStr(a?.url || a?.link || a?.url_mobile || "");
-      if (!title || !link) return null;
-      return { title, url: link, source: normalizeSource(a) };
-    }).filter(Boolean);
-
-    const uniq = uniqBy(mapped, x => (x.title + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
-    return uniq;
+      `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`
+    );
   }
 
-  // ───────────────────────────────────────── Render (loop suave)
+  async function getHeadlines() {
+    const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
+
+    // probamos varias queries (si alguna devuelve 0)
+    const queries = (lang === "es")
+      ? [
+          API.gdelt.query_es,
+          'mundo OR internacional OR guerra OR economia OR tecnologia OR ciencia OR clima',
+          'ultima hora OR mundo OR internacional'
+        ]
+      : [
+          API.gdelt.query_en,
+          'world OR international OR war OR economy OR technology OR science OR climate',
+          'breaking news OR world OR international'
+        ];
+
+    const sorts = ["DateDesc", "HybridRel"]; // DateDesc primero para “ahora”
+
+    let lastErr = null;
+
+    for (const q of queries) {
+      for (const sort of sorts) {
+        const url = buildGdeltUrl(q, sort);
+        try {
+          log("GDELT TRY:", { sort, q, url, timespan: CFG.timespan });
+
+          // 1) fetch directo / allorigins
+          let data = null;
+          try { data = await fetchJsonRobust(url); }
+          catch (e) {
+            lastErr = e;
+            log("fetch fail => JSONP fallback:", e?.message || e);
+            // 2) JSONP fallback
+            data = await jsonp(url);
+          }
+
+          const errMsg = safeStr(data?.error || data?.message || data?.status || "");
+          if (errMsg && /error|invalid|failed/i.test(errMsg)) throw new Error(errMsg || "GDELT error");
+
+          const articles = extractArticles(data);
+          const mapped = articles.map(a => {
+            const title = cleanTitle(a?.title || a?.name || a?.headline || "");
+            const link  = safeStr(a?.url || a?.link || a?.url_mobile || a?.urlMobile || "");
+            if (!title || !link) return null;
+            return { title, url: link, source: normalizeSource(a) };
+          }).filter(Boolean);
+
+          const uniq = uniqBy(mapped, x => (x.title + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
+          log("items:", uniq.length);
+
+          if (uniq.length >= 3) return uniq; // ✅ suficiente
+          // si viene casi vacío, seguimos probando
+        } catch (e) {
+          lastErr = e;
+          log("try error:", e?.message || e);
+        }
+      }
+    }
+
+    throw lastErr || new Error("No headlines");
+  }
+
+  // ───────────────────────────────────────── Render
   function setLabel(root, lang) {
     const label = qs("#rlcNewsTickerLabel", root);
     if (label) label.textContent = (lang === "en") ? "NEWS" : "NOTICIAS";
@@ -446,8 +560,8 @@
     const list = (Array.isArray(items) && items.length) ? items : [
       {
         title: (lang === "es")
-          ? "Conectando a noticias internacionales…"
-          : "Connecting to international news…",
+          ? "Sin noticias ahora mismo (reintentando)…"
+          : "No headlines right now (retrying)…",
         url: "#",
         source: "RLC"
       }
@@ -553,10 +667,7 @@
     const apply = () => {
       if (!CFG.enabled) { setVisible(false); return; }
       if (!CFG.hideOnVote) { setVisible(true); return; }
-
-      // ✅ si el voto está visible de verdad -> ocultar ticker
-      const voteVisible = isElementVisible(vote);
-      setVisible(!voteVisible);
+      setVisible(!isElementVisible(vote));
     };
 
     apply();
@@ -581,15 +692,14 @@
   }
 
   // ───────────────────────────────────────── Cache
-  function readCache() {
-    const c = readJson(CACHE_KEY);
-    if (!c || typeof c !== "object") return null;
-    if (!Array.isArray(c.items)) return null;
-    return c;
+  function readCacheAny() {
+    return readJsonAny([CACHE_KEY, CACHE_KEY_LEGACY]);
   }
 
   function writeCache(lang, items) {
-    writeJson(CACHE_KEY, { ts: Date.now(), lang, items });
+    const obj = { ts: Date.now(), lang, items, timespan: CFG.timespan };
+    try { writeJson(CACHE_KEY, obj); } catch (_) {}
+    try { writeJson(CACHE_KEY_LEGACY, obj); } catch (_) {}
   }
 
   // ───────────────────────────────────────── Refresh loop
@@ -603,9 +713,9 @@
     const lang = (CFG.lang === "auto") ? langAuto : CFG.lang;
 
     if (!force) {
-      const cache = readCache();
+      const cache = readCacheAny();
       const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
-      if (cache && cache.lang === lang && (Date.now() - (cache.ts || 0) <= maxAge)) {
+      if (cache && cache.lang === lang && cache.timespan === CFG.timespan && (Date.now() - (cache.ts || 0) <= maxAge)) {
         log("cache hit");
         setTickerItems(cache.items);
         return;
@@ -617,14 +727,13 @@
 
     try {
       const items = await getHeadlines();
-      log("items:", items?.length || 0);
       setTickerItems(items);
       writeCache(lang, items);
     } catch (e) {
       log("refresh error:", e?.message || e);
-      const cache = readCache();
+      const cache = readCacheAny();
       if (cache?.items?.length) setTickerItems(cache.items);
-      else setTickerItems([]);
+      else setTickerItems([]); // mostrará “retrying…”
     } finally {
       refreshInFlight = false;
     }
@@ -638,11 +747,12 @@
 
   function applyCfg(nextCfg, persist = false) {
     CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
-    if (persist) writeJson(CFG_KEY, CFG);
+    if (persist) {
+      try { writeJson(CFG_KEY, CFG); } catch (_) {}
+      try { writeJson(CFG_KEY_LEGACY, CFG); } catch (_) {}
+    }
 
-    if (!CFG.enabled) setVisible(false);
-    else setVisible(true);
-
+    setVisible(!!CFG.enabled);
     setupHideOnVote();
     startTimer();
     refresh(true);
@@ -652,39 +762,39 @@
     ensureUI();
     applyCfg(CFG, false);
 
-    // Config desde Control Room
+    // Config desde Control Room (main + legacy)
     try {
-      if (bc) {
-        bc.addEventListener("message", (ev) => {
-          const msg = ev?.data;
-          if (!msg || typeof msg !== "object") return;
-          if (msg.type === "TICKER_CFG" && msg.cfg && typeof msg.cfg === "object") {
-            applyCfg(msg.cfg, true);
-          }
-        });
-      }
+      const onMsg = (msg, isMain) => {
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "TICKER_CFG" && msg.cfg && typeof msg.cfg === "object") {
+          if (!keyOk(msg, isMain)) return;
+          applyCfg(msg.cfg, true);
+        }
+      };
+
+      if (bcMain) bcMain.addEventListener("message", (ev) => onMsg(ev?.data, true));
+      if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onMsg(ev?.data, false));
     } catch (_) {}
 
     // storage event (otra pestaña)
     window.addEventListener("storage", (e) => {
       if (!e) return;
-      if (e.key === CFG_KEY) {
-        const stored = readJson(CFG_KEY);
+      if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
+        const stored = readJsonAny([CFG_KEY, CFG_KEY_LEGACY]);
         if (stored) applyCfg(stored, false);
       }
     });
 
-    // si #voteBox aún no existe, lo vigilamos
     setupHideOnVote();
     watchForVoteBox();
 
-    // primera carga: si hay cache, pinta rápido
-    const cache = readCache();
+    // primera carga: pinta cache rápido
+    const cache = readCacheAny();
     if (cache?.items?.length) setTickerItems(cache.items);
 
     refresh(false);
 
-    log("boot cfg:", CFG);
+    log("boot cfg:", CFG, "KEY:", KEY || "(none)");
   }
 
   if (document.readyState === "loading") {
