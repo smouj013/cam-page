@@ -1,19 +1,25 @@
-/* app.js — RLC Player v2.2.1 PRO (KEY-NAMESPACE + ADS NOTICE + TWITCH ALERTS + YT HEALTH + OWNER DETECT)
+/* app.js — RLC Player v2.2.2 PRO (YT ERROR DETECT + BOT HELP/REQUESTVOTE + TAG VOTE + EVENTS)
    ✅ Compat con control.js (BUS/CMD/STATE) + soporte ?key=... (namespacing)
       - Lee/escucha tanto keys “:key” como legacy (sin key) para no romper nada
       - Publica STATE en ambos (incluye state.key para filtrar)
    ✅ Autoskip hard (start timeout + stall timeout + cooldown BAD cache)
-   ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR (+ BOT_SAY si owner)
+   ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR (emite EVENTS a Control => bot escribe)
    ✅ IRC anon: chat overlay + votos + alerts (subs/gifts/raids)
    ✅ FIX: si la votación termina con 0 votos o EMPATE → NEXT
-   ✅ YouTube: handshake postMessage (mejor “video unavailable”)
-   ✅ Owner detect: si hay ?key=... y NO hay ?twitch=... → infiere canal (URL > state > bot cfg > fallback)
+   ✅ YouTube:
+      - Handshake postMessage + escucha onStateChange/onError/infoDelivery
+      - Solo cuenta “OK” si PLAYING/BUFFERING o avanza currentTime
+      - onError => autoskip al siguiente
+   ✅ BOT (vía control):
+      - !help / !commands / !now
+      - !callvote (requiere 5) => inicia votación NEXT/KEEP
+      - !tagvote (requiere 5) => votación 3 tags (!1 !2 !3) => cambia a cam aleatoria del tag ganador
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V221_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V222_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -56,7 +62,7 @@
 
     const key = (u.searchParams.get("key") || "").trim();
 
-    // Health override (opcionales)
+    // Health override
     const startTimeoutMs = clamp(parseInt(u.searchParams.get("startTimeoutMs") || "12000", 10) || 12000, 3000, 60000);
     const stallTimeoutMs = clamp(parseInt(u.searchParams.get("stallTimeoutMs") || "15000", 10) || 15000, 4000, 90000);
     const maxStalls = clamp(parseInt(u.searchParams.get("maxStalls") || "2", 10) || 2, 1, 6);
@@ -67,18 +73,15 @@
       hud: (u.searchParams.get("hud") ?? "1") !== "0",
       seed: u.searchParams.get("seed") || "",
       autoskip: (u.searchParams.get("autoskip") ?? "1") !== "0",
-      mode: (u.searchParams.get("mode") || "").toLowerCase(), // adfree
+      mode: (u.searchParams.get("mode") || "").toLowerCase(),
       debug: (u.searchParams.get("debug") === "1"),
       key,
 
-      // YouTube embed mode
       ytCookies: (u.searchParams.get("ytCookies") ?? "0") === "1",
 
-      // BGM init
       bgm: (u.searchParams.get("bgm") ?? "0") === "1",
       bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.25") || 0.25, 0, 1),
 
-      // Vote init
       vote: voteExplicit ? (voteParam === "1") : ((u.searchParams.get("vote") ?? "0") === "1"),
       voteExplicit,
       twitch: twitchRaw,
@@ -93,7 +96,6 @@
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
       voteOverlay: (u.searchParams.get("voteOverlay") ?? "1") !== "0",
 
-      // Chat overlay
       chat,
       chatExplicit,
       chatHideCommands: parseBoolParam(u.searchParams.get("chatHideCommands"), true),
@@ -103,20 +105,17 @@
       chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
       chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
 
-      // Alerts
       alerts: alertsExplicit ? ((alertsParam ?? "1") !== "0") : ((u.searchParams.get("alerts") ?? "1") !== "0"),
       alertsExplicit,
       alertsMax: clamp(parseInt(u.searchParams.get("alertsMax") || "3", 10) || 3, 1, 6),
       alertsTtl: clamp(parseInt(u.searchParams.get("alertsTtl") || "8", 10) || 8, 3, 20),
 
-      // Ads overlay
       ads: adsExplicit ? ((adsParam ?? "1") !== "0") : ((u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1") !== "0"),
       adsExplicit,
       adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
       adShowDuring: (u.searchParams.get("adShowDuring") ?? "1") !== "0",
       adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
 
-      // Health overrides
       startTimeoutMs,
       stallTimeoutMs,
       maxStalls,
@@ -171,6 +170,7 @@
   const BUS_BASE = "rlc_bus_v1";
   const CMD_KEY_BASE = "rlc_cmd_v1";
   const STATE_KEY_BASE = "rlc_state_v1";
+  const EVT_KEY_BASE = "rlc_evt_v1"; // ✅ NUEVO
 
   const KEY = String(P.key || "").trim();
   const OWNER_MODE = !!KEY;
@@ -178,16 +178,18 @@
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
   const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+  const EVT_KEY = KEY ? `${EVT_KEY_BASE}:${KEY}` : EVT_KEY_BASE;
 
   // Legacy (compat)
   const BUS_LEGACY = BUS_BASE;
   const CMD_KEY_LEGACY = CMD_KEY_BASE;
   const STATE_KEY_LEGACY = STATE_KEY_BASE;
+  const EVT_KEY_LEGACY = EVT_KEY_BASE;
 
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
-  // Config del bot (solo lectura aquí) — control.html lo escribe
+  // Config del bot (solo lectura aquí)
   const BOT_STORE_KEY_BASE = "rlc_bot_cfg_v1";
   const BOT_STORE_KEY = KEY ? `${BOT_STORE_KEY_BASE}:${KEY}` : BOT_STORE_KEY_BASE;
 
@@ -217,7 +219,6 @@
   const STALL_TIMEOUT_MS = P.stallTimeoutMs | 0;
   const MAX_STALLS = P.maxStalls | 0;
 
-  // Owner defaults
   const OWNER_DEFAULT_TWITCH = "globaleyetv";
 
   // ───────────────────────── DOM ─────────────────────────
@@ -238,7 +239,7 @@
   const hudToggle = qs("#hudToggle");
   const hudDetails = qs("#hudDetails");
 
-  // Vote overlay
+  // Vote overlay (2 opciones)
   const voteBox = qs("#voteBox");
   const voteTimeEl = qs("#voteTime");
   const voteHintEl = qs("#voteHint");
@@ -283,6 +284,23 @@
     const arr = Array.from(set);
     const raw = JSON.stringify(arr);
     for (const k of keys) lsSet(k, raw);
+  }
+
+  // ───────────────────────── Emit EVENTS to Control (ads, debug, etc.) ─────────────────────────
+  let lastEvtAt = 0;
+  function emitEvent(name, payload = {}) {
+    const now = Date.now();
+    lastEvtAt = Math.max(lastEvtAt + 1, now);
+
+    const evt = { type: "event", ts: lastEvtAt, name: String(name || ""), payload: payload || {} };
+    if (KEY) evt.key = KEY;
+
+    const raw = JSON.stringify(evt);
+    lsSet(EVT_KEY, raw);
+    lsSet(EVT_KEY_LEGACY, raw);
+
+    try { if (bcMain) bcMain.postMessage(evt); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(evt); } catch (_) {}
   }
 
   // ───────────────────────── Cams + filters ─────────────────────────
@@ -335,7 +353,6 @@
     let list = allCams.filter(c => c && !banned.has(c.id) && !isBad(c.id));
     if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
 
-    // fallback si te quedas sin nada (pero mantén BAD fuera si puede)
     if (!list.length) {
       list = allCams.filter(c => c && !banned.has(c.id));
       if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
@@ -351,8 +368,8 @@
   let idx = 0;
   let playing = true;
 
-  let roundSeconds = P.mins * 60;     // base mins
-  let segmentSeconds = roundSeconds;  // segmento actual
+  let roundSeconds = P.mins * 60;
+  let segmentSeconds = roundSeconds;
   let roundEndsAt = 0;
   let pausedRemaining = 0;
 
@@ -392,7 +409,7 @@
     postState({ reason: "hud_hidden" });
   }
 
-  // Timer helpers (pausa REAL)
+  // Timer helpers
   function remainingSeconds() {
     if (!playing) return Math.max(0, pausedRemaining | 0);
     if (!roundEndsAt) return Math.max(0, segmentSeconds | 0);
@@ -474,14 +491,13 @@
     else { if (fallback) fallback.classList.remove("hidden"); }
   }
 
-  // ───────────────────────── Comms: enviar cmd hacia control/bot ─────────────────────────
+  // ───────────────────────── Comms ─────────────────────────
   function busSendCmd(cmd, payload = {}) {
     const msg = { type: "cmd", ts: Date.now(), cmd: String(cmd || ""), payload: payload || {} };
     if (KEY) msg.key = KEY;
 
     const raw = JSON.stringify(msg);
 
-    // escribe en ambos para compat (si hay KEY, el legacy lo filtras por msg.key)
     lsSet(CMD_KEY, raw);
     lsSet(CMD_KEY_LEGACY, raw);
 
@@ -490,12 +506,27 @@
   }
 
   function readBotCfgChannel() {
-    // intenta key primero, luego legacy
     const cfg = loadJsonFirst([BOT_STORE_KEY, BOT_STORE_KEY_BASE], null);
     if (!cfg || typeof cfg !== "object") return "";
-    const cand =
-      (cfg.twitch || cfg.channel || cfg.twitchChannel || cfg.username || cfg.user || cfg.login || cfg.name || "");
+    const cand = (cfg.twitch || cfg.channel || cfg.twitchChannel || cfg.username || cfg.user || cfg.login || cfg.name || "");
     return String(cand || "").trim().replace(/^@/, "");
+  }
+
+  // Bot helper (manda al Control para que lo diga el bot AUTH)
+  let lastBotCmdAt = 0;
+  function botSay(text) {
+    if (!OWNER_MODE) return false;
+    if (!twitchChannel) return false;
+
+    const msg = String(text || "").trim();
+    if (!msg) return false;
+
+    const now = Date.now();
+    if ((now - lastBotCmdAt) < 1400) return false;
+    lastBotCmdAt = now;
+
+    busSendCmd("BOT_SAY", { text: msg.slice(0, 480), channel: twitchChannel });
+    return true;
   }
 
   // ───────────────────────── Health watchdog ─────────────────────────
@@ -558,6 +589,8 @@
 
     const id = cam?.id;
     if (id) markBad(id, reason);
+
+    emitEvent("HEALTH_FAIL", { id: id || "", kind: cam?.kind || "", reason: String(reason || "") });
 
     applyFilters();
     idx = idx % Math.max(1, cams.length);
@@ -856,6 +889,7 @@
   }
 
   function adHide() {
+    const wasActive = adActive;
     adActive = false;
     adPhase = "idle";
     adLeadEndsAt = 0;
@@ -863,6 +897,8 @@
     adTotalLead = 0;
     adTotalLive = 0;
     if (adRoot) adRoot.classList.remove("on");
+
+    if (wasActive) emitEvent("AD_AUTO_CLEAR", {});
   }
 
   function adShow() {
@@ -871,24 +907,7 @@
     if (adRoot) adRoot.classList.add("on");
   }
 
-  function botAnnounceAd(kind, seconds, twitchChannel) {
-    // Solo owner (con key) — el bot real vive en control.js
-    if (!OWNER_MODE) return;
-    if (!adChatText) return;
-
-    let msg = adChatText;
-    const sec = clamp(seconds | 0, 0, 3600);
-
-    if (kind === "notice" && sec > 0) {
-      msg = `${adChatText} (en ${fmtMMSS(sec)})`;
-    } else if (kind === "begin") {
-      msg = `🔴 Anuncio en curso… ${adChatText}`;
-    }
-
-    busSendCmd("BOT_SAY", { text: msg, channel: String(twitchChannel || "").trim() });
-  }
-
-  function adStartLead(secondsLeft, twitchChannel) {
+  function adStartLead(secondsLeft) {
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
     adActive = true;
@@ -903,10 +922,10 @@
     if (adBarEl) adBarEl.style.width = "0%";
 
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
-    botAnnounceAd("notice", left, twitchChannel);
+    emitEvent("AD_AUTO_NOTICE", { leadSec: left });
   }
 
-  function adStartLive(durationSec, twitchChannel) {
+  function adStartLive(durationSec) {
     if (!adsEnabled) return;
     const d = clamp(durationSec | 0, 5, 3600);
     adActive = true;
@@ -921,7 +940,7 @@
     if (adBarEl) adBarEl.style.width = "0%";
 
     if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
-    botAnnounceAd("begin", d, twitchChannel);
+    emitEvent("AD_AUTO_BEGIN", { durationSec: d });
   }
 
   function adTick() {
@@ -957,10 +976,15 @@
     }
   }
 
-  // ───────────────────────── YouTube handshake ─────────────────────────
+  // ───────────────────────── YouTube handshake (FIX HARD) ─────────────────────────
   let ytMsgBound = false;
   let ytExpectTok = 0;
   let ytPlayerId = "";
+
+  // ✅ NUEVO: estado real de YT para health
+  let ytLastState = -999;
+  let ytLastTime = 0;
+  let ytLastGoodAt = 0;
 
   function bindYtMessagesOnce() {
     if (ytMsgBound) return;
@@ -974,8 +998,61 @@
       try { if (typeof data === "string") data = JSON.parse(data); } catch (_) {}
       if (!data || typeof data !== "object") return;
 
+      // Filtra por id cuando exista
       if (data.id && ytPlayerId && String(data.id) !== String(ytPlayerId)) return;
-      if (ytExpectTok) healthProgress(ytExpectTok);
+
+      const tok = ytExpectTok | 0;
+      if (!tok || tok !== playToken) return;
+
+      const cam = cams[idx] || null;
+      if (!cam || cam.kind !== "youtube") return;
+
+      const evName = String(data.event || data.type || "").toLowerCase();
+
+      // onError => FAIL directo
+      if (evName === "onerror") {
+        const code = (data.info != null) ? (data.info | 0) : -1;
+        emitEvent("YT_ERROR", { code });
+        healthFail(tok, cam, `yt_error_${code}`);
+        return;
+      }
+
+      // onStateChange
+      if (evName === "onstatechange") {
+        const st = (data.info != null) ? (data.info | 0) : -999;
+        ytLastState = st;
+
+        // Estados YT:
+        // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
+        if (st === 1 || st === 3) {
+          ytLastGoodAt = Date.now();
+          healthProgress(tok);
+          return;
+        }
+
+        // Si se queda cued/unstarted no es progreso (dejamos que startTimeout lo mate)
+        return;
+      }
+
+      // infoDelivery (si llega currentTime)
+      if (evName === "infodelivery") {
+        const info = data.info || {};
+        const ct = (typeof info.currentTime === "number") ? info.currentTime : null;
+        if (ct != null) {
+          if (ct > (ytLastTime + 0.08)) {
+            ytLastTime = ct;
+            ytLastGoodAt = Date.now();
+            healthProgress(tok);
+          }
+        }
+        return;
+      }
+
+      // onReady: NO cuenta como “reproduce”
+      if (evName === "onready") {
+        // nada
+        return;
+      }
     }, false);
   }
 
@@ -991,7 +1068,18 @@
     bindYtMessagesOnce();
     if (!ytPlayerId) ytPlayerId = "rlcYt_" + String(Date.now());
 
+    // reset trackers
+    ytLastState = -999;
+    ytLastTime = 0;
+    ytLastGoodAt = 0;
+
     ytSend({ event: "listening", id: ytPlayerId });
+
+    // pedir eventos reales
+    ytSend({ id: ytPlayerId, event: "command", func: "addEventListener", args: ["onStateChange"] });
+    ytSend({ id: ytPlayerId, event: "command", func: "addEventListener", args: ["onError"] });
+    ytSend({ id: ytPlayerId, event: "command", func: "addEventListener", args: ["infoDelivery"] });
+
     ytSend({ id: ytPlayerId, event: "command", func: "mute", args: [] });
     ytSend({ id: ytPlayerId, event: "command", func: "playVideo", args: [] });
   }
@@ -1279,7 +1367,6 @@
       }
       const tags = parseTagsToObj(tagsStr);
 
-      // PRIVMSG
       const m = rest.match(/^:([^!]+)![^ ]+ PRIVMSG #[^ ]+ :(.+)$/);
       if (m) {
         const user = (m[1] || "").toLowerCase();
@@ -1292,7 +1379,6 @@
         return;
       }
 
-      // USERNOTICE (subs/gifts/raid/…)
       const n = rest.match(/^:([^ ]+) USERNOTICE #[^ ]+(?: :(.+))?$/);
       if (n) {
         const msgText = (n[2] || "").trim();
@@ -1321,7 +1407,7 @@
 
   let irc = null;
   function ensureIrc() {
-    const need = (!!twitchChannel) && (voteEnabled || chatEnabled || alertsEnabled);
+    const need = (!!twitchChannel) && (voteEnabled || chatEnabled || alertsEnabled || tagVoteActive);
     if (!need) {
       try { irc?.close?.(); } catch (_) {}
       irc = null;
@@ -1385,7 +1471,6 @@
     votePhase = "idle";
     renderVote();
 
-    // ✅ 0 votos o empate => NEXT
     if (y === 0 && n === 0) { nextCam("vote_no_votes"); return; }
     if (y === n) { nextCam("vote_tie"); return; }
 
@@ -1427,22 +1512,382 @@
     if (voteNoFill) voteNoFill.style.width = `${((votesNo / total) * 100).toFixed(1)}%`;
   }
 
+  // ───────────────────────── Protected “request vote” (anti abuso) ─────────────────────────
+  const REQUEST_THRESHOLD = 5;
+  const REQUEST_WINDOW_MS = 65 * 1000;
+  const REQUEST_COOLDOWN_MS = 6 * 60 * 1000;
+
+  let callVoteUsers = new Map(); // userId->ts
+  let callVoteCooldownUntil = 0;
+
+  function purgeReqMap(map, now) {
+    for (const [k, ts] of map.entries()) {
+      if (!ts || (now - ts) > REQUEST_WINDOW_MS) map.delete(k);
+    }
+  }
+
+  function tryCallVote(userId, displayName) {
+    if (!OWNER_MODE || !twitchChannel) return;
+    const now = Date.now();
+    if (now < callVoteCooldownUntil) return;
+
+    purgeReqMap(callVoteUsers, now);
+    callVoteUsers.set(String(userId || ""), now);
+
+    const n = callVoteUsers.size;
+    if (n >= REQUEST_THRESHOLD) {
+      callVoteUsers.clear();
+      callVoteCooldownUntil = now + REQUEST_COOLDOWN_MS;
+
+      voteTriggeredForSegment = true;
+      voteStartSequence(voteWindowSec, 0);
+
+      const yes0 = [...cmdYes][0] || "!next";
+      const no0  = [...cmdNo][0]  || "!stay";
+      botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSec}s`);
+    } else {
+      if (n === 1 || n === 3) botSay(`🗳️ Solicitud de votación: ${n}/${REQUEST_THRESHOLD}. Escribe !callvote para apoyar.`);
+    }
+  }
+
+  // ───────────────────────── TAG VOTE (3 tags) ─────────────────────────
+  function normTag(t) {
+    return String(t || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-z0-9_:-]/g, "")
+      .slice(0, 24);
+  }
+
+  function camTags(cam) {
+    const out = new Set();
+    if (!cam) return out;
+
+    const raw = cam.tags ?? cam.tag ?? cam.categories ?? cam.category ?? null;
+    if (Array.isArray(raw)) {
+      for (const x of raw) {
+        const nt = normTag(x);
+        if (nt) out.add(nt);
+      }
+    } else if (typeof raw === "string") {
+      const parts = raw.split(/[,\s|]+/g).map(s => normTag(s)).filter(Boolean);
+      for (const p of parts) out.add(p);
+    }
+
+    // opcional: si no hay tags, intenta inferir (suave)
+    if (!out.size) {
+      const kind = normTag(cam.kind);
+      if (kind) out.add(kind);
+      const src = normTag(cam.source);
+      if (src && src.length >= 3) out.add(src);
+    }
+
+    return out;
+  }
+
+  let tagIndex = new Map(); // tag -> ids[]
+  function buildTagIndex() {
+    tagIndex = new Map();
+    for (const cam of allCams) {
+      const tags = camTags(cam);
+      for (const t of tags) {
+        if (!t) continue;
+        if (!tagIndex.has(t)) tagIndex.set(t, []);
+        tagIndex.get(t).push(String(cam.id));
+      }
+    }
+    // limpia tags “flojos”
+    for (const [t, arr] of Array.from(tagIndex.entries())) {
+      if (!Array.isArray(arr) || arr.length < 3) tagIndex.delete(t);
+    }
+  }
+
+  let tagVoteActive = false;
+  let tagVoteEndsAt = 0;
+  let tagVoteTags = [];
+  let tagVoteCounts = [0, 0, 0];
+  let tagVoteVoters = new Set();
+
+  let tagReqUsers = new Map();
+  let tagReqCooldownUntil = 0;
+
+  // UI
+  let tagVoteBox = null;
+  let tagVoteTimeEl = null;
+  let tagVoteT1 = null, tagVoteT2 = null, tagVoteT3 = null;
+  let tagVoteB1 = null, tagVoteB2 = null, tagVoteB3 = null;
+  let tagVoteN1 = null, tagVoteN2 = null, tagVoteN3 = null;
+
+  function injectTagVoteStylesOnce() {
+    if (document.getElementById("rlcTagVoteStyles")) return;
+    const st = document.createElement("style");
+    st.id = "rlcTagVoteStyles";
+    st.textContent = `
+      .rlcTagVoteBox{
+        position: fixed;
+        left: 50%;
+        bottom: max(14px, env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        width: min(520px, calc(100vw - 24px));
+        z-index: 10002;
+        pointer-events: none;
+      }
+      .rlcTagVoteCard{
+        background: rgba(10,14,20,.62);
+        border:1px solid rgba(255,255,255,.12);
+        border-radius: 18px;
+        box-shadow: 0 16px 46px rgba(0,0,0,.40);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        padding: 12px 14px;
+      }
+      .rlcTagVoteTop{ display:flex; justify-content:space-between; align-items:center; gap:12px; }
+      .rlcTagVoteTitle{ font-weight: 900; font-size: 13px; color: rgba(255,255,255,.95); }
+      .rlcTagVoteTime{ font-weight: 900; font-size: 12px; color: rgba(255,255,255,.85); }
+      .rlcTagVoteHint{ margin-top:4px; font-size: 12px; color: rgba(255,255,255,.78); }
+      .rlcTagRows{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+      .rlcTagRow{
+        display:flex; align-items:center; gap:10px;
+        padding: 8px 10px;
+        border-radius: 14px;
+        background: rgba(255,255,255,.06);
+        border: 1px solid rgba(255,255,255,.10);
+      }
+      .rlcTagName{ flex: 1 1 auto; min-width:0; font-weight: 900; font-size: 12px; color: rgba(255,255,255,.92); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .rlcTagNum{ flex:0 0 auto; font-weight:900; font-size:12px; color: rgba(255,255,255,.88); width: 26px; text-align:right; }
+      .rlcTagBar{ flex:0 0 44%; height: 7px; border-radius:999px; background: rgba(255,255,255,.10); overflow:hidden; }
+      .rlcTagBar > i{ display:block; height:100%; width:0%; background: linear-gradient(90deg, rgba(77,215,255,.85), rgba(255,206,87,.85)); }
+      .hidden{ display:none !important; }
+      @media (max-width:520px){
+        .rlcTagBar{ flex-basis: 40%; }
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function ensureTagVoteUI() {
+    injectTagVoteStylesOnce();
+    tagVoteBox = document.getElementById("rlcTagVoteBox");
+    if (!tagVoteBox) {
+      tagVoteBox = document.createElement("div");
+      tagVoteBox.id = "rlcTagVoteBox";
+      tagVoteBox.className = "rlcTagVoteBox hidden";
+      tagVoteBox.innerHTML = `
+        <div class="rlcTagVoteCard">
+          <div class="rlcTagVoteTop">
+            <div class="rlcTagVoteTitle">🎲 Vota un tag para la próxima cámara</div>
+            <div class="rlcTagVoteTime" id="rlcTagVoteTime">00:30</div>
+          </div>
+          <div class="rlcTagVoteHint">Vota con: !1  !2  !3</div>
+          <div class="rlcTagRows">
+            <div class="rlcTagRow">
+              <div class="rlcTagName" id="rlcTagT1">—</div>
+              <div class="rlcTagBar"><i id="rlcTagB1"></i></div>
+              <div class="rlcTagNum" id="rlcTagN1">0</div>
+            </div>
+            <div class="rlcTagRow">
+              <div class="rlcTagName" id="rlcTagT2">—</div>
+              <div class="rlcTagBar"><i id="rlcTagB2"></i></div>
+              <div class="rlcTagNum" id="rlcTagN2">0</div>
+            </div>
+            <div class="rlcTagRow">
+              <div class="rlcTagName" id="rlcTagT3">—</div>
+              <div class="rlcTagBar"><i id="rlcTagB3"></i></div>
+              <div class="rlcTagNum" id="rlcTagN3">0</div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(tagVoteBox);
+    }
+    tagVoteTimeEl = document.getElementById("rlcTagVoteTime");
+    tagVoteT1 = document.getElementById("rlcTagT1");
+    tagVoteT2 = document.getElementById("rlcTagT2");
+    tagVoteT3 = document.getElementById("rlcTagT3");
+    tagVoteB1 = document.getElementById("rlcTagB1");
+    tagVoteB2 = document.getElementById("rlcTagB2");
+    tagVoteB3 = document.getElementById("rlcTagB3");
+    tagVoteN1 = document.getElementById("rlcTagN1");
+    tagVoteN2 = document.getElementById("rlcTagN2");
+    tagVoteN3 = document.getElementById("rlcTagN3");
+  }
+
+  function tagVoteRender() {
+    ensureTagVoteUI();
+    if (!tagVoteBox) return;
+
+    const show = tagVoteActive && tagVoteTags.length === 3;
+    tagVoteBox.classList.toggle("hidden", !show);
+    if (!show) return;
+
+    const now = Date.now();
+    const rem = Math.max(0, Math.ceil((tagVoteEndsAt - now) / 1000));
+    if (tagVoteTimeEl) tagVoteTimeEl.textContent = fmtMMSS(rem);
+
+    if (tagVoteT1) tagVoteT1.textContent = `1) ${tagVoteTags[0] || "—"}`;
+    if (tagVoteT2) tagVoteT2.textContent = `2) ${tagVoteTags[1] || "—"}`;
+    if (tagVoteT3) tagVoteT3.textContent = `3) ${tagVoteTags[2] || "—"}`;
+
+    const a = tagVoteCounts[0] | 0, b = tagVoteCounts[1] | 0, c = tagVoteCounts[2] | 0;
+    if (tagVoteN1) tagVoteN1.textContent = String(a);
+    if (tagVoteN2) tagVoteN2.textContent = String(b);
+    if (tagVoteN3) tagVoteN3.textContent = String(c);
+
+    const total = Math.max(1, a + b + c);
+    if (tagVoteB1) tagVoteB1.style.width = `${(100 * a / total).toFixed(1)}%`;
+    if (tagVoteB2) tagVoteB2.style.width = `${(100 * b / total).toFixed(1)}%`;
+    if (tagVoteB3) tagVoteB3.style.width = `${(100 * c / total).toFixed(1)}%`;
+  }
+
+  function pick3Tags() {
+    const keys = Array.from(tagIndex.keys());
+    if (keys.length < 3) return [];
+    shuffle(keys, rnd);
+    return keys.slice(0, 3);
+  }
+
+  function pickCamByTag(tag) {
+    const t = normTag(tag);
+    if (!t) return null;
+    // usa cams filtradas actuales
+    const candidates = cams.filter(c => camTags(c).has(t));
+    if (!candidates.length) return null;
+    return candidates[(rnd() * candidates.length) | 0];
+  }
+
+  function tagVoteStart() {
+    if (!OWNER_MODE || !twitchChannel) return;
+    if (tagVoteActive) return;
+    if (voteSessionActive) return;
+
+    const tags = pick3Tags();
+    if (tags.length !== 3) {
+      botSay("⚠️ No hay suficientes tags configurados (necesito tags en CAM_LIST).");
+      return;
+    }
+
+    tagVoteActive = true;
+    tagVoteTags = tags;
+    tagVoteCounts = [0, 0, 0];
+    tagVoteVoters = new Set();
+    tagVoteEndsAt = Date.now() + 30 * 1000;
+
+    alertsPush("info", "Tag Vote", `Vota con !1 !2 !3 · ${tags.join(" / ")}`);
+    botSay(`🎲 TagVote iniciado: 1) ${tags[0]}  2) ${tags[1]}  3) ${tags[2]}  (vota con !1 !2 !3)`);
+    tagVoteRender();
+  }
+
+  function tagVoteFinish() {
+    if (!tagVoteActive) return;
+    tagVoteActive = false;
+
+    // winner
+    const a = tagVoteCounts[0] | 0, b = tagVoteCounts[1] | 0, c = tagVoteCounts[2] | 0;
+    const max = Math.max(a, b, c);
+    let winners = [];
+    if (a === max) winners.push(0);
+    if (b === max) winners.push(1);
+    if (c === max) winners.push(2);
+    const wi = winners[(rnd() * winners.length) | 0] ?? 0;
+
+    const tag = tagVoteTags[wi];
+    const chosen = pickCamByTag(tag);
+
+    tagVoteTags = [];
+    tagVoteCounts = [0, 0, 0];
+    tagVoteVoters = new Set();
+    tagVoteEndsAt = 0;
+    tagVoteRender();
+
+    if (chosen && chosen.id) {
+      botSay(`✅ Tag ganador: ${tag}. Cambiando a una cámara de ese tag…`);
+      goToId(String(chosen.id));
+    } else {
+      botSay(`✅ Tag ganador: ${tag}. Pero no encontré cams filtradas con ese tag (saltando random)…`);
+      nextCam("tagvote_no_cam");
+    }
+  }
+
+  function tryTagVoteRequest(userId) {
+    if (!OWNER_MODE || !twitchChannel) return;
+    const now = Date.now();
+    if (now < tagReqCooldownUntil) return;
+
+    purgeReqMap(tagReqUsers, now);
+    tagReqUsers.set(String(userId || ""), now);
+
+    const n = tagReqUsers.size;
+    if (n >= REQUEST_THRESHOLD) {
+      tagReqUsers.clear();
+      tagReqCooldownUntil = now + REQUEST_COOLDOWN_MS;
+      tagVoteStart();
+    } else {
+      if (n === 1 || n === 3) botSay(`🎲 Solicitud TagVote: ${n}/${REQUEST_THRESHOLD}. Escribe !tagvote para apoyar.`);
+    }
+  }
+
+  // ───────────────────────── Twitch event handler (incluye comandos) ─────────────────────────
+  let lastHelpAt = 0;
+  function sendHelp() {
+    const now = Date.now();
+    if ((now - lastHelpAt) < 18000) return;
+    lastHelpAt = now;
+
+    const yes0 = [...cmdYes][0] || "!next";
+    const no0  = [...cmdNo][0]  || "!stay";
+    botSay(`🛰️ Comandos: !now · !help · Vota: ${yes0} (cambiar) / ${no0} (mantener) · Pedir votación: !callvote (5) · TagVote: !tagvote (5) y luego !1 !2 !3`);
+  }
+
+  function sendNow() {
+    const cam = cams[idx] || {};
+    const t = String(cam.title || "Live Cam");
+    const p = String(cam.place || "");
+    const src = String(cam.source || "");
+    botSay(`🌍 Ahora: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}`);
+  }
+
   function handleTwitchEvent(ev) {
     if (!ev) return;
 
     if (ev.kind === "privmsg") {
       const text = String(ev.msg || "").trim();
+      const low = text.toLowerCase();
+      const who = String(ev.userId || ev.user || "anon");
+      const name = (ev.displayName || ev.user || "chat").trim();
+
+      // Chat overlay
       if (chatEnabled && twitchChannel) {
-        const name = (ev.displayName || ev.user || "chat").trim();
         if (!isHiddenChatCommand(text)) chatAdd(name, text);
       }
 
+      // ✅ Bot commands (solo owner)
+      if (OWNER_MODE && twitchChannel && low && low[0] === "!") {
+        if (low === "!help" || low === "!commands") { sendHelp(); return; }
+        if (low === "!now" || low === "!where" || low === "!camera") { sendNow(); return; }
+
+        // Solicitar vote (protegido)
+        if (low === "!callvote" || low === "!startvote") { tryCallVote(who, name); return; }
+
+        // Solicitar tag vote (protegido)
+        if (low === "!tagvote" || low === "!tagsvote") { tryTagVoteRequest(who); return; }
+      }
+
+      // TagVote votar
+      if (tagVoteActive) {
+        if (!tagVoteVoters.has(who)) {
+          if (low === "!1" || low === "!one") { tagVoteVoters.add(who); tagVoteCounts[0]++; tagVoteRender(); return; }
+          if (low === "!2" || low === "!two") { tagVoteVoters.add(who); tagVoteCounts[1]++; tagVoteRender(); return; }
+          if (low === "!3" || low === "!three") { tagVoteVoters.add(who); tagVoteCounts[2]++; tagVoteRender(); return; }
+        }
+      }
+
+      // Vote normal
       if (voteSessionActive && votePhase === "vote") {
-        const low = text.toLowerCase();
-        const who = ev.userId || ev.user || "anon";
+        const low2 = low;
         if (!voters.has(who)) {
-          if (cmdYes.has(low)) { voters.add(who); votesYes++; renderVote(); }
-          else if (cmdNo.has(low)) { voters.add(who); votesNo++; renderVote(); }
+          if (cmdYes.has(low2)) { voters.add(who); votesYes++; renderVote(); }
+          else if (cmdNo.has(low2)) { voters.add(who); votesNo++; renderVote(); }
         }
       }
       return;
@@ -1748,7 +2193,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.1",
+      version: "2.2.2",
       playing,
       idx,
       total: cams.length,
@@ -1810,12 +2255,15 @@
       alertsEnabled,
       owner: OWNER_MODE ? 1 : 0,
 
+      tagVote: {
+        active: tagVoteActive ? 1 : 0
+      },
+
       ...extra
     };
 
     const raw = JSON.stringify(state);
 
-    // ✅ Publica en namespaced + legacy (compat)
     lsSet(STATE_KEY, raw);
     lsSet(STATE_KEY_LEGACY, raw);
 
@@ -1828,9 +2276,7 @@
 
   function cmdKeyOk(msg, isMainChannel) {
     if (!KEY) return true;
-    // En canal/clave main (namespaced), aceptamos incluso si el msg no trae key
     if (isMainChannel) return true;
-    // En legacy, exige key igual para evitar cross-talk
     return (msg && msg.key === KEY);
   }
 
@@ -1841,459 +2287,586 @@
       case "TOGGLE_PLAY": togglePlay(); break;
       case "PLAY": setPlaying(true); break;
       case "PAUSE": setPlaying(false); break;
-      case "SHUFFLE": reshuffle(); break;
 
-      case "SET_MINS": setRoundMins(payload?.mins); break;
-      case "SET_FIT": setFit(payload?.fit); postState({ reason: "set_fit" }); break;
-      case "SET_HUD": setHudHidden(payload?.on === false); break;
-      case "SET_HUD_DETAILS": setHudCollapsed(payload?.collapsed !== false); break;
-      case "SET_AUTOSKIP": autoskip = !!payload?.on; postState({ reason: "set_autoskip" }); break;
+      case "SET_MINS":
+      case "MINS":
+        setRoundMins(payload?.mins ?? payload?.value ?? payload);
+        break;
 
+      case "SET_FIT":
+      case "FIT":
+        setFit(String(payload?.fit ?? payload?.value ?? payload ?? "cover"));
+        postState({ reason: "set_fit" });
+        break;
+
+      case "RESHUFFLE":
+      case "SHUFFLE":
+        reshuffle();
+        postState({ reason: "reshuffle" });
+        break;
+
+      case "GOTO":
+      case "GOTO_ID":
+        if (payload?.id != null) goToId(String(payload.id));
+        else if (payload != null) goToId(String(payload));
+        postState({ reason: "goto" });
+        break;
+
+      case "BAN_CURRENT":
+      case "BAN":
+        {
+          const cam = cams[idx] || {};
+          const id = String(payload?.id ?? cam.id ?? "");
+          if (id) banId(id);
+          postState({ reason: "ban" });
+        }
+        break;
+
+      case "SET_AUTOSKIP":
+      case "AUTOSKIP":
+        autoskip = !!(payload?.enabled ?? payload?.value ?? payload);
+        postState({ reason: "autoskip" });
+        break;
+
+      case "SET_MODE":
+      case "MODE":
       case "SET_ADFREE":
-        modeAdfree = !!payload?.on;
-        applyFilters();
-        idx = idx % Math.max(1, cams.length);
-        playCam(cams[idx]);
+      case "ADFREE":
+        {
+          const prev = !!modeAdfree;
+          const m = String(payload?.mode ?? payload?.value ?? payload ?? "").toLowerCase().trim();
+          const want = (m === "adfree") || (payload?.adfree === 1) || (payload?.adfree === true) || (payload === "adfree");
+          modeAdfree = !!want;
+
+          if (modeAdfree !== prev) {
+            const curId = String((cams[idx] || {}).id || "");
+            applyFilters();
+            // intenta mantener cam actual si sigue disponible
+            const n = curId ? cams.findIndex(c => c && String(c.id) === curId) : -1;
+            idx = (n >= 0) ? n : (idx % Math.max(1, cams.length));
+            playCam(cams[idx]);
+          }
+          postState({ reason: "mode" });
+        }
         break;
 
-      case "GOTO_ID": goToId(payload?.id); break;
-      case "BAN_ID": banId(payload?.id); break;
-      case "RESET": resetState(); break;
-
-      // BGM
-      case "BGM_ENABLE":
-        bgmEnabled = !!payload?.on;
-        if (bgmEnabled) bgmPlay(); else bgmPause();
+      case "SET_TWITCH":
+      case "TWITCH":
+        {
+          const ch = String(payload?.channel ?? payload?.twitch ?? payload?.value ?? payload ?? "").trim().replace(/^@/, "");
+          twitchChannel = ch;
+          ensureIrc();
+          postState({ reason: "twitch" });
+        }
         break;
-      case "BGM_VOL": bgmSetVol(payload?.vol); break;
-      case "BGM_TRACK":
-        bgmLoadTrack(parseInt(payload?.index || "0", 10) || 0);
-        if (bgmEnabled) bgmPlay();
+
+      case "SET_VOTE":
+      case "VOTE":
+        {
+          if (payload && typeof payload === "object") {
+            if (payload.enabled != null) voteEnabled = !!payload.enabled;
+            if (payload.overlay != null) voteOverlay = !!payload.overlay;
+            if (payload.windowSec != null) voteWindowSec = clamp(payload.windowSec | 0, 5, 180);
+            if (payload.voteAtSec != null) voteAtSec = clamp(payload.voteAtSec | 0, 5, 600);
+            if (payload.leadSec != null) voteLeadSec = clamp(payload.leadSec | 0, 0, 30);
+            if (payload.uiSec != null) voteUiSec = clamp(payload.uiSec | 0, 0, 300) || (voteLeadSec + voteWindowSec);
+            if (payload.stayMins != null) stayMins = clamp(payload.stayMins | 0, 1, 120);
+            if (payload.cmd != null) parseVoteCmds(String(payload.cmd || ""));
+          } else {
+            voteEnabled = !!payload;
+          }
+          ensureIrc();
+          voteReset();
+          postState({ reason: "vote" });
+        }
         break;
-      case "BGM_NEXT": bgmNext(); break;
-      case "BGM_PREV": bgmPrev(); break;
-      case "BGM_PLAYPAUSE": bgmPlayPause(); break;
-      case "BGM_SHUFFLE": bgmShuffle(); break;
 
-      // Vote / Twitch + chat/alerts toggles
-      case "TWITCH_SET": {
-        twitchChannel = String(payload?.channel || "").trim().replace(/^@/, "");
-        voteEnabled = !!payload?.enabled;
-        voteOverlay = !!payload?.overlay;
-
-        voteWindowSec = clamp(parseInt(payload?.windowSec ?? voteWindowSec, 10) || voteWindowSec, 5, 180);
-
-        const pVoteAt =
-          payload?.voteAtSec ?? payload?.triggerBeforeEndSec ?? payload?.voteAt ?? payload?.voteTriggerBeforeEndSec;
-        if (pVoteAt != null) voteAtSec = clamp(parseInt(pVoteAt, 10) || voteAtSec, 5, 600);
-
-        const pLead = payload?.leadSec ?? payload?.voteLeadSec ?? payload?.voteLead;
-        if (pLead != null) voteLeadSec = clamp(parseInt(pLead, 10) || voteLeadSec, 0, 30);
-
-        voteUiSec = voteLeadSec + voteWindowSec;
-
-        if (payload?.stayMins != null) stayMins = clamp(parseInt(payload?.stayMins, 10) || stayMins, 1, 120);
-        parseVoteCmds(payload?.cmd || voteCmdStr || "!next,!cam|!stay,!keep");
-
-        if (payload?.chat != null || payload?.chatOverlay != null) chatSetEnabled(!!(payload?.chat ?? payload?.chatOverlay));
-        if (payload?.chatHideCommands != null) chatHideCommands = !!payload.chatHideCommands;
-
-        if (payload?.alerts != null) alertsEnabled = !!payload.alerts;
-
-        ensureIrc();
-        voteReset();
-        postState({ reason: "twitch_set" });
-        break;
-      }
-
-      case "VOTE_START": {
+      case "START_VOTE":
+      case "VOTE_START":
+        // manual (desde control)
         voteTriggeredForSegment = true;
-        const w = clamp(parseInt(payload?.windowSec ?? voteWindowSec, 10) || voteWindowSec, 5, 180);
-        const lead = clamp(parseInt(payload?.leadSec ?? voteLeadSec, 10) || voteLeadSec, 0, 30);
-        voteStartSequence(w, lead);
+        voteStartSequence(
+          clamp((payload?.windowSec ?? voteWindowSec) | 0, 5, 180),
+          clamp((payload?.leadSec ?? voteLeadSec) | 0, 0, 30)
+        );
         postState({ reason: "vote_start" });
         break;
-      }
 
-      // ADS overlay
-      case "ADS_SET": {
-        if (payload?.enabled != null) adsEnabled = !!payload.enabled;
-        if (payload?.adLead != null) adLeadDefaultSec = clamp(parseInt(payload.adLead, 10) || adLeadDefaultSec, 0, 300);
-        if (payload?.adShowDuring != null) adShowDuring = !!payload.adShowDuring;
-        if (payload?.adChatText != null) adChatText = String(payload.adChatText || "").trim() || adChatText;
-        if (!adsEnabled) adHide();
-        postState({ reason: "ads_set" });
+      case "STOP_VOTE":
+      case "VOTE_STOP":
+        voteReset();
+        postState({ reason: "vote_stop" });
         break;
-      }
 
-      case "AD_NOTICE": {
-        const lead = (payload?.leadSec != null) ? (payload.leadSec | 0) : adLeadDefaultSec;
-        adTotalLead = Math.max(1, clamp(lead | 0, 0, 3600));
-        adStartLead(adTotalLead, twitchChannel);
-        postState({ reason: "ad_notice" });
+      case "SET_CHAT":
+      case "CHAT":
+        {
+          if (payload && typeof payload === "object") {
+            if (payload.enabled != null) chatSetEnabled(!!payload.enabled);
+            if (payload.hideCommands != null) chatHideCommands = !!payload.hideCommands;
+            if (payload.max != null) chatMax = clamp(payload.max | 0, 3, 12);
+            if (payload.ttl != null) chatTtlSec = clamp(payload.ttl | 0, 5, 30);
+            // refresca UI si ya existe
+            if (chatEnabled) { ensureChatUI(); chatRoot?.classList?.add?.("chat--on"); }
+          } else {
+            chatSetEnabled(!!payload);
+          }
+          ensureIrc();
+          postState({ reason: "chat" });
+        }
         break;
-      }
-      case "AD_BEGIN": {
-        adStartLive((payload?.durationSec ?? payload?.duration_seconds ?? 30) | 0, twitchChannel);
-        postState({ reason: "ad_begin" });
+
+      case "SET_ALERTS":
+      case "ALERTS":
+        {
+          if (payload && typeof payload === "object") {
+            if (payload.enabled != null) alertsEnabled = !!payload.enabled;
+            if (payload.max != null) {
+              // no cambiamos P.alertsMax; solo runtime
+              // (alertsPush ya respeta alertsMax actual en variable alertsMax const; mantenemos límite UI por cola)
+            }
+            if (payload.ttl != null) {
+              // idem, no tocamos const; mantenemos TTL runtime como alertsTtlSec const
+            }
+          } else {
+            alertsEnabled = !!payload;
+          }
+          ensureAlertsUI();
+          ensureIrc();
+          postState({ reason: "alerts" });
+        }
         break;
-      }
-      case "AD_CLEAR": {
+
+      case "SET_ADS":
+      case "ADS":
+        {
+          if (payload && typeof payload === "object") {
+            if (payload.enabled != null) adsEnabled = !!payload.enabled;
+            if (payload.adLead != null) adLeadDefaultSec = clamp(payload.adLead | 0, 0, 300);
+            if (payload.showDuring != null) adShowDuring = !!payload.showDuring;
+            if (payload.chatText != null) adChatText = String(payload.chatText || "").trim();
+          } else {
+            adsEnabled = !!payload;
+          }
+          if (!adsEnabled) adHide();
+          postState({ reason: "ads" });
+        }
+        break;
+
+      // 🔔 Ads overlay por comandos (viene de control.html o automatizaciones)
+      case "AD_NOTICE":
+        adStartLead(payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec);
+        // (adStartLead ya emite event al control para que el bot hable)
+        break;
+
+      case "AD_BEGIN":
+        adStartLive(payload?.durationSec ?? payload?.duration ?? 30);
+        // opcional: texto en chat cuando empieza
+        if (adChatText) botSay(adChatText);
+        break;
+
+      case "AD_CLEAR":
+      case "AD_END":
         adHide();
-        postState({ reason: "ad_clear" });
+        emitEvent("AD_AUTO_CLEAR", {});
         break;
-      }
 
-      // ALERT manual
-      case "ALERT": {
-        const t = payload?.type || payload?.alertType || "info";
-        alertsPush(t, payload?.title || "Alerta", payload?.text || payload?.message || "");
-        postState({ reason: "alert" });
+      // 🎲 TagVote manual
+      case "TAGVOTE_START":
+        tagVoteStart();
+        postState({ reason: "tagvote_start" });
         break;
-      }
 
-      default: break;
+      case "TAGVOTE_STOP":
+        tagVoteActive = false;
+        tagVoteTags = [];
+        tagVoteCounts = [0, 0, 0];
+        tagVoteVoters = new Set();
+        tagVoteEndsAt = 0;
+        tagVoteRender();
+        postState({ reason: "tagvote_stop" });
+        break;
+
+      // 🎵 BGM
+      case "SET_BGM":
+      case "BGM":
+        bgmEnabled = !!(payload?.enabled ?? payload?.value ?? payload);
+        if (!bgmEnabled) bgmPause();
+        postState({ reason: "bgm" });
+        break;
+
+      case "SET_BGM_VOL":
+      case "BGM_VOL":
+        bgmSetVol(payload?.vol ?? payload?.value ?? payload);
+        break;
+
+      case "BGM_PLAYPAUSE":
+        bgmPlayPause();
+        break;
+
+      case "BGM_NEXT":
+        bgmNext();
+        break;
+
+      case "BGM_PREV":
+        bgmPrev();
+        break;
+
+      case "BGM_SHUFFLE":
+        bgmShuffle();
+        break;
+
+      case "RESET":
+        resetState();
+        break;
+
+      case "PING":
+        postState({ reason: "ping" }, true);
+        break;
+
+      default:
+        // comandos desconocidos: no romper
+        if (P.debug) console.log("[player] unknown cmd:", cmd, payload);
+        break;
     }
   }
 
-  function onCmd(msg, isMainChannel) {
-    if (!msg || msg.type !== "cmd") return;
-    if ((msg.ts | 0) <= (lastCmdTs | 0)) return;
-    if (!cmdKeyOk(msg, isMainChannel)) return;
-    lastCmdTs = msg.ts | 0;
-    applyCommand(msg.cmd, msg.payload || {});
+  function handleCmdMsg(msg, isMainChannel) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type !== "cmd") return;
+    if (!cmdKeyOk(msg, !!isMainChannel)) return;
+
+    const ts = (msg.ts | 0) || 0;
+    if (ts && ts <= lastCmdTs) return;
+    if (ts) lastCmdTs = ts;
+
+    const cmd = String(msg.cmd || "");
+    const payload = msg.payload || {};
+    applyCommand(cmd, payload);
   }
 
-  if (bcMain) {
-    bcMain.onmessage = (ev) => onCmd(ev?.data, true);
-  }
-  if (bcLegacy) {
-    bcLegacy.onmessage = (ev) => onCmd(ev?.data, false);
-  }
-
-  window.addEventListener("storage", (e) => {
-    if (!e || !e.key || !e.newValue) return;
-    if (e.key !== CMD_KEY && e.key !== CMD_KEY_LEGACY) return;
+  function readCmdFromStorage(keyName, isMainChannel) {
     try {
-      const msg = JSON.parse(e.newValue);
-      onCmd(msg, e.key === CMD_KEY);
+      const raw = lsGet(keyName);
+      if (!raw) return;
+      const msg = JSON.parse(raw);
+      handleCmdMsg(msg, isMainChannel);
     } catch (_) {}
+  }
+
+  // BroadcastChannel listeners
+  try {
+    if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true);
+  } catch (_) {}
+  try {
+    if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false);
+  } catch (_) {}
+
+  // Storage event listener (para control via localStorage)
+  window.addEventListener("storage", (e) => {
+    const k = String(e.key || "");
+    if (!k) return;
+
+    if (k === CMD_KEY) readCmdFromStorage(CMD_KEY, true);
+    else if (k === CMD_KEY_LEGACY) readCmdFromStorage(CMD_KEY_LEGACY, false);
+
+    // Si cambia config del bot en control.html y NO se fijó twitch en URL:
+    if (!P.twitchExplicit && (k === BOT_STORE_KEY || k === BOT_STORE_KEY_BASE)) {
+      const ch = readBotCfgChannel();
+      if (ch && ch !== twitchChannel) {
+        twitchChannel = ch;
+        ensureIrc();
+        postState({ reason: "bot_cfg_channel" });
+      }
+    }
   });
 
-  // ───────────────────────── Persist player state ─────────────────────────
-  function loadPlayerState() {
-    return loadJsonFirst([STORAGE_KEY, STORAGE_KEY_LEGACY], null);
-  }
-
+  // ───────────────────────── Persist player state (para reload suave) ─────────────────────────
   function savePlayerState() {
     try {
-      const st = {
-        idx,
-        remaining: remainingSeconds(),
-        playing,
+      const cam = cams[idx] || {};
+      const data = {
+        v: 2,
+        ts: Date.now(),
+        key: KEY || "",
+        curId: cam.id || "",
+        playing: !!playing,
         mins: Math.max(1, (roundSeconds / 60) | 0),
         segmentSec: segmentSeconds | 0,
+        remaining: remainingSeconds(),
+
         fit: currentFit,
-        autoskip: autoskip ? 1 : 0,
-        adfree: modeAdfree ? 1 : 0,
+        hudHidden: !!hud?.classList?.contains?.("hidden"),
+        hudCollapsed: !!hud?.classList?.contains?.("hud--collapsed"),
 
-        bgmEnabled: bgmEnabled ? 1 : 0,
-        bgmVol,
-        bgmIdx,
-        bgmPlaying: bgmPlaying ? 1 : 0,
+        autoskip: !!autoskip,
+        adfree: !!modeAdfree,
 
-        voteEnabled: voteEnabled ? 1 : 0,
-        voteOverlay: voteOverlay ? 1 : 0,
-        twitchChannel,
-        voteWindowSec,
-        voteAtSec,
-        voteLeadSec,
-        voteUiSec,
-        stayMins,
-        voteCmd: voteCmdStr,
+        twitch: twitchChannel || "",
 
-        chatEnabled: chatEnabled ? 1 : 0,
-        chatHideCommands: chatHideCommands ? 1 : 0,
-        chatMax,
-        chatTtlSec,
+        vote: {
+          enabled: !!voteEnabled,
+          overlay: !!voteOverlay,
+          windowSec: voteWindowSec | 0,
+          voteAtSec: voteAtSec | 0,
+          leadSec: voteLeadSec | 0,
+          uiSec: voteUiSec | 0,
+          stayMins: stayMins | 0,
+          cmd: voteCmdStr
+        },
 
-        ytCookies: P.ytCookies ? 1 : 0,
+        chat: {
+          enabled: !!chatEnabled,
+          hideCommands: !!chatHideCommands,
+          max: chatMax | 0,
+          ttl: chatTtlSec | 0
+        },
 
-        alertsEnabled: alertsEnabled ? 1 : 0,
+        ads: {
+          enabled: !!adsEnabled,
+          adLead: adLeadDefaultSec | 0,
+          showDuring: !!adShowDuring,
+          chatText: adChatText || ""
+        },
 
-        adsEnabled: adsEnabled ? 1 : 0,
-        adLeadDefaultSec,
-        adShowDuring: adShowDuring ? 1 : 0,
-        adChatText,
-
-        key: KEY || "",
-        ts: Date.now(),
-        v: 221
+        bgm: {
+          enabled: !!bgmEnabled,
+          vol: +bgmVol || 0,
+          idx: bgmIdx | 0,
+          playing: !!bgmPlaying
+        }
       };
 
-      const raw = JSON.stringify(st);
+      const raw = JSON.stringify(data);
       lsSet(STORAGE_KEY, raw);
       lsSet(STORAGE_KEY_LEGACY, raw);
     } catch (_) {}
   }
 
-  // ───────────────────────── Tick ─────────────────────────
-  function tick() {
-    setCountdownUI();
-    adTick();
+  function loadPlayerState() {
+    const data = loadJsonFirst([STORAGE_KEY, STORAGE_KEY_LEGACY], null);
+    if (!data || typeof data !== "object") return null;
+    return data;
+  }
 
-    const rem = remainingSeconds();
-
-    // fin de segmento
-    if (playing && rem <= 0) {
-      if (voteSessionActive && votePhase === "vote") {
-        voteFinish();
-        postState({ reason: "segment_end_vote" });
-        return;
-      }
-      voteReset();
-      nextCam("timer");
-      postState({ reason: "segment_end" });
-      return;
+  function boolFromLS(keys, def = false) {
+    for (const k of keys) {
+      const v = lsGet(k);
+      if (v == null) continue;
+      if (v === "1") return true;
+      if (v === "0") return false;
     }
+    return def;
+  }
 
-    // VOTO AUTO
-    if (voteEnabled && twitchChannel) {
-      ensureIrc();
+  // ───────────────────────── UI hooks (HUD toggle) ─────────────────────────
+  try {
+    if (hudToggle) {
+      hudToggle.addEventListener("click", () => {
+        const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
+        setHudCollapsed(!collapsed);
+      });
+    }
+  } catch (_) {}
 
-      if (playing && !voteSessionActive && !voteTriggeredForSegment) {
-        const startAt = clamp(voteAtSec | 0, 5, 600);
-        const leadMax = clamp(voteLeadSec | 0, 0, 30);
+  // “Tap” sobre HUD para esconder/mostrar (opcional, no molesta)
+  try {
+    if (hud) {
+      hud.addEventListener("dblclick", () => {
+        const hidden = !!hud?.classList?.contains?.("hidden");
+        setHudHidden(!hidden);
+      });
+    }
+  } catch (_) {}
 
-        if (rem > 0 && rem <= startAt) {
-          voteTriggeredForSegment = true;
-          voteStartSequence(voteWindowSec, 0);
-        } else {
-          const triggerLead = Math.min((startAt + leadMax) | 0, segmentSeconds | 0);
-          if (rem > 0 && rem <= triggerLead) {
-            voteTriggeredForSegment = true;
-            const dynLead = clamp((rem - startAt) | 0, 0, leadMax);
-            voteStartSequence(voteWindowSec, dynLead);
-          }
-        }
-      }
+  // Teclas rápidas (no interfiere con inputs)
+  window.addEventListener("keydown", (e) => {
+    const t = (e.target && e.target.tagName) ? String(e.target.tagName).toLowerCase() : "";
+    if (t === "input" || t === "textarea" || (e.target && e.target.isContentEditable)) return;
 
-      if (voteSessionActive) {
-        const now = Date.now();
-        if (votePhase === "lead") {
-          renderVote();
-          if (now >= leadEndsAt) {
-            votePhase = "vote";
-            renderVote();
-          }
-        } else if (votePhase === "vote") {
-          renderVote();
-          if (now >= voteEndsAt) voteFinish();
-        } else {
-          voteReset();
-        }
-      } else {
+    if (e.key === "ArrowRight") { e.preventDefault(); nextCam("key"); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); prevCam(); }
+    else if (e.key === " " || e.code === "Space") { e.preventDefault(); togglePlay(); }
+    else if (e.key.toLowerCase() === "h") { setHudHidden(!hud?.classList?.contains?.("hidden")); }
+  });
+
+  // ───────────────────────── Main tick loop ─────────────────────────
+  function tick() {
+    // UI
+    setCountdownUI();
+
+    // Vote tick
+    if (voteSessionActive) {
+      const now = Date.now();
+      if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) {
+        votePhase = "vote";
         renderVote();
       }
-    } else {
-      voteReset();
+      if (voteEndsAt && now >= voteEndsAt) voteFinish();
     }
 
-    // Post state throttled (evita machacar localStorage 4 veces/s)
+    // TagVote tick
+    if (tagVoteActive && tagVoteEndsAt && Date.now() >= tagVoteEndsAt) tagVoteFinish();
+
+    // Ads tick
+    adTick();
+
+    // Auto-trigger vote (por tiempo transcurrido)
+    if (playing && !voteSessionActive && !tagVoteActive && voteEnabled && twitchChannel) {
+      const rem = remainingSeconds();
+      const elapsed = Math.max(0, (segmentSeconds | 0) - rem);
+      if (!voteTriggeredForSegment && elapsed >= (voteAtSec | 0)) {
+        voteTriggeredForSegment = true;
+        voteStartSequence(voteWindowSec, voteLeadSec);
+      }
+    }
+
+    // Fin del segmento => next
+    if (playing && remainingSeconds() <= 0) {
+      nextCam("timer");
+    }
+
+    // Publica state “suave” (throttle interno)
     postState({}, false);
   }
 
   // ───────────────────────── Boot ─────────────────────────
   function boot() {
-    if (!allCams.length) {
-      showFallback({ originUrl: "#" }, "No hay cámaras definidas (revisa cams.js).");
-      postState({ ready: false, error: "no_cams" });
-      return;
-    }
+    // Tag index (para TagVote)
+    try { buildTagIndex(); } catch (_) {}
 
+    // Fit desde URL
     setFit(P.fit);
 
-    // HUD prefs (keyed, con fallback legacy si no existe)
-    let collapsed = true;
-    let hidden = !P.hud;
+    // HUD persisted (keyed + legacy)
+    const hudCollapsed = boolFromLS([HUD_COLLAPSE_KEY, HUD_COLLAPSE_KEY_BASE], true);
+    const hudHidden = boolFromLS([HUD_HIDE_KEY, HUD_HIDE_KEY_BASE], false);
+    setHudCollapsed(hudCollapsed);
+    setHudHidden(hudHidden);
 
-    try {
-      const v = lsGet(HUD_COLLAPSE_KEY);
-      collapsed = (v != null) ? (v === "1") : ((lsGet(HUD_COLLAPSE_KEY_BASE) ?? "1") === "1");
-    } catch (_) {}
+    // Estado guardado (si existe)
+    const saved = loadPlayerState();
 
-    try {
-      const v = lsGet(HUD_HIDE_KEY);
-      hidden = (v != null) ? (v === "1") : ((lsGet(HUD_HIDE_KEY_BASE) ?? (P.hud ? "0" : "1")) === "1");
-    } catch (_) {}
+    // Twitch channel: URL explícita > saved > bot cfg > default(owner)
+    if (P.twitchExplicit) twitchChannel = P.twitch || "";
+    else if (saved?.twitch) twitchChannel = String(saved.twitch || "").trim().replace(/^@/, "");
+    else if (OWNER_MODE) twitchChannel = readBotCfgChannel() || OWNER_DEFAULT_TWITCH;
+    else twitchChannel = P.twitch || "";
 
-    setHudCollapsed(collapsed);
-    setHudHidden(hidden);
+    // Vote/Chat/Ads/BGM: URL explícitos (cuando aplica) > saved > params
+    if (saved && typeof saved === "object") {
+      // playing
+      if (saved.playing != null) playing = !!saved.playing;
 
-    if (hudToggle) {
-      hudToggle.addEventListener("click", (e) => {
-        e.preventDefault();
-        setHudCollapsed(!hud.classList.contains("hud--collapsed"));
-      });
+      // mins / timers
+      if (saved.mins != null) roundSeconds = clamp((saved.mins | 0), 1, 120) * 60;
+
+      // autoskip/mode
+      if (saved.autoskip != null) autoskip = !!saved.autoskip;
+      if (saved.adfree != null) modeAdfree = !!saved.adfree;
+
+      // vote
+      if (!P.voteExplicit && saved.vote && typeof saved.vote === "object") {
+        voteEnabled = !!saved.vote.enabled;
+      }
+      if (saved.vote && typeof saved.vote === "object") {
+        if (saved.vote.overlay != null) voteOverlay = !!saved.vote.overlay;
+        if (saved.vote.windowSec != null) voteWindowSec = clamp(saved.vote.windowSec | 0, 5, 180);
+        if (saved.vote.voteAtSec != null) voteAtSec = clamp(saved.vote.voteAtSec | 0, 5, 600);
+        if (saved.vote.leadSec != null) voteLeadSec = clamp(saved.vote.leadSec | 0, 0, 30);
+        if (saved.vote.uiSec != null) voteUiSec = clamp(saved.vote.uiSec | 0, 0, 300) || (voteLeadSec + voteWindowSec);
+        if (saved.vote.stayMins != null) stayMins = clamp(saved.vote.stayMins | 0, 1, 120);
+        if (saved.vote.cmd != null) parseVoteCmds(String(saved.vote.cmd || ""));
+      }
+
+      // chat
+      if (!P.chatExplicit && saved.chat && typeof saved.chat === "object") {
+        chatEnabled = !!saved.chat.enabled;
+      }
+      if (saved.chat && typeof saved.chat === "object") {
+        if (!P.chatHideExplicit && saved.chat.hideCommands != null) chatHideCommands = !!saved.chat.hideCommands;
+        if (!P.chatMaxExplicit && saved.chat.max != null) chatMax = clamp(saved.chat.max | 0, 3, 12);
+        if (!P.chatTtlExplicit && saved.chat.ttl != null) chatTtlSec = clamp(saved.chat.ttl | 0, 5, 30);
+      }
+
+      // ads
+      if (!P.adsExplicit && saved.ads && typeof saved.ads === "object") {
+        adsEnabled = !!saved.ads.enabled;
+      }
+      if (saved.ads && typeof saved.ads === "object") {
+        if (saved.ads.adLead != null) adLeadDefaultSec = clamp(saved.ads.adLead | 0, 0, 300);
+        if (saved.ads.showDuring != null) adShowDuring = !!saved.ads.showDuring;
+        if (saved.ads.chatText != null) adChatText = String(saved.ads.chatText || "").trim();
+      }
+
+      // bgm
+      if (saved.bgm && typeof saved.bgm === "object") {
+        if (saved.bgm.enabled != null) bgmEnabled = !!saved.bgm.enabled;
+        if (saved.bgm.vol != null) bgmSetVol(saved.bgm.vol);
+        if (saved.bgm.idx != null) bgmIdx = (saved.bgm.idx | 0) || 0;
+      }
     }
 
-    shuffle(cams, rnd);
+    // Aplica filtros (adfree, bad, banned...)
+    applyFilters();
 
-    const st = loadPlayerState();
-
-    // OWNER DETECT: canal twitch automático
-    // Prioridad: URL twitch > saved state > bot cfg > fallback (solo si OWNER_MODE)
-    let inferredTwitch = String(P.twitch || "").trim().replace(/^@/, "");
-    if (!inferredTwitch) inferredTwitch = String(st?.twitchChannel || "").trim().replace(/^@/, "");
-    if (!inferredTwitch) inferredTwitch = readBotCfgChannel();
-    if (!inferredTwitch && OWNER_MODE) inferredTwitch = OWNER_DEFAULT_TWITCH;
-
-    if (!P.twitchExplicit && inferredTwitch) twitchChannel = inferredTwitch;
-
-    // Auto-defaults solo en owner mode si no se pasaron explícitos y no hay state
-    if (OWNER_MODE && twitchChannel) {
-      if (!P.chatExplicit && (st?.chatEnabled == null)) chatEnabled = true;
-      if (!P.voteExplicit && (st?.voteEnabled == null)) { voteEnabled = true; voteOverlay = true; }
-      if (!P.alertsExplicit && (st?.alertsEnabled == null)) alertsEnabled = true;
+    // Determina idx inicial por ID guardada si se puede
+    if (saved?.curId) {
+      const n = cams.findIndex(c => c && String(c.id) === String(saved.curId));
+      if (n >= 0) idx = n;
     }
 
-    // Restore
-    if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length) {
-      idx = st.idx | 0;
-      playing = !!st.playing;
-
-      autoskip = (st.autoskip ?? 1) !== 0;
-      modeAdfree = !!st.adfree;
-      applyFilters();
-
-      setFit(st.fit || P.fit);
-      setRoundMins(st.mins || P.mins);
-
-      // BGM restore
-      bgmEnabled = (st.bgmEnabled ?? 0) !== 0 || bgmEnabled;
-      bgmVol = clamp(+st.bgmVol || bgmVol, 0, 1);
-      bgmIdx = (st.bgmIdx | 0) || 0;
-      bgmPlaying = (st.bgmPlaying ?? 0) !== 0;
-
-      // Vote restore
-      voteEnabled = (st.voteEnabled ?? 0) !== 0 || voteEnabled;
-      voteOverlay = (st.voteOverlay ?? 1) !== 0;
-      if (st.twitchChannel && !P.twitchExplicit) twitchChannel = String(st.twitchChannel || twitchChannel).trim().replace(/^@/, "");
-
-      voteWindowSec = clamp((st.voteWindowSec | 0) || voteWindowSec, 5, 180);
-      voteAtSec = clamp((st.voteAtSec | 0) || voteAtSec, 5, 600);
-      voteLeadSec = clamp((st.voteLeadSec | 0) || voteLeadSec, 0, 30);
-      voteUiSec = clamp((st.voteUiSec | 0) || (voteLeadSec + voteWindowSec), 0, 300);
-      stayMins = clamp((st.stayMins | 0) || stayMins, 1, 120);
-      if (st.voteCmd) parseVoteCmds(st.voteCmd);
-
-      // Chat restore (P.chat explícito manda)
-      if (P.chatExplicit) chatEnabled = !!P.chat;
-      else chatEnabled = (st.chatEnabled != null) ? ((st.chatEnabled | 0) !== 0) : chatEnabled;
-
-      if (P.chatHideExplicit) chatHideCommands = !!P.chatHideCommands;
-      else chatHideCommands = (st.chatHideCommands != null) ? ((st.chatHideCommands | 0) !== 0) : chatHideCommands;
-
-      if (P.chatMaxExplicit) chatMax = P.chatMax | 0;
-      else chatMax = clamp((st.chatMax | 0) || chatMax, 3, 12);
-
-      if (P.chatTtlExplicit) chatTtlSec = P.chatTtl | 0;
-      else chatTtlSec = clamp((st.chatTtlSec | 0) || chatTtlSec, 5, 30);
-
-      // Alerts restore
-      alertsEnabled = (st.alertsEnabled ?? (alertsEnabled ? 1 : 0)) !== 0;
-
-      // Ads restore
-      adsEnabled = (st.adsEnabled ?? (P.ads ? 1 : 0)) !== 0;
-      adLeadDefaultSec = clamp((st.adLeadDefaultSec | 0) || adLeadDefaultSec, 0, 300);
-      adShowDuring = (st.adShowDuring ?? 1) !== 0;
-      adChatText = String(st.adChatText || adChatText);
-
-      // restore segment + remaining
-      const totalSeg = clamp((st.segmentSec | 0) || roundSeconds, 1, 120 * 60);
-      const rem2 = clamp((st.remaining | 0) || totalSeg, 0, totalSeg);
-
-      startRoundWithRemaining(totalSeg, rem2);
-      if (!playing) { pausedRemaining = rem2; roundEndsAt = 0; setCountdownUI(); }
-    } else {
-      idx = 0;
-      playing = true;
-      setRoundMins(P.mins);
-      startRound(roundSeconds);
-
-      // init
-      bgmEnabled = !!P.bgm;
-      bgmVol = P.bgmVol;
-
-      voteEnabled = !!P.vote || voteEnabled;
-      voteOverlay = !!P.voteOverlay || voteOverlay;
-      if (P.twitchExplicit) twitchChannel = P.twitch || twitchChannel;
-
-      voteWindowSec = P.voteWindow;
-      voteAtSec = P.voteAt;
-      voteLeadSec = P.voteLead;
-      voteUiSec = (P.voteUi > 0) ? P.voteUi : (voteLeadSec + voteWindowSec);
-      stayMins = P.stayMins;
-
-      chatEnabled = (P.chatExplicit ? !!P.chat : chatEnabled);
-      chatHideCommands = !!P.chatHideCommands;
-      chatMax = P.chatMax | 0;
-      chatTtlSec = P.chatTtl | 0;
-
-      alertsEnabled = !!P.alerts || alertsEnabled;
-      adsEnabled = !!P.ads;
-      adLeadDefaultSec = P.adLead | 0;
-      adShowDuring = !!P.adShowDuring;
-      adChatText = String(P.adChatText || adChatText);
-
-      parseVoteCmds(P.voteCmd || voteCmdStr);
-    }
-
-    // chat UI + activar
-    ensureChatUI();
-    chatSetEnabled(chatEnabled);
-
-    // alerts UI
+    // UI toggles que dependen de “enabled”
+    if (chatEnabled) { ensureChatUI(); chatRoot?.classList?.add?.("chat--on"); }
     ensureAlertsUI();
-
-    // ads UI
-    ensureAdsUI();
-    if (!adsEnabled) adHide();
-
-    // BGM init
-    try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
-    if (bgmList.length) bgmLoadTrack(bgmIdx);
-    if (bgmEnabled && bgmPlaying) bgmPlay();
-
-    // IRC init
     ensureIrc();
 
+    // Arranca BGM cuando haya gesto (autoplay policies)
+    if (bgmEnabled && bgmList.length) {
+      const tryStart = () => {
+        window.removeEventListener("pointerdown", tryStart);
+        window.removeEventListener("keydown", tryStart);
+        bgmPlay();
+      };
+      window.addEventListener("pointerdown", tryStart, { once: true });
+      window.addEventListener("keydown", tryStart, { once: true });
+      // también intenta (si el navegador lo permite)
+      setTimeout(() => { bgmPlay(); }, 300);
+    }
+
+    // Play inicial
     playCam(cams[idx]);
 
-    if (tickTimer) clearInterval(tickTimer);
+    // Restaura remaining/segment si existe (después de playCam)
+    try {
+      if (saved && typeof saved === "object" && saved.segmentSec != null && saved.remaining != null) {
+        // respeta "playing" guardado
+        playing = !!saved.playing;
+        startRoundWithRemaining(saved.segmentSec | 0, saved.remaining | 0);
+      }
+    } catch (_) {}
+
+    // Tick loop
+    try { if (tickTimer) clearInterval(tickTimer); } catch (_) {}
     tickTimer = setInterval(tick, 250);
 
-    if (saveTimer) clearInterval(saveTimer);
-    saveTimer = setInterval(() => { savePlayerState(); postState({ reason: "heartbeat" }, true); }, 2000);
+    // Save loop
+    try { if (saveTimer) clearInterval(saveTimer); } catch (_) {}
+    saveTimer = setInterval(savePlayerState, 3500);
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) { savePlayerState(); postState({ reason: "hidden" }, true); }
-    });
+    // Primer state publish
+    postState({ reason: "boot" }, true);
 
-    // Teclas
-    window.addEventListener("keydown", (e) => {
-      const k = (e.key || "").toLowerCase();
-      if (k === " ") { e.preventDefault(); togglePlay(); }
-      else if (k === "n") nextCam("key");
-      else if (k === "p") prevCam();
-      else if (k === "h") setHudHidden(!hud.classList.contains("hidden"));
-      else if (k === "i") setHudCollapsed(!hud.classList.contains("hud--collapsed"));
-      else if (k === "c") chatSetEnabled(!chatEnabled);
-    });
-
-    postState({ ready: true }, true);
+    // Lee comandos “pendientes” (por si control escribió antes de cargar player)
+    readCmdFromStorage(CMD_KEY, true);
+    readCmdFromStorage(CMD_KEY_LEGACY, false);
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
-  else boot();
+  window.addEventListener("beforeunload", () => {
+    try { savePlayerState(); } catch (_) {}
+  });
+
+  // boot
+  boot();
+
 })();

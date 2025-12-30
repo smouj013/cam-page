@@ -1,9 +1,13 @@
-/* control.js — RLC Control v2.1.5 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE)
+/* control.js — RLC Control v2.1.6 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE + KEY-NAMESPACE)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
    ✅ Bot NO se incluye en URL (seguridad)
-   ✅ NUEVO: Events bridge Player -> Control (ads auto detectados => bot escribe)
+   ✅ Events bridge Player -> Control (ads auto detectados => bot escribe)
+   ✅ NUEVO v2.1.6:
+      - Soporte KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy
+      - BOT_SAY desde Player (cmd) => Control lo envía al chat (con anti-spam)
+      - Anuncio automático al chat cuando cambia la cámara (anti-spam)
 */
 (() => {
   "use strict";
@@ -11,17 +15,15 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V215";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V216";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  const BUS = "rlc_bus_v1";
-  const CMD_KEY = "rlc_cmd_v1";
-  const STATE_KEY = "rlc_state_v1";
+  const BUS_BASE = "rlc_bus_v1";
+  const CMD_KEY_BASE = "rlc_cmd_v1";
+  const STATE_KEY_BASE = "rlc_state_v1";
+  const EVT_KEY_BASE = "rlc_evt_v1";
 
-  // ✅ NUEVO: eventos Player -> Control
-  const EVT_KEY = "rlc_evt_v1";
-
-  const BOT_STORE_KEY = "rlc_bot_cfg_v1"; // solo control.html (no player)
+  const BOT_STORE_KEY_BASE = "rlc_bot_cfg_v1"; // solo control.html (no player)
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -30,13 +32,29 @@
     return Number.isFinite(n) ? n : fallback;
   };
 
-  const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-
   function parseParams() {
     const u = new URL(location.href);
-    return { key: u.searchParams.get("key") || "" };
+    return { key: (u.searchParams.get("key") || "").trim() };
   }
   const P = parseParams();
+
+  const KEY = String(P.key || "").trim();
+
+  // Namespaced (si hay key) + legacy (compat)
+  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  const CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
+  const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+  const EVT_KEY = KEY ? `${EVT_KEY_BASE}:${KEY}` : EVT_KEY_BASE;
+
+  const BUS_LEGACY = BUS_BASE;
+  const CMD_KEY_LEGACY = CMD_KEY_BASE;
+  const STATE_KEY_LEGACY = STATE_KEY_BASE;
+  const EVT_KEY_LEGACY = EVT_KEY_BASE;
+
+  const BOT_STORE_KEY = KEY ? `${BOT_STORE_KEY_BASE}:${KEY}` : BOT_STORE_KEY_BASE;
+
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
   // ───────────────────────── UI ─────────────────────────
   const ctlStatus = qs("#ctlStatus");
@@ -126,8 +144,17 @@
   let lastState = null;
   let lastSeenAt = 0;
 
-  // ✅ eventos
+  // eventos / spam guards
   let lastEventTs = 0;
+
+  // Bot say guards
+  let lastBotSayAt = 0;
+  let lastBotSaySig = "";
+  function sigOf(s) { return String(s || "").trim().slice(0, 180); }
+
+  // Auto announce cam
+  let lastAnnouncedCamId = "";
+  let lastAnnounceAt = 0;
 
   function fmtMMSS(sec) {
     sec = Math.max(0, sec | 0);
@@ -136,10 +163,33 @@
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
+  function keyOk(msg, isMainChannel) {
+    if (!KEY) return true;
+    // En canal main (namespaced) aceptamos aunque no venga key en msg
+    if (isMainChannel) return true;
+    // En legacy exige key para evitar cross-talk
+    return (msg && msg.key === KEY);
+  }
+
+  function busPost(msg) {
+    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
+  }
+
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+
   function sendCmd(cmd, payload = {}) {
-    const msg = { type: "cmd", ts: Date.now(), cmd, payload, key: P.key || "" };
-    try { if (bc) bc.postMessage(msg); } catch (_) {}
-    try { localStorage.setItem(CMD_KEY, JSON.stringify(msg)); } catch (_) {}
+    const msg = { type: "cmd", ts: Date.now(), cmd, payload: payload || {} };
+    if (KEY) msg.key = KEY;
+
+    const raw = JSON.stringify(msg);
+
+    // Escribe en ambos (namespaced + legacy) para compat
+    lsSet(CMD_KEY, raw);
+    lsSet(CMD_KEY_LEGACY, raw);
+
+    busPost(msg);
   }
 
   function setStatus(text, ok = true) {
@@ -218,13 +268,9 @@
   // ✅ evita que applyState te “pise” mientras editas
   function isEditing(el) {
     if (!el) return false;
-    try {
-      return document.activeElement === el || el.matches(":focus");
-    } catch (_) {
-      return document.activeElement === el;
-    }
+    try { return document.activeElement === el || el.matches(":focus"); }
+    catch (_) { return document.activeElement === el; }
   }
-
   function safeSetValue(el, v) {
     if (!el) return;
     if (isEditing(el)) return;
@@ -232,10 +278,9 @@
   }
 
   // ───────────────────────── BOT IRC (AUTH) ─────────────────────────
-  // Se usa SOLO desde control.html. El token nunca viaja en URL.
   class TwitchAuthIRC {
     constructor(getCfg, onStatus) {
-      this.getCfg = getCfg; // () => {on,user,token,channel}
+      this.getCfg = getCfg;
       this.onStatus = onStatus || (() => {});
       this.ws = null;
       this.closed = true;
@@ -254,7 +299,6 @@
     _normalizeToken(tok) {
       const t = String(tok || "").trim();
       if (!t) return "";
-      // Acepta token con o sin "oauth:"
       return t.startsWith("oauth:") ? t : ("oauth:" + t);
     }
 
@@ -278,12 +322,9 @@
       this.ws = null;
 
       let ws;
-      try {
-        ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
-      } catch (_) {
-        this._set(false, "WebSocket no disponible");
-        return;
-      }
+      try { ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443"); }
+      catch (_) { this._set(false, "WebSocket no disponible"); return; }
+
       this.ws = ws;
 
       ws.onopen = () => {
@@ -291,7 +332,6 @@
         this.joinedChan = "";
         this._set(true, "Conectado (auth)");
 
-        // Auth
         ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
         ws.send(`PASS ${token}\r\n`);
         ws.send(`NICK ${user}\r\n`);
@@ -331,16 +371,13 @@
         return;
       }
 
-      // Detecta JOIN ok
       const mJoin = line.match(/ JOIN #([a-z0-9_]+)/i);
       if (mJoin) {
         this.joinedChan = (mJoin[1] || "").toLowerCase();
-        // flush queue
         this._flush();
         return;
       }
 
-      // NOTICE de auth fallida
       if (line.includes("Login authentication failed")) {
         this._set(false, "Auth fallida (token?)");
         this.close();
@@ -383,26 +420,40 @@
         try { this.ws.send(line); return true; } catch (_) { return false; }
       }
 
-      // cola (por si está conectando)
       this.queue.push(line);
-      // intenta conectar si no está
       if (!this.ws || this.ws.readyState > 1) this.connect();
       return true;
     }
   }
 
+  function loadJsonFirst(keys, fallbackVal = null) {
+    for (const k of keys) {
+      try {
+        const raw = lsGet(k);
+        if (!raw) continue;
+        return JSON.parse(raw);
+      } catch (_) {}
+    }
+    return fallbackVal;
+  }
+
   function loadBotCfg() {
     try {
-      const raw = localStorage.getItem(BOT_STORE_KEY);
-      if (!raw) return { on: false, user: "", token: "", sayOnAd: true };
-      const o = JSON.parse(raw);
+      const o = loadJsonFirst([BOT_STORE_KEY, BOT_STORE_KEY_BASE], null);
       if (!o || typeof o !== "object") return { on: false, user: "", token: "", sayOnAd: true };
-      return {
+      const cfg = {
         on: !!o.on,
         user: String(o.user || ""),
         token: String(o.token || ""),
         sayOnAd: (typeof o.sayOnAd === "boolean") ? o.sayOnAd : true
       };
+      // migra si venía de legacy y estamos en keyed
+      try {
+        if (KEY && !lsGet(BOT_STORE_KEY) && lsGet(BOT_STORE_KEY_BASE)) {
+          lsSet(BOT_STORE_KEY, JSON.stringify(cfg));
+        }
+      } catch (_) {}
+      return cfg;
     } catch (_) {
       return { on: false, user: "", token: "", sayOnAd: true };
     }
@@ -410,11 +461,14 @@
 
   function saveBotCfg(cfg) {
     try {
-      localStorage.setItem(BOT_STORE_KEY, JSON.stringify(cfg || {}));
+      const raw = JSON.stringify(cfg || {});
+      lsSet(BOT_STORE_KEY, raw);
+      lsSet(BOT_STORE_KEY_BASE, raw); // compat
     } catch (_) {}
   }
 
   let botCfg = loadBotCfg();
+
   const bot = new TwitchAuthIRC(
     () => ({
       on: !!(ctlBotOn?.value === "on"),
@@ -447,16 +501,23 @@
     const botOn = (ctlBotOn?.value === "on");
     const sayOnAd = (ctlBotSayOnAd?.value !== "off");
     if (!botOn || !sayOnAd) return false;
+
     const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
     if (!ch) return false;
+
     const msg = String(text || "").trim();
     if (!msg) return false;
-    return bot.say(msg, ch);
-  }
 
-  function keyOk(msg) {
-    if (!P.key) return true;
-    return (msg && msg.key === P.key);
+    const now = Date.now();
+    const s = sigOf(msg);
+    // anti spam: 1.2s + no repetir la misma línea
+    if ((now - lastBotSayAt) < 1200) return false;
+    if (s && s === lastBotSaySig && (now - lastBotSayAt) < 12000) return false;
+
+    lastBotSayAt = now;
+    lastBotSaySig = s;
+
+    return bot.say(msg, ch);
   }
 
   // ✅ URL del stream (index.html) desde el panel
@@ -464,7 +525,6 @@
     const u = new URL(location.href);
     u.pathname = u.pathname.replace(/control\.html$/i, "index.html");
 
-    // básicos
     u.searchParams.set("mins", String(clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120)));
     u.searchParams.set("fit", ctlFit?.value || "cover");
     u.searchParams.set("hud", (ctlHud?.value === "off") ? "0" : "1");
@@ -532,8 +592,8 @@
 
     if (ctlAdChatText?.value) u.searchParams.set("adChatText", ctlAdChatText.value.trim());
 
-    // key (IMPORTANTE: misma key que el player)
-    if (P.key) u.searchParams.set("key", P.key);
+    // key
+    if (KEY) u.searchParams.set("key", KEY);
     else u.searchParams.delete("key");
 
     return u.toString();
@@ -606,12 +666,32 @@
     if (ctlAlertsOn && st?.alertsEnabled != null && !isEditing(ctlAlertsOn)) ctlAlertsOn.value = st.alertsEnabled ? "on" : "off";
 
     if (ctlAdsOn && st?.ads?.enabled != null && !isEditing(ctlAdsOn)) ctlAdsOn.value = st.ads.enabled ? "on" : "off";
+
+    // ✅ Auto-announce cam al chat (solo cuando cambia)
+    try {
+      const camId = String(st?.cam?.id || "");
+      const chan = String(vote?.channel || ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+      const botOn = (ctlBotOn?.value === "on");
+      if (camId && camId !== lastAnnouncedCamId && chan && botOn) {
+        const now = Date.now();
+        if ((now - lastAnnounceAt) > 4500) {
+          lastAnnounceAt = now;
+          lastAnnouncedCamId = camId;
+
+          const t = String(st?.cam?.title || "Live Cam").trim();
+          const p = String(st?.cam?.place || "").trim();
+          const src = String(st?.cam?.source || "").trim();
+          const line = `🌍 Ahora: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}  |  🆘 !help  🎲 !tagvote  🗳️ !callvote`;
+          botSayIfEnabled(line);
+        }
+      }
+    } catch (_) {}
   }
 
   // ✅ NUEVO: manejar eventos Player -> Control
-  function handleEvent(evt) {
+  function handleEvent(evt, isMainChannel) {
     if (!evt || evt.type !== "event") return;
-    if (!keyOk(evt)) return;
+    if (!keyOk(evt, isMainChannel)) return;
 
     const ts = evt.ts | 0;
     if (ts && ts <= (lastEventTs | 0)) return;
@@ -620,11 +700,9 @@
     const name = String(evt.name || "").toUpperCase();
     const payload = evt.payload || {};
 
-    // Ads detectados automáticamente por el player
     if (name === "AD_AUTO_NOTICE") {
       const leadSec = (payload.leadSec | 0) || 0;
       const msg = (ctlAdChatText?.value || "").trim() || `⚠️ Anuncio en ${leadSec || 30}s… ¡gracias por apoyar el canal! 💜`;
-      // Solo avisamos (NO iniciamos overlay aquí: el player ya lo hace)
       botSayIfEnabled(msg);
       return;
     }
@@ -637,46 +715,73 @@
     }
   }
 
-  // Receive state / events (BroadcastChannel)
-  if (bc) {
-    bc.onmessage = (ev) => {
-      const msg = ev?.data;
-      if (!msg) return;
-      if (msg.type === "state") applyState(msg);
-      else if (msg.type === "event") handleEvent(msg);
-    };
+  // ✅ NUEVO: recibir comandos desde Player (BOT_SAY)
+  function handleCmdFromPlayer(msg, isMainChannel) {
+    if (!msg || msg.type !== "cmd") return;
+    if (!keyOk(msg, isMainChannel)) return;
+
+    const cmd = String(msg.cmd || "");
+    const payload = msg.payload || {};
+
+    if (cmd === "BOT_SAY") {
+      const text = String(payload.text || payload.message || "").trim();
+      if (!text) return;
+      // anti spam extra
+      botSayIfEnabled(text);
+      return;
+    }
   }
+
+  function onBusMessage(msg, isMainChannel) {
+    if (!msg) return;
+    if (msg.type === "state") { if (keyOk(msg, isMainChannel)) applyState(msg); return; }
+    if (msg.type === "event") { handleEvent(msg, isMainChannel); return; }
+    if (msg.type === "cmd") { handleCmdFromPlayer(msg, isMainChannel); return; }
+  }
+
+  // Receive (BroadcastChannel)
+  if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
+  if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
 
   // Fallback: state from localStorage
   setInterval(() => {
     try {
-      const raw = localStorage.getItem(STATE_KEY);
+      const raw = lsGet(STATE_KEY) || lsGet(STATE_KEY_LEGACY);
       if (!raw) return;
       const st = JSON.parse(raw);
       if (!st || st.type !== "state") return;
+      // si viene del legacy, filtra key
+      if (!keyOk(st, raw === lsGet(STATE_KEY))) return;
       applyState(st);
     } catch (_) {}
   }, 500);
 
-  // ✅ Fallback: events from localStorage
+  // Fallback: events from localStorage
   setInterval(() => {
     try {
-      const raw = localStorage.getItem(EVT_KEY);
+      const raw = lsGet(EVT_KEY) || lsGet(EVT_KEY_LEGACY);
       if (!raw) return;
       const evt = JSON.parse(raw);
       if (!evt || evt.type !== "event") return;
-      handleEvent(evt);
+      handleEvent(evt, raw === lsGet(EVT_KEY));
     } catch (_) {}
   }, 650);
 
-  // ✅ Storage events (por si BC falla)
+  // Storage events (por si BC falla)
   window.addEventListener("storage", (e) => {
-    if (!e) return;
-    if (e.key === EVT_KEY && e.newValue) {
+    if (!e || !e.key || !e.newValue) return;
+
+    if (e.key === EVT_KEY || e.key === EVT_KEY_LEGACY) {
+      try { handleEvent(JSON.parse(e.newValue), e.key === EVT_KEY); } catch (_) {}
+      return;
+    }
+
+    if (e.key === STATE_KEY || e.key === STATE_KEY_LEGACY) {
       try {
-        const evt = JSON.parse(e.newValue);
-        handleEvent(evt);
+        const st = JSON.parse(e.newValue);
+        if (st && st.type === "state" && keyOk(st, e.key === STATE_KEY)) applyState(st);
       } catch (_) {}
+      return;
     }
   });
 
