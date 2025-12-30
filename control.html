@@ -185,28 +185,25 @@
         </label>
 
         <label class="row">
-          <span>Ventana (s)</span>
-          <input id="ctlVoteWindow" class="input" type="number" min="5" max="60" step="1" value="20" />
+          <span>Duración voto (s)</span>
+          <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="20" />
         </label>
 
         <label class="row">
           <span>Auto (a falta)</span>
-          <input id="ctlVoteAt" class="input" type="number" min="5" max="120" step="1" value="60" />
+          <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" />
         </label>
 
-        <!-- ✅ NUEVO: pre-aviso -->
         <label class="row">
           <span>Pre-aviso (s)</span>
           <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" />
         </label>
 
-        <!-- ✅ NUEVO: re-voto si STAY -->
         <label class="row">
           <span>STAY → re-voto (min)</span>
           <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" />
         </label>
 
-        <!-- ✅ NUEVO: YouTube cookies/sesión -->
         <label class="row">
           <span>YouTube cookies</span>
           <select id="ctlYtCookies" class="select">
@@ -225,7 +222,10 @@
           <button id="ctlVoteApply" class="btn ghost full">Aplicar</button>
         </div>
 
-        <div class="hint">Regla: si gana NEXT (y&gt;0) → cambia cam. Empate → mantener.</div>
+        <div class="hint">
+          ✅ La ventana visible debe durar: <b>Pre-aviso + Duración voto</b>.<br/>
+          Ej: 5s + 20s = 25s (sin cortar).
+        </div>
       </div>
     </section>
 
