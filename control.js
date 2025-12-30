@@ -4,7 +4,7 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V212";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V213";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS = "rlc_bus_v1";
@@ -167,6 +167,22 @@
     }
   }
 
+  // ✅ evita que applyState te “pise” mientras editas
+  function isEditing(el) {
+    if (!el) return false;
+    try {
+      return document.activeElement === el || el.matches(":focus");
+    } catch (_) {
+      return document.activeElement === el;
+    }
+  }
+
+  function safeSetValue(el, v) {
+    if (!el) return;
+    if (isEditing(el)) return;
+    el.value = String(v);
+  }
+
   // ✅ URL del stream (index.html) desde el panel
   // Enviamos también voteUi (= lead + window) para que el overlay dure desde el aviso hasta el final del voto.
   function streamUrlFromHere() {
@@ -227,9 +243,13 @@
     else u.searchParams.delete("bgm");
     if (ctlBgmVol?.value != null) u.searchParams.set("bgmVol", String(ctlBgmVol.value));
 
-    // key
+    // key (IMPORTANTE: misma key que el player)
     if (P.key) u.searchParams.set("key", P.key);
     else u.searchParams.delete("key");
+
+    // chat overlay recomendado (por si quieres que el URL copiado lo incluya)
+    // u.searchParams.set("chat", "1");
+    // u.searchParams.set("chatHideCommands", "1");
 
     return u.toString();
   }
@@ -251,17 +271,20 @@
     }
 
     if (ctlPlay) ctlPlay.textContent = st?.playing ? "⏸" : "▶";
-    if (ctlMins && st?.mins) ctlMins.value = String(st.mins);
-    if (ctlFit && st?.fit) ctlFit.value = st.fit;
-    if (ctlHud) ctlHud.value = st?.hudHidden ? "off" : "on";
-    if (ctlHudDetails) ctlHudDetails.value = st?.hudCollapsed ? "collapsed" : "expanded";
-    if (ctlAutoskip) ctlAutoskip.value = st?.autoskip ? "on" : "off";
-    if (ctlAdfree) ctlAdfree.value = st?.adfree ? "on" : "off";
+
+    // ⚠️ NO pisar inputs si el usuario los está editando
+    if (ctlMins && st?.mins) safeSetValue(ctlMins, st.mins);
+    if (ctlFit && st?.fit && !isEditing(ctlFit)) ctlFit.value = st.fit;
+
+    if (ctlHud && !isEditing(ctlHud)) ctlHud.value = st?.hudHidden ? "off" : "on";
+    if (ctlHudDetails && !isEditing(ctlHudDetails)) ctlHudDetails.value = st?.hudCollapsed ? "collapsed" : "expanded";
+    if (ctlAutoskip && !isEditing(ctlAutoskip)) ctlAutoskip.value = st?.autoskip ? "on" : "off";
+    if (ctlAdfree && !isEditing(ctlAdfree)) ctlAdfree.value = st?.adfree ? "on" : "off";
 
     // BGM
-    if (ctlBgmOn) ctlBgmOn.value = st?.bgm?.enabled ? "on" : "off";
-    if (ctlBgmVol && typeof st?.bgm?.vol === "number") ctlBgmVol.value = String(st.bgm.vol);
-    if (ctlBgmTrack && st?.bgm?.idx != null) ctlBgmTrack.value = String(st.bgm.idx | 0);
+    if (ctlBgmOn && !isEditing(ctlBgmOn)) ctlBgmOn.value = st?.bgm?.enabled ? "on" : "off";
+    if (ctlBgmVol && typeof st?.bgm?.vol === "number") safeSetValue(ctlBgmVol, st.bgm.vol);
+    if (ctlBgmTrack && st?.bgm?.idx != null && !isEditing(ctlBgmTrack)) ctlBgmTrack.value = String(st.bgm.idx | 0);
     if (ctlBgmNow) {
       const name = st?.bgm?.track || "";
       ctlBgmNow.textContent = name ? `Now: ${name} · ${st?.bgm?.playing ? "playing" : "paused"}` : "—";
@@ -270,17 +293,19 @@
     // Vote state
     const vote = st?.vote || {};
     if (ctlTwitchChannel && typeof vote?.channel === "string") {
-      if (!ctlTwitchChannel.value) ctlTwitchChannel.value = vote.channel;
+      // solo auto-rellenar si está vacío o no lo estás editando
+      if (!ctlTwitchChannel.value || !isEditing(ctlTwitchChannel)) safeSetValue(ctlTwitchChannel, vote.channel);
     }
-    if (ctlVoteOn) ctlVoteOn.value = vote?.enabled ? "on" : "off";
-    if (ctlVoteOverlay) ctlVoteOverlay.value = vote?.overlay ? "on" : "off";
-    if (ctlVoteWindow && vote?.windowSec != null) ctlVoteWindow.value = String(vote.windowSec | 0);
-    if (ctlVoteAt && vote?.voteAtSec != null) ctlVoteAt.value = String(vote.voteAtSec | 0);
-    if (ctlVoteCmd && typeof vote?.cmd === "string") ctlVoteCmd.value = vote.cmd || ctlVoteCmd.value;
 
-    if (ctlVoteLead) {
-      const ls = (vote?.leadSec != null) ? (vote.leadSec | 0) : null;
-      if (ls != null) ctlVoteLead.value = String(clamp(ls, 0, 30));
+    if (ctlVoteOn && !isEditing(ctlVoteOn)) ctlVoteOn.value = vote?.enabled ? "on" : "off";
+    if (ctlVoteOverlay && !isEditing(ctlVoteOverlay)) ctlVoteOverlay.value = vote?.overlay ? "on" : "off";
+
+    if (ctlVoteWindow && vote?.windowSec != null) safeSetValue(ctlVoteWindow, (vote.windowSec | 0));
+    if (ctlVoteAt && vote?.voteAtSec != null) safeSetValue(ctlVoteAt, (vote.voteAtSec | 0));
+    if (ctlVoteLead && vote?.leadSec != null) safeSetValue(ctlVoteLead, clamp((vote.leadSec | 0), 0, 30));
+
+    if (ctlVoteCmd && typeof vote?.cmd === "string") {
+      if (!isEditing(ctlVoteCmd)) ctlVoteCmd.value = vote.cmd || ctlVoteCmd.value;
     }
 
     if (ctlStayMins) {
@@ -288,7 +313,7 @@
         (vote?.stayMins != null) ? (vote.stayMins | 0)
         : (vote?.staySec != null) ? Math.max(1, Math.round((vote.staySec | 0) / 60))
         : null;
-      if (sm != null) ctlStayMins.value = String(clamp(sm, 1, 120));
+      if (sm != null) safeSetValue(ctlStayMins, clamp(sm, 1, 120));
     }
 
     if (ctlYtCookies) {
@@ -297,10 +322,12 @@
         : (st?.ytCookies != null) ? !!st.ytCookies
         : null;
 
-      if (ctlYtCookies.type === "checkbox") {
-        if (ytCookies != null) ctlYtCookies.checked = ytCookies;
-      } else {
-        if (ytCookies != null) ctlYtCookies.value = ytCookies ? "on" : "off";
+      if (ytCookies != null) {
+        if (ctlYtCookies.type === "checkbox") {
+          if (!isEditing(ctlYtCookies)) ctlYtCookies.checked = ytCookies;
+        } else {
+          if (!isEditing(ctlYtCookies)) ctlYtCookies.value = ytCookies ? "on" : "off";
+        }
       }
     }
   }
@@ -338,10 +365,10 @@
     syncList("");
     syncBgmTracks();
 
-    // defaults
+    // defaults seguros
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
     if (ctlVoteWindow && !ctlVoteWindow.value) ctlVoteWindow.value = "60";
-    if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "5";
+    if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "0"; // si quieres 60 visual EXACTOS, lead=0
     if (ctlStayMins && !ctlStayMins.value) ctlStayMins.value = "5";
     if (ctlYtCookies && !ctlYtCookies.value && ctlYtCookies.type !== "checkbox") ctlYtCookies.value = "on";
 
@@ -409,7 +436,11 @@
     function voteApply() {
       const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
       const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-      const leadSec = clamp(parseInt(ctlVoteLead?.value || "5", 10) || 5, 0, 30);
+      const leadSec = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
+
+      // Si quieres que “la pantalla de voto” dure EXACTAMENTE 60:
+      // - leadSec = 0
+      // - windowSec = 60
       const uiSec = windowSec + leadSec;
 
       const stayMins = ctlStayMins ? clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120) : undefined;
@@ -421,7 +452,7 @@
         windowSec,
         voteAtSec,
         leadSec,
-        uiSec, // ✅ clave: overlay visible lead+window
+        uiSec,
         cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim(),
         stayMins
       });
@@ -430,9 +461,8 @@
     if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
 
     if (ctlVoteStart) ctlVoteStart.addEventListener("click", () => {
-      // Manual: el app.js decidirá si usa leadSec+windowSec o solo windowSec.
       const w = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
-      const lead = clamp(parseInt(ctlVoteLead?.value || "5", 10) || 5, 0, 30);
+      const lead = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
       sendCmd("VOTE_START", { windowSec: w, leadSec: lead, uiSec: w + lead });
     });
 
