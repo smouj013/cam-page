@@ -1,16 +1,22 @@
-/* app.js — RLC Player v2.0.2 PRO
-   ✅ Voto automático configurable (voteAt = segundos antes del final para EMPEZAR el voto)
-   ✅ Pre-aviso (voteLead): muestra overlay Xs ANTES de empezar el voto
-   ✅ Overlay visible durante TODO el ciclo: pre-aviso + voto (NO solo voteWindow)
+/* app.js — RLC Player v2.0.3 PRO
+   ✅ Voto automático configurable:
+      - voteAt = segundos antes del final para EMPEZAR el voto
+      - voteLead = segundos de pre-aviso ANTES de empezar el voto
+      - Overlay visible durante TODO el ciclo: pre-aviso + voto (NO solo voteWindow)
+      - Si recargas tarde (rem <= voteAt) -> empieza voto directo (sin lead)
    ✅ STAY: reinicia segmento a stayMins y vuelve a votar al faltar voteAt
    ✅ ytCookies=1 -> youtube.com/embed (sesión/cookies); default nocookie
-   ✅ Chat overlay (abajo derecha) bonito, filtra comandos (no muestra mensajes que empiezan por "!")
+   ✅ Chat overlay (abajo derecha) bonito:
+      - se activa por defecto si hay ?twitch=...
+      - NO muestra comandos (mensajes que empiezan por "!")
+      - puedes forzar con &chat=1 o &chat=0
+      - tecla C toggle
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V202_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V203_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // Bus
@@ -39,11 +45,13 @@
   function parseParams() {
     const u = new URL(location.href);
 
-    const twitch = (u.searchParams.get("twitch") || "").trim().replace(/^@/,"");
+    const twitch = (u.searchParams.get("twitch") || "").trim().replace(/^@/, "");
 
-    // chat overlay: si no especificas nada y hay twitch, lo activamos (para que “se vea” sin tocar más)
     const chatParam = u.searchParams.get("chat") ?? u.searchParams.get("chatOverlay");
-    const chat = (chatParam == null) ? !!twitch : parseBoolParam(chatParam, true);
+    const chatExplicit = (chatParam != null);
+
+    // chat: si no especificas nada y hay twitch, lo activamos por defecto
+    const chat = chatExplicit ? parseBoolParam(chatParam, true) : !!twitch;
 
     return {
       mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
@@ -54,7 +62,6 @@
       mode: (u.searchParams.get("mode") || "").toLowerCase(), // adfree
       debug: (u.searchParams.get("debug") === "1"),
 
-      // seguridad por key (si no hay, acepta todo)
       key: u.searchParams.get("key") || "",
 
       // YouTube embed mode
@@ -76,20 +83,23 @@
       // pre-aviso (seg) antes de empezar el voto (default 5)
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
 
-      // opcional (si viene, solo informativo/compat): total visible = lead + window
+      // opcional (si viene, solo informativo/compat)
       voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
 
-      // Si se mantiene: duración del siguiente “segmento” en minutos (default 5)
       stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 60),
 
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
       voteOverlay: (u.searchParams.get("voteOverlay") ?? "1") !== "0",
 
-      // Chat overlay (bonito) + filtros
+      // Chat overlay
       chat,
+      chatExplicit,
       chatHideCommands: parseBoolParam(u.searchParams.get("chatHideCommands"), true),
+      chatHideExplicit: (u.searchParams.get("chatHideCommands") != null),
       chatMax: clamp(parseInt(u.searchParams.get("chatMax") || "7", 10) || 7, 3, 12),
+      chatMaxExplicit: (u.searchParams.get("chatMax") != null),
       chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
+      chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
     };
   }
 
@@ -196,10 +206,10 @@
   let idx = 0;
   let playing = true;
 
-  // base “mins” para cams (cuando NO estamos en segmento forzado de stay)
+  // base “mins”
   let roundSeconds = P.mins * 60;
 
-  // segmento actual (lo que se muestra en el contador)
+  // segmento actual
   let segmentSeconds = roundSeconds;
 
   let roundEndsAt = 0;
@@ -603,7 +613,7 @@
 
   let chatRoot = null;
   let chatList = null;
-  let chatItems = []; // {id, user, text, ts, el}
+  let chatItems = []; // {el, ts}
 
   function injectChatStylesOnce() {
     if (document.getElementById("rlcChatStyles")) return;
@@ -611,73 +621,70 @@
     st.id = "rlcChatStyles";
     st.textContent = `
       .rlcChatRoot{
-        position: fixed; right: 14px; bottom: 14px;
-        width: min(360px, calc(100vw - 28px));
-        max-height: 40vh;
+        position: fixed;
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        width: min(360px, calc(100vw - 24px));
+        max-height: min(44vh, 420px);
         z-index: 9999;
         pointer-events: none;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        gap: 8px;
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        display: none;
+      }
+      .rlcChatRoot.chat--on{ display: block !important; }
+      .rlcChatList{
+        display:flex;
+        flex-direction:column;
+        justify-content:flex-end;
+        gap:8px;
+        max-height: min(44vh, 420px);
+        overflow:hidden;
+        position:relative;
       }
       .rlcChatBubble{
-        pointer-events: none;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding: 10px 12px;
-        border-radius: 14px;
-        background: rgba(10, 12, 18, 0.58);
-        border: 1px solid rgba(255,255,255,0.10);
-        box-shadow: 0 10px 28px rgba(0,0,0,0.30);
+        pointer-events:none;
+        display:flex;
+        gap:8px;
+        align-items:flex-end;
+        padding:8px 10px;
+        border-radius:14px;
+        background: rgba(10,14,20,.46);
+        border:1px solid rgba(255,255,255,.10);
+        box-shadow: 0 10px 30px rgba(0,0,0,.28);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
-        overflow: hidden;
         transform: translateY(6px);
-        opacity: 0;
-        animation: rlcChatIn 180ms ease-out forwards;
+        opacity:0;
+        animation: rlcChatIn .16s ease-out forwards;
       }
-      .rlcChatHead{
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 12px;
-        opacity: .9;
-        line-height: 1.1;
+      @keyframes rlcChatIn{ to { transform: translateY(0); opacity:1; } }
+      .rlcChatBubble.rlcChatFade{ animation: rlcChatOut .25s ease-in forwards; }
+      @keyframes rlcChatOut{ to { transform: translateY(6px); opacity:0; } }
+      .rlcChatUser{
+        font-weight:900;
+        font-size:12px;
+        color: rgba(77,215,255,.95);
+        white-space:nowrap;
+        max-width:120px;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
-      .rlcChatName{
-        font-weight: 700;
-        color: rgba(255,255,255,0.95);
-        text-shadow: 0 1px 0 rgba(0,0,0,0.35);
-      }
-      .rlcChatMsg{
-        font-size: 13px;
-        color: rgba(255,255,255,0.92);
-        line-height: 1.25;
+      .rlcChatText{
+        font-size:12px;
+        color: rgba(255,255,255,.90);
+        line-height:1.25;
         word-break: break-word;
+        overflow-wrap:anywhere;
         white-space: pre-wrap;
       }
-      .rlcChatFade{
-        animation: rlcChatOut 320ms ease-in forwards;
-      }
-      @keyframes rlcChatIn {
-        from { opacity: 0; transform: translateY(8px); }
-        to   { opacity: 1; transform: translateY(0); }
-      }
-      @keyframes rlcChatOut {
-        from { opacity: 1; transform: translateY(0); }
-        to   { opacity: 0; transform: translateY(6px); }
+      @media (max-width: 520px){
+        .rlcChatRoot{ width: min(320px, calc(100vw - 24px)); max-height: 38vh; }
+        .rlcChatUser{ max-width: 95px; }
       }
     `;
     document.head.appendChild(st);
   }
 
   function ensureChatUI() {
-    if (!chatEnabled) return;
-    if (chatRoot && chatList) return;
-
     injectChatStylesOnce();
 
     chatRoot = document.getElementById("rlcChatRoot");
@@ -686,33 +693,39 @@
       chatRoot.id = "rlcChatRoot";
       chatRoot.className = "rlcChatRoot";
       document.body.appendChild(chatRoot);
+    } else {
+      // si venía con inline style="display:none", lo limpiamos cuando activemos
+      try { /* noop */ } catch (_) {}
     }
 
     chatList = document.getElementById("rlcChatList");
     if (!chatList) {
       chatList = document.createElement("div");
       chatList.id = "rlcChatList";
+      chatList.className = "rlcChatList";
       chatRoot.appendChild(chatList);
     }
   }
 
   function chatClear() {
-    try {
-      chatItems.forEach(it => it.el?.remove?.());
-    } catch (_) {}
+    try { chatItems.forEach(it => it.el?.remove?.()); } catch (_) {}
     chatItems = [];
   }
 
   function chatSetEnabled(v) {
     chatEnabled = !!v;
+    ensureChatUI();
+
     if (!chatEnabled) {
       chatClear();
-      if (chatRoot) chatRoot.style.display = "none";
+      chatRoot?.classList?.remove?.("chat--on");
+      try { if (chatRoot) chatRoot.style.display = "none"; } catch (_) {}
     } else {
-      ensureChatUI();
-      if (chatRoot) chatRoot.style.display = "";
+      try { if (chatRoot) chatRoot.style.display = ""; } catch (_) {}
+      chatRoot?.classList?.add?.("chat--on");
     }
-    ensureIrc(); // chat también necesita IRC
+
+    ensureIrc();
     postState();
   }
 
@@ -720,11 +733,7 @@
     const s = String(msg || "").trim();
     if (!s) return true;
     if (!chatHideCommands) return false;
-
-    // filtra cualquier comando tipo "!..."
-    if (s[0] === "!") return true;
-
-    return false;
+    return s[0] === "!";
   }
 
   function chatAdd(user, text) {
@@ -734,69 +743,57 @@
 
     if (isHiddenChatCommand(text)) return;
 
-    const id = `${Date.now()}_${(Math.random() * 1e9) | 0}`;
+    // Asegura visible (por si CSS externo lo escondía)
+    chatRoot.classList.add("chat--on");
+    try { chatRoot.style.display = ""; } catch (_) {}
+
     const bubble = document.createElement("div");
     bubble.className = "rlcChatBubble";
 
-    const head = document.createElement("div");
-    head.className = "rlcChatHead";
+    const u = document.createElement("div");
+    u.className = "rlcChatUser";
+    u.textContent = user || "chat";
 
-    const name = document.createElement("span");
-    name.className = "rlcChatName";
-    name.textContent = user || "chat";
+    const t = document.createElement("div");
+    t.className = "rlcChatText";
+    t.textContent = String(text || "");
 
-    const body = document.createElement("div");
-    body.className = "rlcChatMsg";
-    body.textContent = String(text || "");
-
-    head.appendChild(name);
-    bubble.appendChild(head);
-    bubble.appendChild(body);
+    bubble.appendChild(u);
+    bubble.appendChild(t);
 
     chatList.appendChild(bubble);
 
-    const item = { id, user, text, ts: Date.now(), el: bubble };
+    const item = { el: bubble, ts: Date.now() };
     chatItems.push(item);
 
-    // recorta máximo
     while (chatItems.length > chatMax) {
       const old = chatItems.shift();
       try { old?.el?.remove?.(); } catch (_) {}
     }
 
-    // auto-fade + remove
     setTimeout(() => {
       try { bubble.classList.add("rlcChatFade"); } catch (_) {}
       setTimeout(() => {
         try { bubble.remove(); } catch (_) {}
-      }, 340);
+      }, 300);
     }, Math.max(3000, chatTtlSec * 1000));
   }
 
-  // ───────────────────────── VOTE (Twitch IRC anon) ─────────────────────────
+  // ───────────────────────── VOTE + IRC ─────────────────────────
   let voteEnabled = !!P.vote;
   let voteOverlay = !!P.voteOverlay;
   let twitchChannel = P.twitch || "";
 
   let voteWindowSec = P.voteWindow;
-
-  // voteAtSec = segundos antes del final para EMPEZAR el VOTO (no el aviso)
   let voteAtSec = P.voteAt;
-
-  // pre-aviso (seg) antes de empezar el voto
   let voteLeadSec = P.voteLead;
-
-  // total visible (informativo/compat). Siempre usamos lead+window para dibujar/estado.
   let voteUiSec = (P.voteUi > 0) ? P.voteUi : (voteLeadSec + voteWindowSec);
-
-  // STAY: reinicia segmento a X minutos
   let stayMins = P.stayMins;
 
   let cmdYes = new Set(["!next","!cam"]);
   let cmdNo = new Set(["!stay","!keep"]);
 
-  // sesión de votación (lead + vote)
-  let voteSessionActive = false; // visible (si overlay ON)
+  let voteSessionActive = false; // overlay visible (lead + vote)
   let votePhase = "idle";        // "lead" | "vote" | "idle"
   let leadEndsAt = 0;
   let voteEndsAt = 0;
@@ -810,12 +807,10 @@
     const b = (parts[1] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
     cmdYes = new Set(a.length ? a : ["!next","!cam"]);
     cmdNo = new Set(b.length ? b : ["!stay","!keep"]);
-    // no tocamos voteHintEl aquí: lo pinta renderVote según fase
   }
   parseVoteCmds(P.voteCmd);
 
   function unescapeTagValue(v) {
-    // Twitch IRCv3 escapes: \s(space) \:(;) \r \n \\.
     const s = String(v || "");
     return s
       .replace(/\\s/g, " ")
@@ -965,7 +960,7 @@
   function restartStaySegment() {
     const sec = clamp((stayMins | 0) * 60, 60, 120 * 60);
     startRound(sec);
-    voteTriggeredForSegment = false; // volverá a saltar el voto al faltar voteAt
+    voteTriggeredForSegment = false;
     postState();
   }
 
@@ -973,19 +968,12 @@
     if (!voteSessionActive) return;
 
     const y = votesYes, n = votesNo;
-
     voteSessionActive = false;
     votePhase = "idle";
     renderVote();
 
-    // Regla:
-    // - si gana YES (y > n y y > 0) -> NEXT
-    // - si no -> STAY (reinicia segmento)
-    if (y > n && y > 0) {
-      nextCam("vote_yes");
-    } else {
-      restartStaySegment();
-    }
+    if (y > n && y > 0) nextCam("vote_yes");
+    else restartStaySegment();
   }
 
   function renderVote() {
@@ -995,17 +983,14 @@
     if (!show) return;
 
     const now = Date.now();
+    const yes0 = [...cmdYes][0] || "!next";
+    const no0  = [...cmdNo][0]  || "!stay";
 
     if (votePhase === "lead") {
       const remLead = Math.max(0, Math.ceil((leadEndsAt - now) / 1000));
       if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remLead);
-
-      // hint
-      const yes0 = [...cmdYes][0] || "!next";
-      const no0  = [...cmdNo][0]  || "!stay";
       if (voteHintEl) voteHintEl.textContent = `Votación en… (${yes0} / ${no0})`;
 
-      // barras a cero durante aviso
       if (voteYesN) voteYesN.textContent = "0";
       if (voteNoN) voteNoN.textContent = "0";
       if (voteYesFill) voteYesFill.style.width = "0%";
@@ -1013,12 +998,8 @@
       return;
     }
 
-    // fase voto
     const remVote = Math.max(0, Math.ceil((voteEndsAt - now) / 1000));
     if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remVote);
-
-    const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
     if (voteHintEl) voteHintEl.textContent = `Vota: ${yes0} o ${no0}`;
 
     if (voteYesN) voteYesN.textContent = String(votesYes);
@@ -1149,7 +1130,10 @@
         if (bgmEnabled) bgmPlay(); else bgmPause();
         break;
       case "BGM_VOL": bgmSetVol(payload?.vol); break;
-      case "BGM_TRACK": bgmLoadTrack(parseInt(payload?.index || "0", 10) || 0); if (bgmEnabled) bgmPlay(); break;
+      case "BGM_TRACK":
+        bgmLoadTrack(parseInt(payload?.index || "0", 10) || 0);
+        if (bgmEnabled) bgmPlay();
+        break;
       case "BGM_NEXT": bgmNext(); break;
       case "BGM_PREV": bgmPrev(); break;
       case "BGM_PLAYPAUSE": bgmPlayPause(); break;
@@ -1157,36 +1141,25 @@
 
       // Vote / Twitch
       case "TWITCH_SET": {
-        twitchChannel = String(payload?.channel || "").trim().replace(/^@/,"");
+        twitchChannel = String(payload?.channel || "").trim().replace(/^@/, "");
         voteEnabled = !!payload?.enabled;
         voteOverlay = !!payload?.overlay;
 
-        // window
         voteWindowSec = clamp(parseInt(payload?.windowSec ?? voteWindowSec, 10) || voteWindowSec, 5, 180);
 
-        // compat: control viejo/new puede mandar voteAtSec o triggerBeforeEndSec
         const pVoteAt =
           payload?.voteAtSec ?? payload?.triggerBeforeEndSec ?? payload?.voteAt ?? payload?.voteTriggerBeforeEndSec;
         if (pVoteAt != null) voteAtSec = clamp(parseInt(pVoteAt, 10) || voteAtSec, 5, 600);
 
-        // lead + ui
         const pLead = payload?.leadSec ?? payload?.voteLeadSec ?? payload?.voteLead;
         if (pLead != null) voteLeadSec = clamp(parseInt(pLead, 10) || voteLeadSec, 0, 30);
 
-        const pUi = payload?.uiSec ?? payload?.voteUiSec ?? payload?.voteUi;
-        if (pUi != null) voteUiSec = clamp(parseInt(pUi, 10) || (voteLeadSec + voteWindowSec), 0, 300);
-        else voteUiSec = voteLeadSec + voteWindowSec;
+        voteUiSec = voteLeadSec + voteWindowSec;
 
-        // stay
         if (payload?.stayMins != null) stayMins = clamp(parseInt(payload?.stayMins, 10) || stayMins, 1, 60);
-
-        // cmds
         parseVoteCmds(payload?.cmd || "!next,!cam|!stay,!keep");
 
-        // chat opcional por cmd (si algún día lo envías desde control)
-        if (payload?.chat != null || payload?.chatOverlay != null) {
-          chatSetEnabled(!!(payload?.chat ?? payload?.chatOverlay));
-        }
+        if (payload?.chat != null || payload?.chatOverlay != null) chatSetEnabled(!!(payload?.chat ?? payload?.chatOverlay));
         if (payload?.chatHideCommands != null) chatHideCommands = !!payload.chatHideCommands;
 
         ensureIrc();
@@ -1196,12 +1169,9 @@
       }
 
       case "VOTE_START": {
-        // manual: marca como disparado para este segmento
         voteTriggeredForSegment = true;
-
         const w = clamp(parseInt(payload?.windowSec ?? voteWindowSec, 10) || voteWindowSec, 5, 180);
         const lead = clamp(parseInt(payload?.leadSec ?? voteLeadSec, 10) || voteLeadSec, 0, 30);
-
         voteStartSequence(w, lead);
         postState();
         break;
@@ -1289,43 +1259,47 @@
 
     const rem = remainingSeconds();
 
-    // Si acaba el segmento:
+    // fin de segmento
     if (playing && rem <= 0) {
-      // si estamos en voto REAL (fase vote) y todavía no terminó -> forzamos finish
       if (voteSessionActive && votePhase === "vote") {
         voteFinish();
         postState();
         return;
       }
-      // si solo era aviso (lead) y no llegó a votar, no bloqueamos: seguimos normal
       voteReset();
       nextCam("timer");
       postState();
       return;
     }
 
-    // voto auto con pre-aviso:
-    // - EMPIEZA EL VOTO cuando falten voteAtSec
-    // - MUESTRA AVISO voteLeadSec antes: cuando falten (voteAtSec + voteLeadSec)
+    // VOTO AUTO (timing real):
+    // - pre-aviso empieza cuando rem <= (voteAt + lead)
+    // - voto empieza cuando rem <= voteAt
     if (voteEnabled && twitchChannel) {
       ensureIrc();
 
       if (playing && !voteSessionActive && !voteTriggeredForSegment) {
-        const startVoteBeforeEnd = clamp(voteAtSec | 0, 5, 600);
-        const lead = clamp(voteLeadSec | 0, 0, 30);
+        const startAt = clamp(voteAtSec | 0, 5, 600);
+        const leadMax = clamp(voteLeadSec | 0, 0, 30);
 
-        // trigger para empezar el aviso (lead). Si lead=0, esto equivale a startVoteBeforeEnd
-        const triggerLead = Math.min((startVoteBeforeEnd + lead) | 0, segmentSeconds | 0);
-
-        if (rem > 0 && rem <= triggerLead) {
+        // si ya estamos "tarde" (rem <= voteAt) -> votación directa (sin lead)
+        if (rem > 0 && rem <= startAt) {
           voteTriggeredForSegment = true;
-          voteStartSequence(voteWindowSec, lead);
+          voteStartSequence(voteWindowSec, 0);
+        }
+        // si estamos en ventana de aviso -> lead dinámico para que el voto empiece EXACTO en voteAt
+        else {
+          const triggerLead = Math.min((startAt + leadMax) | 0, segmentSeconds | 0);
+          if (rem > 0 && rem <= triggerLead) {
+            voteTriggeredForSegment = true;
+            const dynLead = clamp((rem - startAt) | 0, 0, leadMax);
+            voteStartSequence(voteWindowSec, dynLead);
+          }
         }
       }
 
       if (voteSessionActive) {
         const now = Date.now();
-
         if (votePhase === "lead") {
           renderVote();
           if (now >= leadEndsAt) {
@@ -1336,7 +1310,6 @@
           renderVote();
           if (now >= voteEndsAt) voteFinish();
         } else {
-          // seguridad
           voteReset();
         }
       } else {
@@ -1357,7 +1330,7 @@
 
     setFit(P.fit);
 
-    // HUD user prefs
+    // HUD prefs
     let collapsed = true;
     let hidden = !P.hud;
     try { collapsed = (localStorage.getItem(HUD_COLLAPSE_KEY) ?? "1") === "1"; } catch (_) {}
@@ -1403,11 +1376,18 @@
       stayMins = clamp((st.stayMins | 0) || stayMins, 1, 60);
       if (st.voteCmd) parseVoteCmds(st.voteCmd);
 
-      // Chat restore
-      chatEnabled = (st.chatEnabled ?? (chatEnabled ? 1 : 0)) !== 0;
-      chatHideCommands = (st.chatHideCommands ?? (chatHideCommands ? 1 : 0)) !== 0;
-      chatMax = clamp((st.chatMax | 0) || chatMax, 3, 12);
-      chatTtlSec = clamp((st.chatTtlSec | 0) || chatTtlSec, 5, 30);
+      // Chat restore (P.chat explícito manda)
+      if (P.chatExplicit) chatEnabled = !!P.chat;
+      else chatEnabled = (st.chatEnabled != null) ? ((st.chatEnabled | 0) !== 0) : chatEnabled;
+
+      if (P.chatHideExplicit) chatHideCommands = !!P.chatHideCommands;
+      else chatHideCommands = (st.chatHideCommands != null) ? ((st.chatHideCommands | 0) !== 0) : chatHideCommands;
+
+      if (P.chatMaxExplicit) chatMax = P.chatMax | 0;
+      else chatMax = clamp((st.chatMax | 0) || chatMax, 3, 12);
+
+      if (P.chatTtlExplicit) chatTtlSec = P.chatTtl | 0;
+      else chatTtlSec = clamp((st.chatTtlSec | 0) || chatTtlSec, 5, 30);
 
       // ytCookies restore
       if (typeof st.ytCookies !== "undefined") {
@@ -1426,7 +1406,7 @@
       setRoundMins(P.mins);
       startRound(roundSeconds);
 
-      // init BGM/vote/chat from query
+      // init
       bgmEnabled = !!P.bgm;
       bgmVol = P.bgmVol;
 
@@ -1447,8 +1427,9 @@
       parseVoteCmds(P.voteCmd);
     }
 
-    // chat UI (si está activo)
-    if (chatEnabled) ensureChatUI();
+    // chat UI + activar (si enabled)
+    ensureChatUI();
+    chatSetEnabled(chatEnabled);
 
     // BGM init
     try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
@@ -1456,7 +1437,7 @@
     if (bgmEnabled && bgmPlaying) bgmPlay();
     if (bgmEnabled && !bgmPlaying) postState();
 
-    // Vote init
+    // IRC init
     ensureIrc();
 
     playCam(cams[idx]);
@@ -1477,7 +1458,7 @@
       else if (k === "p") prevCam();
       else if (k === "h") setHudHidden(!hud.classList.contains("hidden"));
       else if (k === "i") setHudCollapsed(!hud.classList.contains("hud--collapsed"));
-      else if (k === "c") chatSetEnabled(!chatEnabled); // toggle chat rápido
+      else if (k === "c") chatSetEnabled(!chatEnabled);
     });
 
     postState({ ready: true });
