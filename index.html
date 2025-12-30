@@ -15,13 +15,12 @@
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <script>window.APP_VERSION = "2.0.6";</script>
+  <script>window.APP_VERSION = "2.0.7";</script>
 </head>
 
 <body class="mode-player">
   <main id="app" class="app">
     <section id="stage" class="stage" aria-label="Reproductor de cámara">
-
       <!-- YouTube -->
       <iframe
         id="frame"
@@ -101,6 +100,7 @@
           <div class="voteTime mono" id="voteTime">00:20</div>
         </div>
         <div class="voteHint" id="voteHint">Votación en…</div>
+
         <div class="voteBars" aria-hidden="false">
           <div class="voteBar">
             <div class="voteBarFill" id="voteYes"></div>
@@ -113,7 +113,7 @@
         </div>
       </div>
 
-      <!-- Chat overlay (JS lo gestiona) -->
+      <!-- Chat overlay (JS lo gestiona; si no existe, lo crea igual) -->
       <div id="rlcChatRoot" class="rlcChatRoot" aria-label="Chat overlay" aria-live="polite" style="display:none">
         <div id="rlcChatList"></div>
       </div>

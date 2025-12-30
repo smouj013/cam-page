@@ -1,14 +1,18 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
+  <meta name="format-detection" content="telephone=no" />
+
   <title>Random Live Cams — Control</title>
+
   <link rel="stylesheet" href="./styles.css" />
   <script>window.APP_VERSION = "2.1.4";</script>
 </head>
+
 <body class="mode-control">
   <main class="controlWrap">
     <header class="controlHeader">
@@ -31,7 +35,7 @@
         </div>
         <div class="row2">
           <a id="ctlOrigin" class="btn ghost" href="#" target="_blank" rel="noopener">Abrir origen</a>
-          <button id="ctlCopyStreamUrl" class="btn">Copiar URL stream</button>
+          <button id="ctlCopyStreamUrl" class="btn" type="button">Copiar URL stream</button>
         </div>
       </div>
 
@@ -39,11 +43,11 @@
       <div class="card">
         <div class="cardTitle">Transporte</div>
         <div class="controls3">
-          <button class="btn" id="ctlPrev">◀</button>
-          <button class="btn" id="ctlPlay">⏸</button>
-          <button class="btn" id="ctlNext">▶</button>
+          <button class="btn" id="ctlPrev" type="button">◀</button>
+          <button class="btn" id="ctlPlay" type="button">⏸</button>
+          <button class="btn" id="ctlNext" type="button">▶</button>
         </div>
-        <button class="btn ghost full" id="ctlShuffle">🎲 Mezclar</button>
+        <button class="btn ghost full" id="ctlShuffle" type="button">🎲 Mezclar</button>
       </div>
 
       <!-- AJUSTES -->
@@ -52,9 +56,9 @@
 
         <label class="row">
           <span>Duración (min)</span>
-          <input id="ctlMins" class="input" type="number" min="1" max="120" step="1" value="5" />
+          <input id="ctlMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
         </label>
-        <button id="ctlApplyMins" class="btn full">Aplicar duración</button>
+        <button id="ctlApplyMins" class="btn full" type="button">Aplicar duración</button>
 
         <label class="row">
           <span>Fit</span>
@@ -96,17 +100,17 @@
           </select>
         </label>
 
-        <button id="ctlReset" class="btn ghost full">Reset estado</button>
+        <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
       <!-- CAM SELECT -->
       <div class="card">
         <div class="cardTitle">Cambiar cámara</div>
-        <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" />
-        <select id="ctlSelect" class="select" size="10"></select>
+        <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" autocomplete="off" />
+        <select id="ctlSelect" class="select" size="10" aria-label="Lista de cámaras"></select>
         <div class="row2">
-          <button id="ctlGo" class="btn full">Ir</button>
-          <button id="ctlBan" class="btn ghost full">Excluir esta (solo local)</button>
+          <button id="ctlGo" class="btn full" type="button">Ir</button>
+          <button id="ctlBan" class="btn ghost full" type="button">Excluir esta (solo local)</button>
         </div>
         <div class="hint">Doble click en la lista = Ir.</div>
       </div>
@@ -122,7 +126,13 @@
           </select>
         </label>
         <div id="ctlPreviewWrap" class="previewWrap hidden">
-          <iframe id="ctlPreview" class="previewFrame" title="Preview stream" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+          <iframe
+            id="ctlPreview"
+            class="previewFrame"
+            title="Preview stream"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allow="autoplay; encrypted-media; picture-in-picture"
+          ></iframe>
         </div>
         <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
       </div>
@@ -146,15 +156,15 @@
 
         <label class="row">
           <span>Track</span>
-          <select id="ctlBgmTrack" class="select"></select>
+          <select id="ctlBgmTrack" class="select" aria-label="Track BGM"></select>
         </label>
 
         <div class="controls3">
-          <button class="btn" id="ctlBgmPrev">⏮</button>
-          <button class="btn" id="ctlBgmPlay">▶/⏸</button>
-          <button class="btn" id="ctlBgmNext">⏭</button>
+          <button class="btn" id="ctlBgmPrev" type="button">⏮</button>
+          <button class="btn" id="ctlBgmPlay" type="button">▶/⏸</button>
+          <button class="btn" id="ctlBgmNext" type="button">⏭</button>
         </div>
-        <button class="btn ghost full" id="ctlBgmShuffle">🔀 Shuffle</button>
+        <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
 
         <div class="hint" id="ctlBgmNow">—</div>
       </div>
@@ -165,7 +175,7 @@
 
         <label class="row">
           <span>Canal</span>
-          <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" />
+          <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" autocomplete="off" />
         </label>
 
         <div class="row2">
@@ -212,22 +222,22 @@
 
         <label class="row">
           <span>Duración voto (s)</span>
-          <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="60" />
+          <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="60" inputmode="numeric" />
         </label>
 
         <label class="row">
           <span>Auto (a falta)</span>
-          <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" />
+          <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" inputmode="numeric" />
         </label>
 
         <label class="row">
           <span>Pre-aviso (s)</span>
-          <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" />
+          <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" inputmode="numeric" />
         </label>
 
         <label class="row">
           <span>STAY → re-voto (min)</span>
-          <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" />
+          <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
         </label>
 
         <label class="row">
@@ -240,12 +250,12 @@
 
         <label class="row">
           <span>Cmds voto</span>
-          <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" />
+          <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" autocomplete="off" />
         </label>
 
         <div class="row2">
-          <button id="ctlVoteStart" class="btn full">🗳️ Lanzar voto</button>
-          <button id="ctlVoteApply" class="btn ghost full">Aplicar</button>
+          <button id="ctlVoteStart" class="btn full" type="button">🗳️ Lanzar voto</button>
+          <button id="ctlVoteApply" class="btn ghost full" type="button">Aplicar</button>
         </div>
 
         <div class="hint">
@@ -268,11 +278,11 @@
         <div class="row2">
           <label class="row" style="margin:0">
             <span>Lead (s)</span>
-            <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" />
+            <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" inputmode="numeric" />
           </label>
           <label class="row" style="margin:0">
             <span>Duración (s)</span>
-            <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" />
+            <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" inputmode="numeric" />
           </label>
         </div>
 
@@ -286,14 +296,14 @@
 
         <label class="row">
           <span>Msg chat (lead)</span>
-          <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" />
+          <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" autocomplete="off" />
         </label>
 
         <div class="row2">
-          <button id="ctlAdNoticeBtn" class="btn full">⏳ Aviso (AD_NOTICE)</button>
-          <button id="ctlAdBeginBtn" class="btn full">▶️ En curso (AD_BEGIN)</button>
+          <button id="ctlAdNoticeBtn" class="btn full" type="button">⏳ Aviso (AD_NOTICE)</button>
+          <button id="ctlAdBeginBtn" class="btn full" type="button">▶️ En curso (AD_BEGIN)</button>
         </div>
-        <button id="ctlAdClearBtn" class="btn ghost full" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
+        <button id="ctlAdClearBtn" class="btn ghost full" type="button" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
 
         <div class="hint">
           Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.
@@ -317,12 +327,12 @@
 
         <label class="row">
           <span>Usuario bot</span>
-          <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" />
+          <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" autocomplete="username" />
         </label>
 
         <label class="row">
           <span>OAuth token</span>
-          <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" />
+          <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" autocomplete="current-password" />
         </label>
 
         <label class="row">
@@ -333,11 +343,11 @@
           </select>
         </label>
 
-        <button id="ctlBotConnect" class="btn full">🔌 Conectar bot</button>
+        <button id="ctlBotConnect" class="btn full" type="button">🔌 Conectar bot</button>
 
         <div class="row2" style="margin-top:10px">
-          <input id="ctlBotTestText" class="input" type="text" value="✅ Bot online" />
-          <button id="ctlBotTestSend" class="btn">Enviar test</button>
+          <input id="ctlBotTestText" class="input" type="text" value="✅ Bot online" autocomplete="off" />
+          <button id="ctlBotTestSend" class="btn" type="button">Enviar test</button>
         </div>
 
         <div class="hint">
