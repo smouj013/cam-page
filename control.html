@@ -20,6 +20,7 @@
     </header>
 
     <section class="controlGrid">
+      <!-- NOW -->
       <div class="card">
         <div class="cardTitle">Ahora</div>
         <div class="nowTitle" id="ctlNowTitle">—</div>
@@ -34,6 +35,7 @@
         </div>
       </div>
 
+      <!-- TRANSPORTE -->
       <div class="card">
         <div class="cardTitle">Transporte</div>
         <div class="controls3">
@@ -44,6 +46,7 @@
         <button class="btn ghost full" id="ctlShuffle">🎲 Mezclar</button>
       </div>
 
+      <!-- AJUSTES -->
       <div class="card">
         <div class="cardTitle">Ajustes</div>
 
@@ -96,6 +99,7 @@
         <button id="ctlReset" class="btn ghost full">Reset estado</button>
       </div>
 
+      <!-- CAM SELECT -->
       <div class="card">
         <div class="cardTitle">Cambiar cámara</div>
         <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" />
@@ -107,6 +111,7 @@
         <div class="hint">Doble click en la lista = Ir.</div>
       </div>
 
+      <!-- PREVIEW -->
       <div class="card">
         <div class="cardTitle">Preview (opcional)</div>
         <label class="row">
@@ -121,6 +126,86 @@
         </div>
         <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
       </div>
+
+      <!-- BGM -->
+      <div class="card">
+        <div class="cardTitle">Música ambiente (BGM)</div>
+
+        <label class="row">
+          <span>Enable</span>
+          <select id="ctlBgmOn" class="select">
+            <option value="off">OFF</option>
+            <option value="on">ON</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Volumen</span>
+          <input id="ctlBgmVol" class="input" type="range" min="0" max="1" step="0.01" value="0.25" />
+        </label>
+
+        <label class="row">
+          <span>Track</span>
+          <select id="ctlBgmTrack" class="select"></select>
+        </label>
+
+        <div class="controls3">
+          <button class="btn" id="ctlBgmPrev">⏮</button>
+          <button class="btn" id="ctlBgmPlay">▶/⏸</button>
+          <button class="btn" id="ctlBgmNext">⏭</button>
+        </div>
+        <button class="btn ghost full" id="ctlBgmShuffle">🔀 Shuffle</button>
+
+        <div class="hint" id="ctlBgmNow">—</div>
+      </div>
+
+      <!-- TWITCH VOTE -->
+      <div class="card">
+        <div class="cardTitle">Votación Twitch (chat)</div>
+
+        <label class="row">
+          <span>Canal</span>
+          <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" />
+        </label>
+
+        <label class="row">
+          <span>Votos</span>
+          <select id="ctlVoteOn" class="select">
+            <option value="off">OFF</option>
+            <option value="on">ON</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Overlay</span>
+          <select id="ctlVoteOverlay" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Ventana (s)</span>
+          <input id="ctlVoteWindow" class="input" type="number" min="5" max="60" step="1" value="20" />
+        </label>
+
+        <label class="row">
+          <span>Auto (a falta)</span>
+          <input id="ctlVoteAt" class="input" type="number" min="5" max="120" step="1" value="25" />
+        </label>
+
+        <label class="row">
+          <span>Cmds</span>
+          <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlVoteStart" class="btn full">🗳️ Lanzar voto</button>
+          <button id="ctlVoteApply" class="btn ghost full">Aplicar</button>
+        </div>
+
+        <div class="hint">Regla: si gana NEXT (y&gt;0) → cambia cam. Empate → mantener.</div>
+      </div>
     </section>
 
     <footer class="controlFooter">
@@ -131,6 +216,7 @@
   </main>
 
   <script defer src="./cams.js"></script>
+  <script defer src="./music.js"></script>
   <script defer src="./control.js"></script>
 </body>
 </html>

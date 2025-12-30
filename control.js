@@ -12,6 +12,12 @@
 
   const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
 
+  function parseParams() {
+    const u = new URL(location.href);
+    return { key: u.searchParams.get("key") || "" };
+  }
+  const P = parseParams();
+
   // UI
   const ctlStatus = qs("#ctlStatus");
   const ctlNowTitle = qs("#ctlNowTitle");
@@ -44,8 +50,29 @@
 
   const ctlCopyStreamUrl = qs("#ctlCopyStreamUrl");
 
+  // BGM
+  const ctlBgmOn = qs("#ctlBgmOn");
+  const ctlBgmVol = qs("#ctlBgmVol");
+  const ctlBgmTrack = qs("#ctlBgmTrack");
+  const ctlBgmPrev = qs("#ctlBgmPrev");
+  const ctlBgmPlay = qs("#ctlBgmPlay");
+  const ctlBgmNext = qs("#ctlBgmNext");
+  const ctlBgmShuffle = qs("#ctlBgmShuffle");
+  const ctlBgmNow = qs("#ctlBgmNow");
+
+  // Twitch vote
+  const ctlTwitchChannel = qs("#ctlTwitchChannel");
+  const ctlVoteOn = qs("#ctlVoteOn");
+  const ctlVoteOverlay = qs("#ctlVoteOverlay");
+  const ctlVoteWindow = qs("#ctlVoteWindow");
+  const ctlVoteAt = qs("#ctlVoteAt");
+  const ctlVoteCmd = qs("#ctlVoteCmd");
+  const ctlVoteStart = qs("#ctlVoteStart");
+  const ctlVoteApply = qs("#ctlVoteApply");
+
   // Data
   const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
+  const bgmList = Array.isArray(g.BGM_LIST) ? g.BGM_LIST.slice() : [];
   let lastState = null;
 
   function fmtMMSS(sec) {
@@ -56,7 +83,7 @@
   }
 
   function sendCmd(cmd, payload = {}) {
-    const msg = { type: "cmd", ts: Date.now(), cmd, payload };
+    const msg = { type: "cmd", ts: Date.now(), cmd, payload, key: P.key || "" };
     try { if (bc) bc.postMessage(msg); } catch (_) {}
     try { localStorage.setItem(CMD_KEY, JSON.stringify(msg)); } catch (_) {}
   }
@@ -89,6 +116,25 @@
     }
   }
 
+  function syncBgmTracks() {
+    if (!ctlBgmTrack) return;
+    ctlBgmTrack.innerHTML = "";
+    if (!bgmList.length) {
+      const opt = document.createElement("option");
+      opt.value = "0";
+      opt.textContent = "— (sin playlist)";
+      ctlBgmTrack.appendChild(opt);
+      return;
+    }
+    for (let i = 0; i < bgmList.length; i++) {
+      const t = bgmList[i];
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = t?.title ? t.title : `Track ${i+1}`;
+      ctlBgmTrack.appendChild(opt);
+    }
+  }
+
   async function copyToClipboard(text) {
     try {
       await navigator.clipboard.writeText(text);
@@ -110,13 +156,38 @@
 
   function streamUrlFromHere() {
     const u = new URL(location.href);
-    // control.html -> index.html
     u.pathname = u.pathname.replace(/control\.html$/i, "index.html");
+
     u.searchParams.set("mins", String(clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120)));
     u.searchParams.set("fit", ctlFit?.value || "cover");
     u.searchParams.set("hud", (ctlHud?.value === "off") ? "0" : "1");
-    if (ctlAdfree?.value === "on") u.searchParams.set("mode", "adfree"); else u.searchParams.delete("mode");
-    if (ctlAutoskip?.value === "off") u.searchParams.set("autoskip", "0"); else u.searchParams.delete("autoskip");
+
+    if (ctlAdfree?.value === "on") u.searchParams.set("mode", "adfree");
+    else u.searchParams.delete("mode");
+
+    if (ctlAutoskip?.value === "off") u.searchParams.set("autoskip", "0");
+    else u.searchParams.delete("autoskip");
+
+    // votación
+    if (ctlVoteOn?.value === "on") u.searchParams.set("vote", "1");
+    else u.searchParams.delete("vote");
+
+    if (ctlTwitchChannel?.value) u.searchParams.set("twitch", ctlTwitchChannel.value.trim().replace(/^@/,""));
+
+    u.searchParams.set("voteOverlay", (ctlVoteOverlay?.value === "off") ? "0" : "1");
+    u.searchParams.set("voteWindow", String(clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60)));
+    u.searchParams.set("voteAt", String(clamp(parseInt(ctlVoteAt?.value || "25", 10) || 25, 5, 120)));
+    if (ctlVoteCmd?.value) u.searchParams.set("voteCmd", ctlVoteCmd.value.trim());
+
+    // bgm (solo como “preferencias iniciales”; luego se controla por panel)
+    if (ctlBgmOn?.value === "on") u.searchParams.set("bgm", "1");
+    else u.searchParams.delete("bgm");
+    if (ctlBgmVol?.value != null) u.searchParams.set("bgmVol", String(ctlBgmVol.value));
+
+    // key (si está en control, la propagamos)
+    if (P.key) u.searchParams.set("key", P.key);
+    else u.searchParams.delete("key");
+
     return u.toString();
   }
 
@@ -142,6 +213,25 @@
     if (ctlHudDetails) ctlHudDetails.value = st?.hudCollapsed ? "collapsed" : "expanded";
     if (ctlAutoskip) ctlAutoskip.value = st?.autoskip ? "on" : "off";
     if (ctlAdfree) ctlAdfree.value = st?.adfree ? "on" : "off";
+
+    // BGM state
+    if (ctlBgmOn) ctlBgmOn.value = st?.bgm?.enabled ? "on" : "off";
+    if (ctlBgmVol && typeof st?.bgm?.vol === "number") ctlBgmVol.value = String(st.bgm.vol);
+    if (ctlBgmTrack && st?.bgm?.idx != null) ctlBgmTrack.value = String(st.bgm.idx | 0);
+    if (ctlBgmNow) {
+      const name = st?.bgm?.track || "";
+      ctlBgmNow.textContent = name ? `Now: ${name} · ${st?.bgm?.playing ? "playing" : "paused"}` : "—";
+    }
+
+    // Vote state
+    if (ctlTwitchChannel && typeof st?.vote?.channel === "string") {
+      if (!ctlTwitchChannel.value) ctlTwitchChannel.value = st.vote.channel;
+    }
+    if (ctlVoteOn) ctlVoteOn.value = st?.vote?.enabled ? "on" : "off";
+    if (ctlVoteOverlay) ctlVoteOverlay.value = st?.vote?.overlay ? "on" : "off";
+    if (ctlVoteWindow && st?.vote?.windowSec) ctlVoteWindow.value = String(st.vote.windowSec | 0);
+    if (ctlVoteAt && st?.vote?.voteAtSec) ctlVoteAt.value = String(st.vote.voteAtSec | 0);
+    if (ctlVoteCmd && typeof st?.vote?.cmd === "string") ctlVoteCmd.value = st.vote.cmd || ctlVoteCmd.value;
   }
 
   // Receive state
@@ -167,6 +257,7 @@
   // UI events
   function wire() {
     syncList("");
+    syncBgmTracks();
 
     if (ctlSearch) ctlSearch.addEventListener("input", () => syncList(ctlSearch.value));
 
@@ -203,11 +294,8 @@
       ctlPreviewOn.addEventListener("change", () => {
         const on = ctlPreviewOn.value === "on";
         ctlPreviewWrap.classList.toggle("hidden", !on);
-        if (on && ctlPreview) {
-          ctlPreview.src = streamUrlFromHere();
-        } else if (ctlPreview) {
-          ctlPreview.src = "about:blank";
-        }
+        if (on && ctlPreview) ctlPreview.src = streamUrlFromHere();
+        else if (ctlPreview) ctlPreview.src = "about:blank";
       });
     }
 
@@ -219,6 +307,32 @@
         setTimeout(() => (ctlCopyStreamUrl.textContent = "Copiar URL stream"), 900);
       });
     }
+
+    // BGM controls
+    if (ctlBgmOn) ctlBgmOn.addEventListener("change", () => sendCmd("BGM_ENABLE", { on: ctlBgmOn.value === "on" }));
+    if (ctlBgmVol) ctlBgmVol.addEventListener("input", () => sendCmd("BGM_VOL", { vol: parseFloat(ctlBgmVol.value || "0") || 0 }));
+    if (ctlBgmTrack) ctlBgmTrack.addEventListener("change", () => sendCmd("BGM_TRACK", { index: parseInt(ctlBgmTrack.value || "0", 10) || 0 }));
+    if (ctlBgmPrev) ctlBgmPrev.addEventListener("click", () => sendCmd("BGM_PREV"));
+    if (ctlBgmPlay) ctlBgmPlay.addEventListener("click", () => sendCmd("BGM_PLAYPAUSE"));
+    if (ctlBgmNext) ctlBgmNext.addEventListener("click", () => sendCmd("BGM_NEXT"));
+    if (ctlBgmShuffle) ctlBgmShuffle.addEventListener("click", () => sendCmd("BGM_SHUFFLE"));
+
+    // Vote controls
+    function voteApply() {
+      sendCmd("TWITCH_SET", {
+        channel: (ctlTwitchChannel?.value || "").trim().replace(/^@/,""),
+        enabled: (ctlVoteOn?.value === "on"),
+        overlay: (ctlVoteOverlay?.value !== "off"),
+        windowSec: clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60),
+        voteAtSec: clamp(parseInt(ctlVoteAt?.value || "25", 10) || 25, 5, 120),
+        cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim()
+      });
+    }
+    if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
+    if (ctlVoteStart) ctlVoteStart.addEventListener("click", () => {
+      const w = clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60);
+      sendCmd("VOTE_START", { windowSec: w });
+    });
 
     // Teclas pro
     window.addEventListener("keydown", (e) => {

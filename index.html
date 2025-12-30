@@ -5,17 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
-  <title>Random Live Cams — Player</title>
+  <title>Random Live Cams</title>
+
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- hls.js opcional -->
+  <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
   <script>window.APP_VERSION = "2.0.0";</script>
 </head>
-<body class="mode-stream">
-  <main class="app">
-    <section class="stage" aria-label="Reproductor de cámara">
+
+<body>
+  <main id="app" class="app">
+    <section id="stage" class="stage" aria-label="Reproductor de cámara">
+
+      <!-- YouTube -->
       <iframe
         id="frame"
         class="media hidden"
@@ -25,6 +29,7 @@
         allowfullscreen
       ></iframe>
 
+      <!-- HLS -->
       <video
         id="video"
         class="media hidden"
@@ -34,33 +39,32 @@
         webkit-playsinline
       ></video>
 
+      <!-- Imagen -->
       <img id="img" class="media hidden" alt="Webcam snapshot" />
 
+      <!-- Fallback -->
       <div id="fallback" class="fallback hidden">
         <div class="fallbackCard">
-          <div class="fallbackTitle">Esta cámara no se puede mostrar aquí</div>
+          <div class="fallbackTitle">No se puede mostrar esta cámara aquí</div>
           <div class="fallbackText">Puede estar offline o bloquear el embed. Saltando…</div>
           <a id="fallbackLink" class="btn" href="#" target="_blank" rel="noopener">Ver en origen</a>
         </div>
       </div>
 
-      <!-- HUD compacto (sí sale en stream, admin no) -->
-      <div id="hud" class="hud hud--collapsed">
+      <!-- HUD -->
+      <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
         <div class="hudBar">
           <div class="hudLeft">
-            <span class="badge" id="badgeLive">EN DIRECTO</span>
-            <span class="hudTitle" id="hudTitle">Cargando cámara…</span>
+            <div class="badge" id="badgeLive">LIVE</div>
+            <div class="hudTitle" id="hudTitle">Cargando…</div>
           </div>
-
           <div class="hudRight">
-            <span class="mono hudCountdown" id="hudCountdown">05:00</span>
-            <button id="hudToggle" class="hudToggle" type="button" aria-label="Expandir HUD" aria-expanded="false">▸</button>
+            <div class="hudCountdown mono" id="hudCountdown">05:00</div>
+            <button id="hudToggle" class="hudToggle" aria-label="Expandir HUD" aria-expanded="false">▸</button>
           </div>
         </div>
 
-        <div class="progress">
-          <div id="progressBar" class="progressBar"></div>
-        </div>
+        <div class="progress"><div id="progressBar" class="progressBar"></div></div>
 
         <div id="hudDetails" class="hudDetails">
           <div class="hudRow">
@@ -80,14 +84,37 @@
           <div class="hudFooter">
             <span id="hudIndex">—</span>
             <span class="dot">•</span>
-            <span class="muted">Control: usa control.html en Dock</span>
+            <span class="muted">Espacio pausa · N siguiente · H HUD · I detalles</span>
           </div>
         </div>
       </div>
+
+      <!-- VOTE overlay -->
+      <div id="voteBox" class="vote hidden" aria-label="Votación del chat">
+        <div class="voteTop">
+          <div class="voteTitle">VOTA</div>
+          <div class="voteTime mono" id="voteTime">00:20</div>
+        </div>
+        <div class="voteHint" id="voteHint">!next o !stay</div>
+        <div class="voteBars">
+          <div class="voteBar">
+            <div class="voteBarFill" id="voteYes"></div>
+            <div class="voteBarLabel">NEXT <span id="voteYesN">0</span></div>
+          </div>
+          <div class="voteBar">
+            <div class="voteBarFill no" id="voteNo"></div>
+            <div class="voteBarLabel">STAY <span id="voteNoN">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audio BGM -->
+      <audio id="bgm" preload="auto" crossorigin="anonymous"></audio>
     </section>
   </main>
 
   <script defer src="./cams.js"></script>
-  <script defer src="./player.js"></script>
+  <script defer src="./music.js"></script>
+  <script defer src="./app.js"></script>
 </body>
 </html>
