@@ -191,7 +191,7 @@
     if (ch) u.searchParams.set("twitch", ch);
     else u.searchParams.delete("twitch");
 
-    const windowSec = clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 180);
+    const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
     const leadSec = clamp(parseInt(ctlVoteLead?.value || "5", 10) || 5, 0, 30);
     const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
 
@@ -340,7 +340,7 @@
 
     // defaults
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
-    if (ctlVoteWindow && !ctlVoteWindow.value) ctlVoteWindow.value = "20";
+    if (ctlVoteWindow && !ctlVoteWindow.value) ctlVoteWindow.value = "60";
     if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "5";
     if (ctlStayMins && !ctlStayMins.value) ctlStayMins.value = "5";
     if (ctlYtCookies && !ctlYtCookies.value && ctlYtCookies.type !== "checkbox") ctlYtCookies.value = "on";
@@ -408,7 +408,7 @@
     // Vote controls
     function voteApply() {
       const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
-      const windowSec = clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 180);
+      const windowSec = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
       const leadSec = clamp(parseInt(ctlVoteLead?.value || "5", 10) || 5, 0, 30);
       const uiSec = windowSec + leadSec;
 
@@ -431,7 +431,7 @@
 
     if (ctlVoteStart) ctlVoteStart.addEventListener("click", () => {
       // Manual: el app.js decidirá si usa leadSec+windowSec o solo windowSec.
-      const w = clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 180);
+      const w = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
       const lead = clamp(parseInt(ctlVoteLead?.value || "5", 10) || 5, 0, 30);
       sendCmd("VOTE_START", { windowSec: w, leadSec: lead, uiSec: w + lead });
     });
