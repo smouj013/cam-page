@@ -1,13 +1,21 @@
-/* app.js — RLC Player v2.0.4 PRO (HEALTH + AUTOSKIP HARD)
+/* app.js — RLC Player v2.0.5 PRO (ADS NOTICE + TWITCH ALERTS + YT HEALTH)
    ✅ Detecta streams/imágenes caídas y salta a la siguiente automáticamente
    ✅ “CoolDown” de cams fallidas (evita repetir la misma rota)
    ✅ Mantiene: voto configurable (voteAt/voteLead/voteWindow), STAY, ytCookies, chat overlay
+
+   v2.0.5:
+   - ✅ Ads overlay: “Anuncio en…” + “Anuncio en curso…”
+   - ✅ Comandos: AD_NOTICE, AD_CLEAR, ALERT
+   - ✅ eventsWs opcional (bridge local) para eventos automáticos
+   - ✅ IRC USERNOTICE: subs/resubs/gifts/raids → alertas en pantalla (sin backend)
+   - ✅ FIX: si la votación termina con 0 votos → NEXT
+   - ✅ YouTube: handshake postMessage (mejor detección de “video unavailable”)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V204_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V205_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Bus ─────────────────────────
@@ -91,6 +99,23 @@
       chatMaxExplicit: (u.searchParams.get("chatMax") != null),
       chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
       chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
+
+      // Alerts (subs/gifts/raids via IRC + externos via eventsWs/cmd)
+      alerts: (u.searchParams.get("alerts") ?? "1") !== "0",
+      alertsMax: clamp(parseInt(u.searchParams.get("alertsMax") || "3", 10) || 3, 1, 6),
+      alertsTtl: clamp(parseInt(u.searchParams.get("alertsTtl") || "8", 10) || 8, 3, 20),
+
+      // Ads overlay
+      ads: (u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1") !== "0",
+      adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
+      adShowDuring: (u.searchParams.get("adShowDuring") ?? "1") !== "0",
+      adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
+      botSayUrl: (u.searchParams.get("botSayUrl") || "").trim(), // POST {message,channel,key}
+      botSayOnAd: (u.searchParams.get("botSayOnAd") ?? "1") !== "0",
+
+      // Bridge opcional (WebSocket) para eventos automáticos (ads/follows/etc.)
+      eventsWs: (u.searchParams.get("eventsWs") || "").trim(),
+      eventsKey: (u.searchParams.get("eventsKey") || u.searchParams.get("key") || "").trim(),
     };
   }
 
@@ -411,7 +436,6 @@
     if (!autoskip) return;
 
     stallCount++;
-    // si hay demasiados stalls => fuera
     if (stallCount >= MAX_STALLS) {
       healthFail(tok, cam, `stall_${reason}`);
       return;
@@ -430,7 +454,6 @@
     if (!autoskip) return;
     startTimer = setTimeout(() => {
       if (tok !== playToken) return;
-      // si nunca hubo progreso real -> fail
       if (!startedOk) healthFail(tok, cam, `${kind}_start_timeout`);
     }, START_TIMEOUT_MS);
   }
@@ -442,7 +465,6 @@
     const id = cam?.id;
     if (id) markBad(id, reason);
 
-    // Refiltramos para no volver a caer en la misma rota enseguida
     applyFilters();
     idx = idx % Math.max(1, cams.length);
 
@@ -525,6 +547,471 @@
     voteReset();
   }
 
+  // ───────────────────────── Alerts UI ─────────────────────────
+  let alertsEnabled = !!P.alerts;
+  const alertsMax = P.alertsMax | 0;
+  const alertsTtlSec = P.alertsTtl | 0;
+
+  let alertsRoot = null;
+  let alertsList = null;
+  let alertItems = [];
+
+  function injectAlertsStylesOnce() {
+    if (document.getElementById("rlcAlertsStyles")) return;
+    const st = document.createElement("style");
+    st.id = "rlcAlertsStyles";
+    st.textContent = `
+      .rlcAlertsRoot{
+        position: fixed;
+        left: max(12px, env(safe-area-inset-left));
+        top: max(12px, env(safe-area-inset-top));
+        width: min(420px, calc(100vw - 24px));
+        z-index: 10000;
+        pointer-events: none;
+        display: none;
+      }
+      .rlcAlertsRoot.alerts--on{ display:block !important; }
+      .rlcAlertsList{
+        display:flex; flex-direction:column; gap:10px;
+      }
+      .rlcAlert{
+        display:flex; gap:10px; align-items:flex-start;
+        padding:10px 12px;
+        border-radius:16px;
+        background: rgba(10,14,20,.56);
+        border:1px solid rgba(255,255,255,.12);
+        box-shadow: 0 14px 40px rgba(0,0,0,.35);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        transform: translateY(-6px);
+        opacity:0;
+        animation: rlcAlertIn .18s ease-out forwards;
+      }
+      @keyframes rlcAlertIn{ to{ transform: translateY(0); opacity:1; } }
+      .rlcAlert.rlcAlertOut{ animation: rlcAlertOut .28s ease-in forwards; }
+      @keyframes rlcAlertOut{ to{ transform: translateY(-6px); opacity:0; } }
+
+      .rlcAlertIcon{
+        flex:0 0 auto;
+        width:34px; height:34px;
+        border-radius:12px;
+        display:grid; place-items:center;
+        font-size:18px;
+        background: rgba(255,255,255,.10);
+        border:1px solid rgba(255,255,255,.10);
+      }
+      .rlcAlertBody{ min-width:0; }
+      .rlcAlertTitle{
+        font-weight:900;
+        font-size:14px;
+        color: rgba(255,255,255,.95);
+        line-height:1.15;
+      }
+      .rlcAlertText{
+        margin-top:2px;
+        font-size:12.5px;
+        color: rgba(255,255,255,.85);
+        line-height:1.25;
+        word-break: break-word;
+        overflow-wrap:anywhere;
+        white-space: pre-wrap;
+      }
+
+      .rlcAlert--follow .rlcAlertIcon{ background: rgba(79, 214, 255, .18); }
+      .rlcAlert--sub   .rlcAlertIcon{ background: rgba(140, 255, 179, .18); }
+      .rlcAlert--gift  .rlcAlertIcon{ background: rgba(255, 206, 87, .18); }
+      .rlcAlert--raid  .rlcAlertIcon{ background: rgba(255, 133, 196, .18); }
+      .rlcAlert--ad    .rlcAlertIcon{ background: rgba(255, 96, 96, .18); }
+
+      @media (max-width: 520px){
+        .rlcAlertsRoot{ width:min(360px, calc(100vw - 24px)); }
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function ensureAlertsUI() {
+    injectAlertsStylesOnce();
+    alertsRoot = document.getElementById("rlcAlertsRoot");
+    if (!alertsRoot) {
+      alertsRoot = document.createElement("div");
+      alertsRoot.id = "rlcAlertsRoot";
+      alertsRoot.className = "rlcAlertsRoot";
+      document.body.appendChild(alertsRoot);
+    }
+    alertsList = document.getElementById("rlcAlertsList");
+    if (!alertsList) {
+      alertsList = document.createElement("div");
+      alertsList.id = "rlcAlertsList";
+      alertsList.className = "rlcAlertsList";
+      alertsRoot.appendChild(alertsList);
+    }
+    alertsRoot.classList.toggle("alerts--on", !!alertsEnabled);
+    try { alertsRoot.style.display = alertsEnabled ? "" : "none"; } catch (_) {}
+  }
+
+  function alertsPush(type, title, text) {
+    if (!alertsEnabled) return;
+    ensureAlertsUI();
+    if (!alertsRoot || !alertsList) return;
+
+    const iconMap = {
+      follow: "★",
+      sub: "◆",
+      gift: "🎁",
+      raid: "⚡",
+      ad: "⏳",
+      info: "ℹ",
+    };
+    const t = String(type || "info").toLowerCase();
+    const el = document.createElement("div");
+    el.className = `rlcAlert rlcAlert--${t}`;
+
+    const ic = document.createElement("div");
+    ic.className = "rlcAlertIcon";
+    ic.textContent = iconMap[t] || iconMap.info;
+
+    const body = document.createElement("div");
+    body.className = "rlcAlertBody";
+
+    const h = document.createElement("div");
+    h.className = "rlcAlertTitle";
+    h.textContent = title || "Alerta";
+
+    const p = document.createElement("div");
+    p.className = "rlcAlertText";
+    p.textContent = text || "";
+
+    body.appendChild(h);
+    body.appendChild(p);
+    el.appendChild(ic);
+    el.appendChild(body);
+
+    alertsList.appendChild(el);
+    const item = { el, ts: Date.now() };
+    alertItems.push(item);
+
+    while (alertItems.length > alertsMax) {
+      const old = alertItems.shift();
+      try { old?.el?.remove?.(); } catch (_) {}
+    }
+
+    setTimeout(() => {
+      try { el.classList.add("rlcAlertOut"); } catch (_) {}
+      setTimeout(() => { try { el.remove(); } catch (_) {} }, 320);
+    }, Math.max(1500, alertsTtlSec * 1000));
+  }
+
+  // ───────────────────────── Ads overlay ─────────────────────────
+  let adsEnabled = !!P.ads;
+  const adLeadDefaultSec = P.adLead | 0;
+  const adShowDuring = !!P.adShowDuring;
+  const adChatText = String(P.adChatText || "").trim();
+  const botSayUrl = String(P.botSayUrl || "").trim();
+  const botSayOnAd = !!P.botSayOnAd;
+
+  let adRoot = null;
+  let adTitleEl = null;
+  let adTimeEl = null;
+  let adBarEl = null;
+
+  let adActive = false;
+  let adPhase = "idle"; // lead/live
+  let adLeadEndsAt = 0;
+  let adEndsAt = 0;
+  let adTotalLead = 0;
+  let adTotalLive = 0;
+  let adChatSent = false;
+
+  function injectAdsStylesOnce() {
+    if (document.getElementById("rlcAdsStyles")) return;
+    const st = document.createElement("style");
+    st.id = "rlcAdsStyles";
+    st.textContent = `
+      .rlcAdRoot{
+        position: fixed;
+        left: 50%;
+        top: max(14px, env(safe-area-inset-top));
+        transform: translateX(-50%);
+        width: min(640px, calc(100vw - 24px));
+        z-index: 10001;
+        pointer-events: none;
+        display:none;
+      }
+      .rlcAdCard{
+        display:flex;
+        align-items:center;
+        gap:12px;
+        padding:12px 14px;
+        border-radius:18px;
+        background: rgba(10,14,20,.62);
+        border: 1px solid rgba(255,255,255,.12);
+        box-shadow: 0 16px 46px rgba(0,0,0,.40);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+      .rlcAdPill{
+        flex:0 0 auto;
+        padding:6px 10px;
+        border-radius:999px;
+        font-weight:900;
+        font-size:12px;
+        letter-spacing:.2px;
+        background: rgba(255,96,96,.18);
+        border:1px solid rgba(255,96,96,.25);
+        color: rgba(255,255,255,.95);
+      }
+      .rlcAdMsg{ min-width:0; flex:1 1 auto; }
+      .rlcAdTitle{
+        font-weight:900;
+        font-size:14px;
+        color: rgba(255,255,255,.95);
+        line-height:1.15;
+      }
+      .rlcAdTime{
+        margin-top:2px;
+        font-size:12.5px;
+        color: rgba(255,255,255,.85);
+      }
+      .rlcAdBar{
+        margin-top:8px;
+        height:6px;
+        border-radius:999px;
+        background: rgba(255,255,255,.10);
+        overflow:hidden;
+      }
+      .rlcAdBar > i{
+        display:block;
+        height:100%;
+        width:0%;
+        background: linear-gradient(90deg, rgba(255,96,96,.85), rgba(255,206,87,.85));
+      }
+      .rlcAdRoot.on{ display:block !important; }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function ensureAdsUI() {
+    injectAdsStylesOnce();
+    adRoot = document.getElementById("rlcAdRoot");
+    if (!adRoot) {
+      adRoot = document.createElement("div");
+      adRoot.id = "rlcAdRoot";
+      adRoot.className = "rlcAdRoot";
+      adRoot.innerHTML = `
+        <div class="rlcAdCard">
+          <div class="rlcAdPill">ADS</div>
+          <div class="rlcAdMsg">
+            <div class="rlcAdTitle" id="rlcAdTitle">Anuncio</div>
+            <div class="rlcAdTime" id="rlcAdTime">—</div>
+            <div class="rlcAdBar"><i id="rlcAdBar"></i></div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(adRoot);
+    }
+    adTitleEl = document.getElementById("rlcAdTitle");
+    adTimeEl = document.getElementById("rlcAdTime");
+    adBarEl = document.getElementById("rlcAdBar");
+  }
+
+  function adHide() {
+    adActive = false;
+    adPhase = "idle";
+    adLeadEndsAt = 0;
+    adEndsAt = 0;
+    adTotalLead = 0;
+    adTotalLive = 0;
+    adChatSent = false;
+    if (adRoot) adRoot.classList.remove("on");
+  }
+
+  function adShow() {
+    if (!adsEnabled) return;
+    ensureAdsUI();
+    if (adRoot) adRoot.classList.add("on");
+  }
+
+  function adStartLead(secondsLeft) {
+    if (!adsEnabled) return;
+    const left = clamp(secondsLeft | 0, 0, 3600);
+    adActive = true;
+    adPhase = "lead";
+    adShow();
+
+    if (!adTotalLead) adTotalLead = Math.max(1, left);
+    adLeadEndsAt = Date.now() + left * 1000;
+
+    if (adTitleEl) adTitleEl.textContent = "Anuncio en…";
+    if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
+
+    if (adBarEl) adBarEl.style.width = "0%";
+    alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
+  }
+
+  function adStartLive(durationSec) {
+    if (!adsEnabled) return;
+    const d = clamp(durationSec | 0, 5, 3600);
+    adActive = true;
+    adPhase = "live";
+    adShow();
+
+    adTotalLive = d;
+    adEndsAt = Date.now() + d * 1000;
+
+    if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
+    if (adTimeEl) adTimeEl.textContent = `Quedan ${fmtMMSS(d)}`;
+    if (adBarEl) adBarEl.style.width = "0%";
+
+    if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
+  }
+
+  function adTick() {
+    if (!adsEnabled || !adActive) return;
+    const now = Date.now();
+
+    if (adPhase === "lead") {
+      const left = Math.max(0, Math.ceil((adLeadEndsAt - now) / 1000));
+      if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
+
+      const denom = Math.max(1, adTotalLead | 0);
+      const pct = 100 * (1 - (left / denom));
+      if (adBarEl) adBarEl.style.width = `${clamp(pct, 0, 100).toFixed(1)}%`;
+
+      if (left <= 0) {
+        // si no sabemos duración, dejamos el banner 6s y escondemos
+        adPhase = "live";
+        adTotalLive = Math.max(6, adTotalLive | 0);
+        adEndsAt = now + (adTotalLive || 6) * 1000;
+        if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
+      }
+
+      // Mensaje al chat (vía botSayUrl) cuando entra en ventana lead
+      if (!adChatSent && botSayOnAd && botSayUrl && adChatText) {
+        adChatSent = true;
+        botSay(adChatText);
+      }
+      return;
+    }
+
+    if (adPhase === "live") {
+      const left = Math.max(0, Math.ceil((adEndsAt - now) / 1000));
+      if (adTimeEl) adTimeEl.textContent = `Quedan ${fmtMMSS(left)}`;
+
+      const denom = Math.max(1, adTotalLive | 0);
+      const pct = 100 * (1 - (left / denom));
+      if (adBarEl) adBarEl.style.width = `${clamp(pct, 0, 100).toFixed(1)}%`;
+
+      if (left <= 0) adHide();
+    }
+  }
+
+  function parseTimeMs(v) {
+    const t = Date.parse(String(v || ""));
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function adSchedule(nextAdAtIso, leadSec, durationSec) {
+    if (!adsEnabled) return;
+    const t = parseTimeMs(nextAdAtIso);
+    if (!t) return;
+
+    const lead = clamp((leadSec != null ? leadSec : adLeadDefaultSec) | 0, 0, 600);
+    const dur = (durationSec != null) ? clamp(durationSec | 0, 0, 3600) : 0;
+
+    const now = Date.now();
+    const startLeadAt = t - lead * 1000;
+    const untilLead = Math.ceil((startLeadAt - now) / 1000);
+
+    // Guard: si ya está pasando o demasiado lejos, no spamear UI
+    if (untilLead > 24 * 60 * 60) return;
+
+    adTotalLead = lead || Math.max(1, Math.ceil((t - now) / 1000));
+    adTotalLive = dur || 0;
+
+    if (untilLead <= 0) {
+      // ya estamos en ventana lead
+      const left = Math.max(0, Math.ceil((t - now) / 1000));
+      adStartLead(left);
+      if (dur > 0) {
+        // programamos live “virtual” cuando llegue el momento
+        // (se convierte en live automáticamente cuando left llega a 0)
+        adTotalLive = dur;
+        adEndsAt = t + dur * 1000;
+      } else {
+        adTotalLive = 6;
+      }
+    } else {
+      // programar inicio lead
+      setTimeout(() => {
+        // recalcular por si hubo cambios
+        const n2 = Date.now();
+        const left = Math.max(0, Math.ceil((t - n2) / 1000));
+        if (left > 0) adStartLead(left);
+      }, untilLead * 1000);
+    }
+  }
+
+  async function botSay(message) {
+    const msg = String(message || "").trim();
+    if (!msg || !botSayUrl) return;
+    try {
+      await fetch(botSayUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message: msg,
+          channel: twitchChannel || "",
+          key: P.eventsKey || P.key || ""
+        })
+      });
+    } catch (_) {}
+  }
+
+  // ───────────────────────── YouTube handshake (mejor health) ─────────────────────────
+  let ytMsgBound = false;
+  let ytExpectTok = 0;
+  let ytPlayerId = "";
+
+  function bindYtMessagesOnce() {
+    if (ytMsgBound) return;
+    ytMsgBound = true;
+
+    window.addEventListener("message", (ev) => {
+      const origin = String(ev.origin || "");
+      if (!origin.includes("youtube.com") && !origin.includes("youtube-nocookie.com")) return;
+
+      let data = ev.data;
+      try {
+        if (typeof data === "string") data = JSON.parse(data);
+      } catch (_) {}
+
+      if (!data || typeof data !== "object") return;
+      if (data.id && ytPlayerId && String(data.id) !== String(ytPlayerId)) return;
+
+      // Cualquier señal del player la consideramos “progreso real”
+      if (ytExpectTok) healthProgress(ytExpectTok);
+    }, false);
+  }
+
+  function ytSend(cmdObj) {
+    try {
+      if (!frame || !frame.contentWindow) return;
+      frame.contentWindow.postMessage(JSON.stringify(cmdObj), "*");
+    } catch (_) {}
+  }
+
+  function ytHandshake(tok) {
+    ytExpectTok = tok;
+    bindYtMessagesOnce();
+    if (!ytPlayerId) ytPlayerId = "rlcYt_" + String(Date.now());
+
+    // Protocolo iframe API
+    ytSend({ event: "listening", id: ytPlayerId });
+    ytSend({ id: ytPlayerId, event: "command", func: "mute", args: [] });
+    ytSend({ id: ytPlayerId, event: "command", func: "playVideo", args: [] });
+  }
+
   function playCam(cam) {
     if (!cam) {
       showFallback({ originUrl: "#" }, "Cam inválida. Saltando…");
@@ -545,22 +1032,28 @@
     if (cam.kind === "youtube") {
       showOnly("youtube");
 
-      // watchdog: esperamos al menos al onload del iframe
+      // watchdog: esperamos señal real (postMessage), no solo onload
       healthExpectStart(tok, cam, "youtube");
 
       const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
       const src =
         `${base}/embed/${encodeURIComponent(cam.youtubeId || "")}`
         + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`
-        + `&enablejsapi=1`; // (no garantiza error detect, pero ayuda compat)
+        + `&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
+        + `&widgetid=1`;
 
       if (!cam.youtubeId) {
         healthFail(tok, cam, "youtube_missing_id");
         return;
       }
 
+      ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
+
       if (frame) {
-        frame.onload = () => healthProgress(tok);
+        frame.onload = () => {
+          // hacemos handshake; si el vídeo está “unavailable”, normalmente no responde bien
+          ytHandshake(tok);
+        };
         frame.src = src;
       } else {
         healthFail(tok, cam, "youtube_no_iframe");
@@ -574,7 +1067,6 @@
     if (cam.kind === "image") {
       showOnly("image");
 
-      // watchdog: esperamos al onload de la imagen
       healthExpectStart(tok, cam, "image");
 
       const refreshMs = Math.max(5000, (cam.refreshMs | 0) || 60000);
@@ -614,10 +1106,8 @@
         return;
       }
 
-      // watchdog de arranque
       healthExpectStart(tok, cam, "hls");
 
-      // video health signals
       video.onloadeddata = () => healthProgress(tok);
       video.oncanplay = () => { healthProgress(tok); safePlayVideo(); };
       video.onplaying = () => healthProgress(tok);
@@ -628,14 +1118,12 @@
       video.onerror = () => healthFail(tok, cam, "video_error");
 
       if (video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl")) {
-        // Safari / iOS / algunos navegadores
         try { video.src = url; } catch (_) {}
         safePlayVideo();
         postState();
         return;
       }
 
-      // Hls.js
       if (Hls && Hls.isSupported && Hls.isSupported()) {
         try {
           hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
@@ -649,7 +1137,6 @@
             }
           });
 
-          // si parsea manifest, es buena señal (no siempre significa reproducción)
           hls.on(Hls.Events.MANIFEST_PARSED, () => healthProgress(tok));
         } catch (_) {
           healthFail(tok, cam, "hls_exception");
@@ -729,16 +1216,13 @@
     modeAdfree = false;
     autoskip = true;
 
-    // NO borramos BAD (cooldown) aquí a propósito: evita “loop” en cams rotas
-    // Si quieres borrarlo manual:
-    // localStorage.removeItem(BAD_KEY);
-
     applyFilters();
     setFit("cover");
     setRoundMins(5);
     setHudHidden(false);
     setHudCollapsed(true);
     setPlaying(true);
+    adHide();
     playCam(cams[idx]);
   }
 
@@ -1008,10 +1492,24 @@
       .replace(/\\\\/g, "\\");
   }
 
+  function parseTagsToObj(tagsStr) {
+    const out = {};
+    const tags = String(tagsStr || "");
+    if (!tags) return out;
+    const parts = tags.split(";");
+    for (const p of parts) {
+      const eq = p.indexOf("=");
+      const k = (eq >= 0) ? p.slice(0, eq) : p;
+      const v = (eq >= 0) ? p.slice(eq + 1) : "";
+      out[k] = unescapeTagValue(v);
+    }
+    return out;
+  }
+
   class TwitchAnonIRC {
-    constructor(channel, onPrivmsg) {
+    constructor(channel, onEvent) {
       this.channel = channel;
-      this.onPrivmsg = onPrivmsg;
+      this.onEvent = onEvent;
       this.ws = null;
       this.closed = false;
       this.nick = "justinfan" + String(((Math.random() * 9e7) | 0) + 1e7);
@@ -1063,47 +1561,65 @@
         return;
       }
 
-      let tags = "";
+      let tagsStr = "";
       let rest = line;
       if (rest[0] === "@") {
         const sp = rest.indexOf(" ");
-        tags = rest.slice(1, sp);
+        tagsStr = rest.slice(1, sp);
         rest = rest.slice(sp + 1);
       }
+      const tags = parseTagsToObj(tagsStr);
 
+      // PRIVMSG
       const m = rest.match(/^:([^!]+)![^ ]+ PRIVMSG #[^ ]+ :(.+)$/);
-      if (!m) return;
+      if (m) {
+        const user = (m[1] || "").toLowerCase();
+        const msg = (m[2] || "").trim();
 
-      const user = (m[1] || "").toLowerCase();
-      const msg = (m[2] || "").trim();
+        const userId = tags["user-id"] || user;
+        const displayName = tags["display-name"] || "";
 
-      let userId = user;
-      let displayName = "";
-      if (tags) {
-        const parts = tags.split(";");
-        for (const p of parts) {
-          const eq = p.indexOf("=");
-          const k = (eq >= 0) ? p.slice(0, eq) : p;
-          const v = (eq >= 0) ? p.slice(eq + 1) : "";
-          if (k === "user-id" && v) userId = v;
-          if (k === "display-name" && v) displayName = unescapeTagValue(v);
-        }
+        try { this.onEvent?.({ kind: "privmsg", userId, user, displayName, msg, tags }); } catch (_) {}
+        return;
       }
 
-      try { this.onPrivmsg?.({ userId, user, displayName, msg }); } catch (_) {}
+      // USERNOTICE (subs/gifts/raid/…)
+      const n = rest.match(/^:([^ ]+) USERNOTICE #[^ ]+(?: :(.+))?$/);
+      if (n) {
+        const msgText = (n[2] || "").trim();
+        const user = (tags.login || tags["display-name"] || "").toLowerCase();
+        const userId = tags["user-id"] || user || "tmi";
+        const displayName = tags["display-name"] || tags.login || "Twitch";
+        const msgId = tags["msg-id"] || "";
+        const sysMsg = tags["system-msg"] || "";
+
+        try {
+          this.onEvent?.({
+            kind: "usernotice",
+            msgId,
+            sysMsg,
+            userId,
+            user,
+            displayName,
+            msg: msgText,
+            tags
+          });
+        } catch (_) {}
+        return;
+      }
     }
   }
 
   let irc = null;
   function ensureIrc() {
-    const need = (!!twitchChannel) && (voteEnabled || chatEnabled);
+    const need = (!!twitchChannel) && (voteEnabled || chatEnabled || alertsEnabled);
     if (!need) {
       try { irc?.close?.(); } catch (_) {}
       irc = null;
       return;
     }
     if (irc) return;
-    irc = new TwitchAnonIRC(twitchChannel, handleChatEvent);
+    irc = new TwitchAnonIRC(twitchChannel, handleTwitchEvent);
     try { irc.connect(); } catch (_) { irc = null; }
   }
 
@@ -1160,6 +1676,9 @@
     votePhase = "idle";
     renderVote();
 
+    // ✅ FIX: si no vota nadie, no te quedas -> NEXT
+    if (y === 0 && n === 0) { nextCam("vote_no_votes"); return; }
+
     if (y > n && y > 0) nextCam("vote_yes");
     else restartStaySegment();
   }
@@ -1198,25 +1717,168 @@
     if (voteNoFill) voteNoFill.style.width = `${((votesNo / total) * 100).toFixed(1)}%`;
   }
 
-  function handleChatEvent({ userId, user, displayName, msg }) {
-    const text = String(msg || "").trim();
-    if (!text) return;
+  function handleTwitchEvent(ev) {
+    if (!ev) return;
 
-    // CHAT overlay
-    if (chatEnabled && twitchChannel) {
-      const name = (displayName || user || "chat").trim();
-      if (!isHiddenChatCommand(text)) chatAdd(name, text);
+    // 1) Chat overlay (privmsg)
+    if (ev.kind === "privmsg") {
+      const text = String(ev.msg || "").trim();
+      if (chatEnabled && twitchChannel) {
+        const name = (ev.displayName || ev.user || "chat").trim();
+        if (!isHiddenChatCommand(text)) chatAdd(name, text);
+      }
+
+      // VOTO (solo en fase vote)
+      if (voteSessionActive && votePhase === "vote") {
+        const low = text.toLowerCase();
+        const who = ev.userId || ev.user || "anon";
+        if (!voters.has(who)) {
+          if (cmdYes.has(low)) { voters.add(who); votesYes++; renderVote(); }
+          else if (cmdNo.has(low)) { voters.add(who); votesNo++; renderVote(); }
+        }
+      }
+      return;
     }
 
-    // VOTO: SOLO en fase "vote"
-    if (!voteSessionActive || votePhase !== "vote") return;
+    // 2) USERNOTICE (subs/gifts/raid)
+    if (ev.kind === "usernotice") {
+      const msgId = String(ev.msgId || "").toLowerCase();
+      const dn = String(ev.displayName || "Twitch");
+      const sys = String(ev.sysMsg || "").trim();
+      const tags = ev.tags || {};
 
-    const low = text.toLowerCase();
-    const who = userId || user || "anon";
-    if (voters.has(who)) return;
+      // Si viene system-msg, úsalo como texto “bonito”
+      const nice = sys || "";
 
-    if (cmdYes.has(low)) { voters.add(who); votesYes++; renderVote(); return; }
-    if (cmdNo.has(low))  { voters.add(who); votesNo++;  renderVote(); return; }
+      if (msgId === "sub" || msgId === "resub") {
+        const plan = tags["msg-param-sub-plan"] || "";
+        const months = tags["msg-param-cumulative-months"] || tags["msg-param-months"] || "";
+        alertsPush("sub", "¡Nuevo sub!", `${dn}${months ? ` · ${months} meses` : ""}${plan ? ` · ${plan}` : ""}`);
+        if (nice) chatAdd("TWITCH", nice);
+        return;
+      }
+
+      if (msgId === "subgift" || msgId === "anonsubgift") {
+        const recip = tags["msg-param-recipient-display-name"] || tags["msg-param-recipient-user-name"] || "alguien";
+        alertsPush("gift", "Sub de regalo", `${dn} regaló una sub a ${recip}`);
+        if (nice) chatAdd("TWITCH", nice);
+        return;
+      }
+
+      if (msgId === "submysterygift") {
+        const count = tags["msg-param-mass-gift-count"] || tags["msg-param-sender-count"] || "";
+        alertsPush("gift", "Lluvia de subs 🎁", `${dn} regaló ${count || "varias"} subs`);
+        if (nice) chatAdd("TWITCH", nice);
+        return;
+      }
+
+      if (msgId === "raid") {
+        const viewers = tags["msg-param-viewerCount"] || "";
+        alertsPush("raid", "¡RAID!", `${dn} raideó con ${viewers || "gente"} 🎉`);
+        if (nice) chatAdd("TWITCH", nice);
+        return;
+      }
+
+      return;
+    }
+  }
+
+  // ───────────────────────── eventsWs (bridge opcional) ─────────────────────────
+  let eventsWs = null;
+  let eventsWsTimer = null;
+  let eventsWsBackoff = 800;
+
+  function eventsKeyOk(obj) {
+    const need = String(P.eventsKey || "").trim();
+    if (!need) return true;
+    return String(obj?.key || "").trim() === need;
+  }
+
+  function handleExternalEvent(obj) {
+    if (!obj || typeof obj !== "object") return;
+    if (!eventsKeyOk(obj)) return;
+
+    const type = String(obj.type || obj.kind || "").toLowerCase();
+
+    if (type === "ad_notice" || type === "ad_schedule") {
+      // Soporta: next_ad_at (ISO), leadSec, durationSec
+      const nextAt = obj.next_ad_at || obj.nextAdAt || obj.at || "";
+      const lead = (obj.leadSec != null) ? (obj.leadSec | 0) : (obj.lead_sec != null ? (obj.lead_sec | 0) : adLeadDefaultSec);
+      const dur  = (obj.durationSec != null) ? (obj.durationSec | 0) : (obj.duration_seconds != null ? (obj.duration_seconds | 0) : 0);
+      if (nextAt) adSchedule(nextAt, lead, dur);
+      else if (obj.leadSec != null) adStartLead(obj.leadSec | 0);
+      return;
+    }
+
+    if (type === "ad_begin") {
+      const d = (obj.durationSec != null) ? (obj.durationSec | 0) : (obj.duration_seconds != null ? (obj.duration_seconds | 0) : 30);
+      adStartLive(d);
+      return;
+    }
+
+    if (type === "ad_clear") {
+      adHide();
+      return;
+    }
+
+    if (type === "follow") {
+      const user = obj.user || obj.displayName || obj.name || "Nuevo follow";
+      alertsPush("follow", "¡Nuevo follow!", String(user));
+      if (obj.chat && chatEnabled) chatAdd("TWITCH", `💜 ${user} ha seguido el canal`);
+      return;
+    }
+
+    if (type === "alert") {
+      const aType = obj.alertType || obj.subtype || obj.level || "info";
+      alertsPush(aType, obj.title || "Alerta", obj.text || obj.message || "");
+      return;
+    }
+  }
+
+  function connectEventsWs() {
+    const url = String(P.eventsWs || "").trim();
+    if (!url) return;
+
+    try { eventsWs?.close?.(); } catch (_) {}
+    eventsWs = null;
+
+    try {
+      const ws = new WebSocket(url);
+      eventsWs = ws;
+
+      ws.onopen = () => {
+        eventsWsBackoff = 800;
+        if (P.debug) console.log("[eventsWs] connected:", url);
+        try {
+          ws.send(JSON.stringify({ type: "hello", key: P.eventsKey || "", channel: twitchChannel || "" }));
+        } catch (_) {}
+      };
+
+      ws.onmessage = (ev) => {
+        const raw = String(ev.data || "");
+        try {
+          const obj = JSON.parse(raw);
+          handleExternalEvent(obj);
+        } catch (_) {}
+      };
+
+      ws.onclose = () => {
+        if (P.debug) console.log("[eventsWs] closed");
+        scheduleEventsWsReconnect();
+      };
+      ws.onerror = () => {};
+    } catch (_) {
+      scheduleEventsWsReconnect();
+    }
+  }
+
+  function scheduleEventsWsReconnect() {
+    const url = String(P.eventsWs || "").trim();
+    if (!url) return;
+    try { if (eventsWsTimer) clearTimeout(eventsWsTimer); } catch (_) {}
+    const wait = clamp(eventsWsBackoff, 800, 15000);
+    eventsWsBackoff = Math.min(15000, (eventsWsBackoff * 1.6) | 0);
+    eventsWsTimer = setTimeout(connectEventsWs, wait);
   }
 
   // ───────────────────────── State publish ─────────────────────────
@@ -1271,6 +1933,12 @@
         phase: votePhase,
         yes: votesYes,
         no: votesNo
+      },
+
+      ads: {
+        enabled: adsEnabled,
+        active: adActive,
+        phase: adPhase,
       },
 
       ...extra
@@ -1350,6 +2018,8 @@
         if (payload?.chat != null || payload?.chatOverlay != null) chatSetEnabled(!!(payload?.chat ?? payload?.chatOverlay));
         if (payload?.chatHideCommands != null) chatHideCommands = !!payload.chatHideCommands;
 
+        if (payload?.alerts != null) alertsEnabled = !!payload.alerts;
+
         ensureIrc();
         voteReset();
         postState();
@@ -1361,6 +2031,38 @@
         const w = clamp(parseInt(payload?.windowSec ?? voteWindowSec, 10) || voteWindowSec, 5, 180);
         const lead = clamp(parseInt(payload?.leadSec ?? voteLeadSec, 10) || voteLeadSec, 0, 30);
         voteStartSequence(w, lead);
+        postState();
+        break;
+      }
+
+      // ADS
+      case "AD_NOTICE": {
+        // Soporta:
+        // - payload.nextAdAt (ISO), payload.leadSec, payload.durationSec
+        // - o payload.leadSec directo
+        if (payload?.nextAdAt || payload?.next_ad_at) {
+          adSchedule(payload.nextAdAt || payload.next_ad_at, payload.leadSec ?? payload.lead_sec, payload.durationSec ?? payload.duration_seconds);
+        } else if (payload?.leadSec != null) {
+          adStartLead(payload.leadSec | 0);
+        }
+        postState();
+        break;
+      }
+      case "AD_BEGIN": {
+        adStartLive((payload?.durationSec ?? payload?.duration_seconds ?? 30) | 0);
+        postState();
+        break;
+      }
+      case "AD_CLEAR": {
+        adHide();
+        postState();
+        break;
+      }
+
+      // ALERT
+      case "ALERT": {
+        const t = payload?.type || payload?.alertType || "info";
+        alertsPush(t, payload?.title || "Alerta", payload?.text || payload?.message || "");
         postState();
         break;
       }
@@ -1435,8 +2137,19 @@
 
         ytCookies: P.ytCookies ? 1 : 0,
 
+        alertsEnabled: alertsEnabled ? 1 : 0,
+
+        adsEnabled: adsEnabled ? 1 : 0,
+        adLeadDefaultSec,
+        adShowDuring: adShowDuring ? 1 : 0,
+        botSayOnAd: botSayOnAd ? 1 : 0,
+        botSayUrl,
+
+        eventsWs: P.eventsWs || "",
+        eventsKey: P.eventsKey || "",
+
         ts: Date.now(),
-        v: 2
+        v: 205
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
     } catch (_) {}
@@ -1444,6 +2157,7 @@
 
   function tick() {
     setCountdownUI();
+    adTick();
 
     const rem = remainingSeconds();
 
@@ -1572,6 +2286,13 @@
       if (P.chatTtlExplicit) chatTtlSec = P.chatTtl | 0;
       else chatTtlSec = clamp((st.chatTtlSec | 0) || chatTtlSec, 5, 30);
 
+      // Alerts restore
+      alertsEnabled = (st.alertsEnabled ?? 1) !== 0;
+
+      // Ads restore
+      adsEnabled = (st.adsEnabled ?? (P.ads ? 1 : 0)) !== 0;
+      // botSayUrl/… ya vienen de params pero dejamos el storage como compat
+
       // ytCookies restore
       if (typeof st.ytCookies !== "undefined") {
         try { P.ytCookies = (st.ytCookies | 0) !== 0; } catch (_) {}
@@ -1607,12 +2328,22 @@
       chatMax = P.chatMax | 0;
       chatTtlSec = P.chatTtl | 0;
 
+      alertsEnabled = !!P.alerts;
+      adsEnabled = !!P.ads;
+
       parseVoteCmds(P.voteCmd);
     }
 
-    // chat UI + activar (si enabled)
+    // chat UI + activar
     ensureChatUI();
     chatSetEnabled(chatEnabled);
+
+    // alerts UI
+    ensureAlertsUI();
+
+    // ads UI
+    ensureAdsUI();
+    if (!adsEnabled) adHide();
 
     // BGM init
     try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
@@ -1622,6 +2353,9 @@
 
     // IRC init
     ensureIrc();
+
+    // eventsWs (bridge)
+    connectEventsWs();
 
     playCam(cams[idx]);
 
