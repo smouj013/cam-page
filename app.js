@@ -1,28 +1,27 @@
-/* app.js — RLC Player v2.0.3 PRO
-   ✅ Voto automático configurable:
-      - voteAt = segundos antes del final para EMPEZAR el voto
-      - voteLead = segundos de pre-aviso ANTES de empezar el voto
-      - Overlay visible durante TODO el ciclo: pre-aviso + voto (NO solo voteWindow)
-      - Si recargas tarde (rem <= voteAt) -> empieza voto directo (sin lead)
-   ✅ STAY: reinicia segmento a stayMins y vuelve a votar al faltar voteAt
-   ✅ ytCookies=1 -> youtube.com/embed (sesión/cookies); default nocookie
-   ✅ Chat overlay (abajo derecha) bonito:
-      - se activa por defecto si hay ?twitch=...
-      - NO muestra comandos (mensajes que empiezan por "!")
-      - puedes forzar con &chat=1 o &chat=0
-      - tecla C toggle
+/* app.js — RLC Player v2.0.4 PRO (HEALTH + AUTOSKIP HARD)
+   ✅ Detecta streams/imágenes caídas y salta a la siguiente automáticamente
+   ✅ “CoolDown” de cams fallidas (evita repetir la misma rota)
+   ✅ Mantiene: voto configurable (voteAt/voteLead/voteWindow), STAY, ytCookies, chat overlay
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V203_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V204_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  // Bus
+  // ───────────────────────── Bus ─────────────────────────
   const BUS = "rlc_bus_v1";
   const CMD_KEY = "rlc_cmd_v1";
   const STATE_KEY = "rlc_state_v1";
+
+  // ───────────────────────── Health / fail cache ─────────────────────────
+  const BAD_KEY = "rlc_bad_ids_v1"; // cooldown temporal por fallos
+  const BAD_BASE_COOLDOWN_MS = 30 * 60 * 1000; // 30 min base
+  const BAD_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24h max
+  const START_TIMEOUT_MS = 12000;   // si no arranca en 12s -> fail
+  const STALL_TIMEOUT_MS = 15000;   // si se queda colgado 15s -> fail
+  const MAX_STALLS = 2;             // 2 stalls largos -> fail
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -49,8 +48,6 @@
 
     const chatParam = u.searchParams.get("chat") ?? u.searchParams.get("chatOverlay");
     const chatExplicit = (chatParam != null);
-
-    // chat: si no especificas nada y hay twitch, lo activamos por defecto
     const chat = chatExplicit ? parseBoolParam(chatParam, true) : !!twitch;
 
     return {
@@ -75,18 +72,12 @@
       vote: (u.searchParams.get("vote") ?? "0") === "1",
       twitch,
 
-      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "20", 10) || 20, 5, 180),
-
-      // “voteAt” = segundos antes del final para EMPEZAR el VOTO (default 60)
+      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
-
-      // pre-aviso (seg) antes de empezar el voto (default 5)
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
 
-      // opcional (si viene, solo informativo/compat)
       voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
-
-      stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 60),
+      stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
 
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
       voteOverlay: (u.searchParams.get("voteOverlay") ?? "1") !== "0",
@@ -191,15 +182,66 @@
     if (raw) banned = new Set(JSON.parse(raw));
   } catch (_) {}
 
+  // BAD cache
+  let badMap = {};
+  function loadBad() {
+    try {
+      const raw = localStorage.getItem(BAD_KEY);
+      badMap = raw ? JSON.parse(raw) : {};
+      if (!badMap || typeof badMap !== "object") badMap = {};
+    } catch (_) { badMap = {}; }
+  }
+  function saveBad() {
+    try { localStorage.setItem(BAD_KEY, JSON.stringify(badMap || {})); } catch (_) {}
+  }
+  function purgeBad() {
+    const now = Date.now();
+    let dirty = false;
+    for (const k of Object.keys(badMap || {})) {
+      const it = badMap[k];
+      if (!it || (it.until && now >= it.until)) { delete badMap[k]; dirty = true; }
+    }
+    if (dirty) saveBad();
+  }
+  function isBad(id) {
+    if (!id) return false;
+    const it = badMap[id];
+    if (!it) return false;
+    const until = it.until | 0;
+    if (!until) return false;
+    if (Date.now() >= until) return false;
+    return true;
+  }
+  function markBad(id, reason) {
+    if (!id) return;
+    const now = Date.now();
+    const prev = badMap[id] || {};
+    const fails = clamp(((prev.fails | 0) || 0) + 1, 1, 999);
+    const mult = clamp(fails, 1, 12);
+    const cooldown = clamp(BAD_BASE_COOLDOWN_MS * mult, BAD_BASE_COOLDOWN_MS, BAD_MAX_COOLDOWN_MS);
+    badMap[id] = { fails, until: now + cooldown, last: now, reason: String(reason || "fail") };
+    saveBad();
+  }
+
   let modeAdfree = (P.mode === "adfree");
   let autoskip = !!P.autoskip;
 
   let cams = [];
   function applyFilters() {
-    let list = allCams.filter(c => c && !banned.has(c.id));
+    purgeBad();
+    let list = allCams.filter(c => c && !banned.has(c.id) && !isBad(c.id));
     if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
+
+    // Si te quedas sin lista por “bad cooldown”, aflojamos (no bloqueamos el player)
+    if (!list.length) {
+      list = allCams.filter(c => c && !banned.has(c.id));
+      if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
+    }
+
     cams = list.length ? list : allCams.slice();
   }
+
+  loadBad();
   applyFilters();
 
   // Playback state
@@ -337,22 +379,108 @@
     else { if (fallback) fallback.classList.remove("hidden"); }
   }
 
+  // ───────────────────────── Health watchdog ─────────────────────────
+  let playToken = 0;
+  let startTimer = null;
+  let stallTimer = null;
+  let lastProgressAt = 0;
+  let stallCount = 0;
+  let startedOk = false;
+
+  function healthReset() {
+    try { if (startTimer) clearTimeout(startTimer); } catch (_) {}
+    try { if (stallTimer) clearTimeout(stallTimer); } catch (_) {}
+    startTimer = null;
+    stallTimer = null;
+    lastProgressAt = Date.now();
+    stallCount = 0;
+    startedOk = false;
+  }
+
+  function healthProgress(tok) {
+    if (tok !== playToken) return;
+    lastProgressAt = Date.now();
+    startedOk = true;
+    stallCount = 0;
+    try { if (startTimer) clearTimeout(startTimer); } catch (_) {}
+    startTimer = null;
+  }
+
+  function healthStall(tok, cam, reason = "stall") {
+    if (tok !== playToken) return;
+    if (!autoskip) return;
+
+    stallCount++;
+    // si hay demasiados stalls => fuera
+    if (stallCount >= MAX_STALLS) {
+      healthFail(tok, cam, `stall_${reason}`);
+      return;
+    }
+
+    try { if (stallTimer) clearTimeout(stallTimer); } catch (_) {}
+    stallTimer = setTimeout(() => {
+      if (tok !== playToken) return;
+      const age = Date.now() - (lastProgressAt || 0);
+      if (age >= STALL_TIMEOUT_MS) healthFail(tok, cam, `stall_timeout_${reason}`);
+    }, STALL_TIMEOUT_MS);
+  }
+
+  function healthExpectStart(tok, cam, kind = "media") {
+    healthReset();
+    if (!autoskip) return;
+    startTimer = setTimeout(() => {
+      if (tok !== playToken) return;
+      // si nunca hubo progreso real -> fail
+      if (!startedOk) healthFail(tok, cam, `${kind}_start_timeout`);
+    }, START_TIMEOUT_MS);
+  }
+
+  function healthFail(tok, cam, reason) {
+    if (tok !== playToken) return;
+    if (!autoskip) return;
+
+    const id = cam?.id;
+    if (id) markBad(id, reason);
+
+    // Refiltramos para no volver a caer en la misma rota enseguida
+    applyFilters();
+    idx = idx % Math.max(1, cams.length);
+
+    showFallback(cam, "Stream/imagen no disponible. Saltando…");
+    setTimeout(() => nextCam(String(reason || "fail")), 900);
+  }
+
   function clearMedia() {
+    healthReset();
+
     if (imgTimer) { clearInterval(imgTimer); imgTimer = null; }
     try { if (hls) { hls.destroy(); hls = null; } } catch (_) {}
 
-    try { if (frame) frame.src = "about:blank"; } catch (_) {}
+    try { if (frame) { frame.onload = null; frame.src = "about:blank"; } } catch (_) {}
+
     try {
       if (video) {
+        video.onplaying = null;
+        video.oncanplay = null;
+        video.onloadeddata = null;
+        video.ontimeupdate = null;
+        video.onstalled = null;
+        video.onwaiting = null;
+        video.onerror = null;
+
         video.pause();
         video.removeAttribute("src");
         video.load();
       }
     } catch (_) {}
-    try { if (img) img.removeAttribute("src"); } catch (_) {}
 
-    try { if (img) img.onerror = null; } catch (_) {}
-    try { if (video) video.onerror = null; } catch (_) {}
+    try {
+      if (img) {
+        img.onload = null;
+        img.onerror = null;
+        img.removeAttribute("src");
+      }
+    } catch (_) {}
   }
 
   function setHud(cam) {
@@ -398,83 +526,142 @@
   }
 
   function playCam(cam) {
+    if (!cam) {
+      showFallback({ originUrl: "#" }, "Cam inválida. Saltando…");
+      setTimeout(() => nextCam("invalid_cam"), 500);
+      return;
+    }
+
     clearMedia();
     setHud(cam);
 
     startRound(effectiveSeconds(cam));
     resetVoteForNewCam();
 
+    // nuevo token de reproducción (para invalidar callbacks viejos)
+    playToken++;
+    const tok = playToken;
+
     if (cam.kind === "youtube") {
       showOnly("youtube");
 
+      // watchdog: esperamos al menos al onload del iframe
+      healthExpectStart(tok, cam, "youtube");
+
       const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
       const src =
-        `${base}/embed/${encodeURIComponent(cam.youtubeId)}`
-        + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`;
+        `${base}/embed/${encodeURIComponent(cam.youtubeId || "")}`
+        + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`
+        + `&enablejsapi=1`; // (no garantiza error detect, pero ayuda compat)
 
-      if (frame) frame.src = src;
+      if (!cam.youtubeId) {
+        healthFail(tok, cam, "youtube_missing_id");
+        return;
+      }
+
+      if (frame) {
+        frame.onload = () => healthProgress(tok);
+        frame.src = src;
+      } else {
+        healthFail(tok, cam, "youtube_no_iframe");
+        return;
+      }
+
       postState();
       return;
     }
 
     if (cam.kind === "image") {
       showOnly("image");
+
+      // watchdog: esperamos al onload de la imagen
+      healthExpectStart(tok, cam, "image");
+
       const refreshMs = Math.max(5000, (cam.refreshMs | 0) || 60000);
 
       const setSnap = () => {
-        const u = cam.url;
+        const u = cam.url || "";
+        if (!u) { healthFail(tok, cam, "image_no_url"); return; }
         const sep = (u.indexOf("?") >= 0) ? "&" : "?";
         if (img) img.src = `${u}${sep}t=${Date.now()}`;
       };
 
+      if (img) {
+        img.onload = () => healthProgress(tok);
+
+        img.onerror = () => {
+          if (!autoskip) return;
+          img.onerror = null;
+          healthFail(tok, cam, "image_error");
+        };
+      }
+
       setSnap();
       imgTimer = setInterval(setSnap, refreshMs);
 
-      if (autoskip && img) {
-        img.onerror = () => {
-          img.onerror = null;
-          showFallback(cam, "Imagen no disponible (error). Saltando…");
-          setTimeout(() => nextCam("img_error"), 900);
-        };
-      }
       postState();
       return;
     }
 
     if (cam.kind === "hls") {
       showOnly("hls");
-      const url = cam.url;
+
+      const url = cam.url || "";
       const Hls = g.Hls;
 
-      if (video && video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = url;
+      if (!url || !video) {
+        healthFail(tok, cam, "hls_no_url_or_video");
+        return;
+      }
+
+      // watchdog de arranque
+      healthExpectStart(tok, cam, "hls");
+
+      // video health signals
+      video.onloadeddata = () => healthProgress(tok);
+      video.oncanplay = () => { healthProgress(tok); safePlayVideo(); };
+      video.onplaying = () => healthProgress(tok);
+      video.ontimeupdate = () => healthProgress(tok);
+
+      video.onwaiting = () => healthStall(tok, cam, "waiting");
+      video.onstalled = () => healthStall(tok, cam, "stalled");
+      video.onerror = () => healthFail(tok, cam, "video_error");
+
+      if (video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl")) {
+        // Safari / iOS / algunos navegadores
+        try { video.src = url; } catch (_) {}
         safePlayVideo();
-      } else if (video && Hls && Hls.isSupported && Hls.isSupported()) {
-        hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
-        hls.loadSource(url);
-        hls.attachMedia(video);
-
-        hls.on(Hls.Events.ERROR, (_ev, data) => {
-          if (!autoskip) return;
-          if (data && data.fatal) {
-            showFallback(cam, "Stream HLS no disponible. Saltando…");
-            setTimeout(() => nextCam("hls_fatal"), 900);
-          }
-        });
-
-        video.addEventListener("canplay", () => safePlayVideo(), { once: true });
-      } else {
-        showFallback(cam, "HLS no soportado aquí.");
-        if (autoskip) setTimeout(() => nextCam("hls_unsupported"), 900);
+        postState();
+        return;
       }
 
-      if (autoskip && video) {
-        video.onerror = () => {
-          video.onerror = null;
-          showFallback(cam, "Stream no disponible (error). Saltando…");
-          setTimeout(() => nextCam("vid_error"), 900);
-        };
+      // Hls.js
+      if (Hls && Hls.isSupported && Hls.isSupported()) {
+        try {
+          hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+
+          hls.on(Hls.Events.ERROR, (_ev, data) => {
+            if (!autoskip) return;
+            if (data && data.fatal) {
+              healthFail(tok, cam, `hls_fatal_${data.type || "err"}`);
+            }
+          });
+
+          // si parsea manifest, es buena señal (no siempre significa reproducción)
+          hls.on(Hls.Events.MANIFEST_PARSED, () => healthProgress(tok));
+        } catch (_) {
+          healthFail(tok, cam, "hls_exception");
+          return;
+        }
+
+        postState();
+        return;
       }
+
+      showFallback(cam, "HLS no soportado aquí.");
+      if (autoskip) setTimeout(() => healthFail(tok, cam, "hls_unsupported"), 700);
       postState();
       return;
     }
@@ -541,6 +728,11 @@
     idx = 0;
     modeAdfree = false;
     autoskip = true;
+
+    // NO borramos BAD (cooldown) aquí a propósito: evita “loop” en cams rotas
+    // Si quieres borrarlo manual:
+    // localStorage.removeItem(BAD_KEY);
+
     applyFilters();
     setFit("cover");
     setRoundMins(5);
@@ -605,7 +797,7 @@
     if (bgmEnabled) bgmNext();
   });
 
-  // ───────────────────────── Chat Overlay (bonito) ─────────────────────────
+  // ───────────────────────── Chat Overlay ─────────────────────────
   let chatEnabled = !!P.chat;
   let chatHideCommands = !!P.chatHideCommands;
   let chatMax = P.chatMax | 0;
@@ -613,7 +805,7 @@
 
   let chatRoot = null;
   let chatList = null;
-  let chatItems = []; // {el, ts}
+  let chatItems = [];
 
   function injectChatStylesOnce() {
     if (document.getElementById("rlcChatStyles")) return;
@@ -693,9 +885,6 @@
       chatRoot.id = "rlcChatRoot";
       chatRoot.className = "rlcChatRoot";
       document.body.appendChild(chatRoot);
-    } else {
-      // si venía con inline style="display:none", lo limpiamos cuando activemos
-      try { /* noop */ } catch (_) {}
     }
 
     chatList = document.getElementById("rlcChatList");
@@ -743,7 +932,6 @@
 
     if (isHiddenChatCommand(text)) return;
 
-    // Asegura visible (por si CSS externo lo escondía)
     chatRoot.classList.add("chat--on");
     try { chatRoot.style.display = ""; } catch (_) {}
 
@@ -793,8 +981,8 @@
   let cmdYes = new Set(["!next","!cam"]);
   let cmdNo = new Set(["!stay","!keep"]);
 
-  let voteSessionActive = false; // overlay visible (lead + vote)
-  let votePhase = "idle";        // "lead" | "vote" | "idle"
+  let voteSessionActive = false;
+  let votePhase = "idle";
   let leadEndsAt = 0;
   let voteEndsAt = 0;
 
@@ -1014,7 +1202,7 @@
     const text = String(msg || "").trim();
     if (!text) return;
 
-    // CHAT overlay (filtra comandos)
+    // CHAT overlay
     if (chatEnabled && twitchChannel) {
       const name = (displayName || user || "chat").trim();
       if (!isHiddenChatCommand(text)) chatAdd(name, text);
@@ -1156,7 +1344,7 @@
 
         voteUiSec = voteLeadSec + voteWindowSec;
 
-        if (payload?.stayMins != null) stayMins = clamp(parseInt(payload?.stayMins, 10) || stayMins, 1, 60);
+        if (payload?.stayMins != null) stayMins = clamp(parseInt(payload?.stayMins, 10) || stayMins, 1, 120);
         parseVoteCmds(payload?.cmd || "!next,!cam|!stay,!keep");
 
         if (payload?.chat != null || payload?.chatOverlay != null) chatSetEnabled(!!(payload?.chat ?? payload?.chatOverlay));
@@ -1272,9 +1460,7 @@
       return;
     }
 
-    // VOTO AUTO (timing real):
-    // - pre-aviso empieza cuando rem <= (voteAt + lead)
-    // - voto empieza cuando rem <= voteAt
+    // VOTO AUTO
     if (voteEnabled && twitchChannel) {
       ensureIrc();
 
@@ -1282,13 +1468,10 @@
         const startAt = clamp(voteAtSec | 0, 5, 600);
         const leadMax = clamp(voteLeadSec | 0, 0, 30);
 
-        // si ya estamos "tarde" (rem <= voteAt) -> votación directa (sin lead)
         if (rem > 0 && rem <= startAt) {
           voteTriggeredForSegment = true;
           voteStartSequence(voteWindowSec, 0);
-        }
-        // si estamos en ventana de aviso -> lead dinámico para que el voto empiece EXACTO en voteAt
-        else {
+        } else {
           const triggerLead = Math.min((startAt + leadMax) | 0, segmentSeconds | 0);
           if (rem > 0 && rem <= triggerLead) {
             voteTriggeredForSegment = true;
@@ -1373,7 +1556,7 @@
       voteAtSec = clamp((st.voteAtSec | 0) || voteAtSec, 5, 600);
       voteLeadSec = clamp((st.voteLeadSec | 0) || voteLeadSec, 0, 30);
       voteUiSec = clamp((st.voteUiSec | 0) || (voteLeadSec + voteWindowSec), 0, 300);
-      stayMins = clamp((st.stayMins | 0) || stayMins, 1, 60);
+      stayMins = clamp((st.stayMins | 0) || stayMins, 1, 120);
       if (st.voteCmd) parseVoteCmds(st.voteCmd);
 
       // Chat restore (P.chat explícito manda)
