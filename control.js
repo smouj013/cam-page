@@ -3,12 +3,20 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
+  // Guard anti doble carga
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V211";
+  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+
   const BUS = "rlc_bus_v1";
   const CMD_KEY = "rlc_cmd_v1";
   const STATE_KEY = "rlc_state_v1";
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const num = (v, fallback) => {
+    const n = parseFloat(String(v ?? "").replace(",", "."));
+    return Number.isFinite(n) ? n : fallback;
+  };
 
   const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
 
@@ -18,7 +26,7 @@
   }
   const P = parseParams();
 
-  // UI
+  // ───────────────────────── UI ─────────────────────────
   const ctlStatus = qs("#ctlStatus");
   const ctlNowTitle = qs("#ctlNowTitle");
   const ctlNowPlace = qs("#ctlNowPlace");
@@ -70,16 +78,22 @@
   const ctlVoteStart = qs("#ctlVoteStart");
   const ctlVoteApply = qs("#ctlVoteApply");
 
+  // ✅ Nuevos (opcionales) / ya en tu HTML actualizado
+  const ctlStayMins = qs("#ctlStayMins");     // minutos de “mantener” antes de re-votar
+  const ctlYtCookies = qs("#ctlYtCookies");   // youtube.com con cookies/sesión
+  const ctlVoteLead = qs("#ctlVoteLead");     // segundos de “pre-aviso” antes de abrir la votación real
+
   // Data
   const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
   const bgmList = Array.isArray(g.BGM_LIST) ? g.BGM_LIST.slice() : [];
   let lastState = null;
+  let lastSeenAt = 0;
 
   function fmtMMSS(sec) {
     sec = Math.max(0, sec | 0);
     const m = (sec / 60) | 0;
     const s = sec - m * 60;
-    return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
   function sendCmd(cmd, payload = {}) {
@@ -107,7 +121,7 @@
 
     ctlSelect.innerHTML = "";
     for (const cam of allCams) {
-      const hay = `${cam?.title||""} ${cam?.place||""} ${cam?.source||""}`.toLowerCase();
+      const hay = `${cam?.title || ""} ${cam?.place || ""} ${cam?.source || ""}`.toLowerCase();
       if (f && !hay.includes(f)) continue;
       const opt = document.createElement("option");
       opt.value = cam.id;
@@ -130,7 +144,7 @@
       const t = bgmList[i];
       const opt = document.createElement("option");
       opt.value = String(i);
-      opt.textContent = t?.title ? t.title : `Track ${i+1}`;
+      opt.textContent = t?.title ? t.title : `Track ${i + 1}`;
       ctlBgmTrack.appendChild(opt);
     }
   }
@@ -154,10 +168,15 @@
     }
   }
 
+  // ✅ Construye la URL del stream (index.html) desde el panel
+  // Incluye: stayMins + ytCookies + voteLead
   function streamUrlFromHere() {
     const u = new URL(location.href);
+
+    // si estás en control.html -> index.html
     u.pathname = u.pathname.replace(/control\.html$/i, "index.html");
 
+    // base
     u.searchParams.set("mins", String(clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120)));
     u.searchParams.set("fit", ctlFit?.value || "cover");
     u.searchParams.set("hud", (ctlHud?.value === "off") ? "0" : "1");
@@ -168,23 +187,52 @@
     if (ctlAutoskip?.value === "off") u.searchParams.set("autoskip", "0");
     else u.searchParams.delete("autoskip");
 
-    // votación
+    // voto
     if (ctlVoteOn?.value === "on") u.searchParams.set("vote", "1");
     else u.searchParams.delete("vote");
 
-    if (ctlTwitchChannel?.value) u.searchParams.set("twitch", ctlTwitchChannel.value.trim().replace(/^@/,""));
+    const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+    if (ch) u.searchParams.set("twitch", ch);
+    else u.searchParams.delete("twitch");
 
     u.searchParams.set("voteOverlay", (ctlVoteOverlay?.value === "off") ? "0" : "1");
     u.searchParams.set("voteWindow", String(clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60)));
-    u.searchParams.set("voteAt", String(clamp(parseInt(ctlVoteAt?.value || "25", 10) || 25, 5, 120)));
+
+    // ✅ por defecto 60 (1 min antes del final)
+    const voteAt = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 120);
+    u.searchParams.set("voteAt", String(voteAt));
+
     if (ctlVoteCmd?.value) u.searchParams.set("voteCmd", ctlVoteCmd.value.trim());
 
-    // bgm (solo como “preferencias iniciales”; luego se controla por panel)
+    // ✅ pre-aviso (overlay aparece Xs antes de iniciar votación real)
+    if (ctlVoteLead) {
+      const lead = clamp(parseInt(ctlVoteLead.value || "5", 10) || 5, 0, 30);
+      u.searchParams.set("voteLead", String(lead));
+    }
+
+    // ✅ stayMins
+    if (ctlStayMins) {
+      const sm = clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120);
+      u.searchParams.set("stayMins", String(sm));
+    }
+
+    // ✅ ytCookies (cookies/sesión)
+    if (ctlYtCookies) {
+      let on = false;
+      if (ctlYtCookies.type === "checkbox") on = !!ctlYtCookies.checked;
+      else {
+        const v = String(ctlYtCookies.value || "").toLowerCase();
+        on = (v === "on" || v === "1" || v === "true" || v === "yes");
+      }
+      u.searchParams.set("ytCookies", on ? "1" : "0");
+    }
+
+    // bgm (preferencias iniciales)
     if (ctlBgmOn?.value === "on") u.searchParams.set("bgm", "1");
     else u.searchParams.delete("bgm");
     if (ctlBgmVol?.value != null) u.searchParams.set("bgmVol", String(ctlBgmVol.value));
 
-    // key (si está en control, la propagamos)
+    // key
     if (P.key) u.searchParams.set("key", P.key);
     else u.searchParams.delete("key");
 
@@ -193,9 +241,11 @@
 
   function applyState(st) {
     lastState = st;
+    lastSeenAt = Date.now();
 
     setStatus("Conectado", true);
 
+    // now
     if (ctlNowTitle) ctlNowTitle.textContent = st?.cam?.title || "—";
     if (ctlNowPlace) ctlNowPlace.textContent = st?.cam?.place || "—";
     if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS(st?.remaining ?? 0);
@@ -206,6 +256,7 @@
       ctlOrigin.style.opacity = st?.cam?.originUrl ? "1" : ".65";
     }
 
+    // transport
     if (ctlPlay) ctlPlay.textContent = st?.playing ? "⏸" : "▶";
     if (ctlMins && st?.mins) ctlMins.value = String(st.mins);
     if (ctlFit && st?.fit) ctlFit.value = st.fit;
@@ -214,27 +265,74 @@
     if (ctlAutoskip) ctlAutoskip.value = st?.autoskip ? "on" : "off";
     if (ctlAdfree) ctlAdfree.value = st?.adfree ? "on" : "off";
 
-    // BGM state
+    // BGM
     if (ctlBgmOn) ctlBgmOn.value = st?.bgm?.enabled ? "on" : "off";
     if (ctlBgmVol && typeof st?.bgm?.vol === "number") ctlBgmVol.value = String(st.bgm.vol);
     if (ctlBgmTrack && st?.bgm?.idx != null) ctlBgmTrack.value = String(st.bgm.idx | 0);
     if (ctlBgmNow) {
       const name = st?.bgm?.track || "";
-      ctlBgmNow.textContent = name ? `Now: ${name} · ${st?.bgm?.playing ? "playing" : "paused"}` : "—";
+      ctlBgmNow.textContent = name
+        ? `Now: ${name} · ${st?.bgm?.playing ? "playing" : "paused"}`
+        : "—";
     }
 
-    // Vote state
-    if (ctlTwitchChannel && typeof st?.vote?.channel === "string") {
-      if (!ctlTwitchChannel.value) ctlTwitchChannel.value = st.vote.channel;
+    // Vote state (tolerante)
+    const vote = st?.vote || {};
+    if (ctlTwitchChannel && typeof vote?.channel === "string") {
+      if (!ctlTwitchChannel.value) ctlTwitchChannel.value = vote.channel;
     }
-    if (ctlVoteOn) ctlVoteOn.value = st?.vote?.enabled ? "on" : "off";
-    if (ctlVoteOverlay) ctlVoteOverlay.value = st?.vote?.overlay ? "on" : "off";
-    if (ctlVoteWindow && st?.vote?.windowSec) ctlVoteWindow.value = String(st.vote.windowSec | 0);
-    if (ctlVoteAt && st?.vote?.voteAtSec) ctlVoteAt.value = String(st.vote.voteAtSec | 0);
-    if (ctlVoteCmd && typeof st?.vote?.cmd === "string") ctlVoteCmd.value = st.vote.cmd || ctlVoteCmd.value;
+    if (ctlVoteOn) ctlVoteOn.value = vote?.enabled ? "on" : "off";
+    if (ctlVoteOverlay) ctlVoteOverlay.value = vote?.overlay ? "on" : "off";
+    if (ctlVoteWindow && vote?.windowSec != null) ctlVoteWindow.value = String(vote.windowSec | 0);
+
+    // ✅ voto a 1 minuto (60) por defecto
+    if (ctlVoteAt) {
+      const vAt = (vote?.voteAtSec != null) ? (vote.voteAtSec | 0) : 60;
+      if (!ctlVoteAt.value) ctlVoteAt.value = String(vAt);
+      else ctlVoteAt.value = String(clamp(parseInt(ctlVoteAt.value, 10) || vAt, 5, 120));
+    }
+
+    if (ctlVoteCmd && typeof vote?.cmd === "string") ctlVoteCmd.value = vote.cmd || ctlVoteCmd.value;
+
+    // ✅ stayMins
+    if (ctlStayMins) {
+      const sm =
+        (vote?.stayMins != null) ? (vote.stayMins | 0)
+        : (vote?.staySec != null) ? Math.max(1, Math.round((vote.staySec | 0) / 60))
+        : null;
+
+      if (sm != null) ctlStayMins.value = String(clamp(sm, 1, 120));
+      else if (!ctlStayMins.value) ctlStayMins.value = "5";
+    }
+
+    // ✅ pre-aviso (leadSec)
+    if (ctlVoteLead) {
+      const lead =
+        (vote?.leadSec != null) ? (vote.leadSec | 0)
+        : (vote?.preSec != null) ? (vote.preSec | 0)
+        : null;
+
+      if (lead != null) ctlVoteLead.value = String(clamp(lead, 0, 30));
+      else if (!ctlVoteLead.value) ctlVoteLead.value = "5";
+    }
+
+    // ✅ ytCookies (si el app.js lo publica)
+    if (ctlYtCookies) {
+      const ytCookies =
+        (st?.youtube?.cookies != null) ? !!st.youtube.cookies
+        : (st?.ytCookies != null) ? !!st.ytCookies
+        : null;
+
+      if (ctlYtCookies.type === "checkbox") {
+        if (ytCookies != null) ctlYtCookies.checked = ytCookies;
+      } else {
+        if (ytCookies != null) ctlYtCookies.value = ytCookies ? "on" : "off";
+        else if (!ctlYtCookies.value) ctlYtCookies.value = "on";
+      }
+    }
   }
 
-  // Receive state
+  // Receive state (BroadcastChannel)
   if (bc) {
     bc.onmessage = (ev) => {
       const msg = ev?.data;
@@ -254,10 +352,28 @@
     } catch (_) {}
   }, 500);
 
-  // UI events
+  // Watchdog: si no hay señal reciente
+  setInterval(() => {
+    const now = Date.now();
+    if (!lastSeenAt) {
+      setStatus("Esperando player…", false);
+      return;
+    }
+    const age = now - lastSeenAt;
+    if (age > 2500) setStatus("Sin señal (¿stream abierto?)", false);
+  }, 700);
+
+  // ───────────────────────── UI events ─────────────────────────
   function wire() {
     syncList("");
     syncBgmTracks();
+
+    // defaults razonables (sin pisar si ya hay)
+    if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
+    if (ctlVoteWindow && !ctlVoteWindow.value) ctlVoteWindow.value = "20";
+    if (ctlStayMins && !ctlStayMins.value) ctlStayMins.value = "5";
+    if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "5";
+    if (ctlYtCookies && !ctlYtCookies.value && ctlYtCookies.type !== "checkbox") ctlYtCookies.value = "on";
 
     if (ctlSearch) ctlSearch.addEventListener("input", () => syncList(ctlSearch.value));
 
@@ -269,7 +385,9 @@
     if (ctlApplyMins) ctlApplyMins.addEventListener("click", () => sendCmd("SET_MINS", { mins: ctlMins.value }));
     if (ctlFit) ctlFit.addEventListener("change", () => sendCmd("SET_FIT", { fit: ctlFit.value }));
     if (ctlHud) ctlHud.addEventListener("change", () => sendCmd("SET_HUD", { on: ctlHud.value !== "off" }));
-    if (ctlHudDetails) ctlHudDetails.addEventListener("change", () => sendCmd("SET_HUD_DETAILS", { collapsed: ctlHudDetails.value === "collapsed" }));
+    if (ctlHudDetails) ctlHudDetails.addEventListener("change", () =>
+      sendCmd("SET_HUD_DETAILS", { collapsed: ctlHudDetails.value === "collapsed" })
+    );
     if (ctlAutoskip) ctlAutoskip.addEventListener("change", () => sendCmd("SET_AUTOSKIP", { on: ctlAutoskip.value === "on" }));
     if (ctlAdfree) ctlAdfree.addEventListener("change", () => sendCmd("SET_ADFREE", { on: ctlAdfree.value === "on" }));
     if (ctlReset) ctlReset.addEventListener("click", () => sendCmd("RESET"));
@@ -290,15 +408,17 @@
       if (id) sendCmd("BAN_ID", { id });
     });
 
+    // Preview
     if (ctlPreviewOn) {
       ctlPreviewOn.addEventListener("change", () => {
         const on = ctlPreviewOn.value === "on";
-        ctlPreviewWrap.classList.toggle("hidden", !on);
+        if (ctlPreviewWrap) ctlPreviewWrap.classList.toggle("hidden", !on);
         if (on && ctlPreview) ctlPreview.src = streamUrlFromHere();
         else if (ctlPreview) ctlPreview.src = "about:blank";
       });
     }
 
+    // Copy URL
     if (ctlCopyStreamUrl) {
       ctlCopyStreamUrl.addEventListener("click", async () => {
         const url = streamUrlFromHere();
@@ -310,7 +430,7 @@
 
     // BGM controls
     if (ctlBgmOn) ctlBgmOn.addEventListener("change", () => sendCmd("BGM_ENABLE", { on: ctlBgmOn.value === "on" }));
-    if (ctlBgmVol) ctlBgmVol.addEventListener("input", () => sendCmd("BGM_VOL", { vol: parseFloat(ctlBgmVol.value || "0") || 0 }));
+    if (ctlBgmVol) ctlBgmVol.addEventListener("input", () => sendCmd("BGM_VOL", { vol: num(ctlBgmVol.value, 0) }));
     if (ctlBgmTrack) ctlBgmTrack.addEventListener("change", () => sendCmd("BGM_TRACK", { index: parseInt(ctlBgmTrack.value || "0", 10) || 0 }));
     if (ctlBgmPrev) ctlBgmPrev.addEventListener("click", () => sendCmd("BGM_PREV"));
     if (ctlBgmPlay) ctlBgmPlay.addEventListener("click", () => sendCmd("BGM_PLAYPAUSE"));
@@ -319,15 +439,26 @@
 
     // Vote controls
     function voteApply() {
+      const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 120);
+      const windowSec = clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60);
+
+      const stayMins = ctlStayMins ? clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120) : undefined;
+      const leadSec = ctlVoteLead ? clamp(parseInt(ctlVoteLead.value || "5", 10) || 5, 0, 30) : 5;
+
       sendCmd("TWITCH_SET", {
-        channel: (ctlTwitchChannel?.value || "").trim().replace(/^@/,""),
+        channel: (ctlTwitchChannel?.value || "").trim().replace(/^@/, ""),
         enabled: (ctlVoteOn?.value === "on"),
         overlay: (ctlVoteOverlay?.value !== "off"),
-        windowSec: clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60),
-        voteAtSec: clamp(parseInt(ctlVoteAt?.value || "25", 10) || 25, 5, 120),
-        cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim()
+        windowSec,
+        voteAtSec,
+        cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim(),
+
+        // ✅ nuevos (si el app.js lo entiende)
+        stayMins,
+        leadSec
       });
     }
+
     if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
     if (ctlVoteStart) ctlVoteStart.addEventListener("click", () => {
       const w = clamp(parseInt(ctlVoteWindow?.value || "20", 10) || 20, 5, 60);

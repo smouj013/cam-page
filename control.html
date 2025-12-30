@@ -191,7 +191,28 @@
 
         <label class="row">
           <span>Auto (a falta)</span>
-          <input id="ctlVoteAt" class="input" type="number" min="5" max="120" step="1" value="25" />
+          <input id="ctlVoteAt" class="input" type="number" min="5" max="120" step="1" value="60" />
+        </label>
+
+        <!-- ✅ NUEVO: pre-aviso -->
+        <label class="row">
+          <span>Pre-aviso (s)</span>
+          <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" />
+        </label>
+
+        <!-- ✅ NUEVO: re-voto si STAY -->
+        <label class="row">
+          <span>STAY → re-voto (min)</span>
+          <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" />
+        </label>
+
+        <!-- ✅ NUEVO: YouTube cookies/sesión -->
+        <label class="row">
+          <span>YouTube cookies</span>
+          <select id="ctlYtCookies" class="select">
+            <option value="on">ON (sesión)</option>
+            <option value="off">OFF (nocookie)</option>
+          </select>
         </label>
 
         <label class="row">
