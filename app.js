@@ -30,8 +30,7 @@
     // ✅ autoskip: solo para errores reales en image/hls (por defecto ON)
     const autoskip = (u.searchParams.get("autoskip") ?? "1") !== "0";
 
-    // ✅ modo "adfree": filtra YouTube para evitar ads de YouTube (legítimo)
-    //    si no tienes HLS/image suficientes, se quedará con lo que haya.
+    // ✅ modo "adfree": filtra YouTube
     const mode = (u.searchParams.get("mode") || "").toLowerCase(); // "adfree" | ""
     return { mins, admin, hideHud, fit, seedStr, debug, autoskip, mode };
   }
@@ -93,6 +92,10 @@
   const hudIndex = qs("#hudIndex");
   const progressBar = qs("#progressBar");
 
+  // ✅ nuevo: toggle HUD compacto
+  const hudToggle = qs("#hudToggle");
+  const hudDetails = qs("#hudDetails");
+
   const adminPanel = qs("#admin");
   const btnPrev = qs("#btnPrev");
   const btnToggle = qs("#btnToggle");
@@ -103,31 +106,48 @@
   const P = parseParams();
   const ROUND_SECONDS = P.mins * 60;
   const STORAGE_KEY = "random_live_cams_state_v1";
+  const HUD_COLLAPSE_KEY = "random_live_cams_hud_collapsed_v1";
 
   const rnd = makeRng(P.seedStr);
 
   let cams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
 
-  // ✅ modo adfree: elimina youtube
   if (P.mode === "adfree") {
     cams = cams.filter(c => c && c.kind && c.kind !== "youtube");
   }
 
   let idx = 0;
   let playing = true;
-
-  // Timer por deadline (anti “se acelera / se corta”)
   let roundEndsAt = 0;
 
-  // Timers
   let tickTimer = null;
   let imgTimer = null;
 
-  // HLS
   let hls = null;
-
-  // locks
   let switching = false;
+
+  // ───────────────────────── HUD compact helpers ─────────────────────────
+  function getHudCollapsed() {
+    try {
+      const raw = localStorage.getItem(HUD_COLLAPSE_KEY);
+      if (raw === null || raw === undefined || raw === "") return true; // ✅ por defecto colapsado
+      return raw === "1";
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function setHudCollapsed(v) {
+    const collapsed = !!v;
+    hud.classList.toggle("hud--collapsed", collapsed);
+    if (hudToggle) {
+      hudToggle.textContent = collapsed ? "▸" : "▾";
+      hudToggle.setAttribute("aria-expanded", String(!collapsed));
+      hudToggle.setAttribute("aria-label", collapsed ? "Expandir HUD" : "Contraer HUD");
+    }
+    if (hudDetails) hudDetails.style.display = collapsed ? "none" : "";
+    try { localStorage.setItem(HUD_COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (_) {}
+  }
 
   // ───────────────────────── UI helpers ─────────────────────────
   function showOnly(kind) {
@@ -152,9 +172,7 @@
   function clearMedia() {
     if (imgTimer) { clearInterval(imgTimer); imgTimer = null; }
 
-    try {
-      if (hls) { hls.destroy(); hls = null; }
-    } catch (_) {}
+    try { if (hls) { hls.destroy(); hls = null; } } catch (_) {}
 
     try { frame.src = "about:blank"; } catch (_) {}
     try {
@@ -164,7 +182,6 @@
     } catch (_) {}
     try { img.removeAttribute("src"); } catch (_) {}
 
-    // limpia handlers (para que no se acumulen)
     try { img.onerror = null; } catch (_) {}
     try { video.onerror = null; } catch (_) {}
   }
@@ -222,7 +239,6 @@
 
     if (cam.kind === "youtube") {
       showOnly("youtube");
-      // IMPORTANTE: aquí NO hacemos autoskip por "timeout" para evitar cortes falsos.
       const src =
         `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cam.youtubeId)}`
         + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`;
@@ -309,7 +325,6 @@
     if (P.debug) console.log("[cams] next:", reason, idx, cams[idx]);
     playCam(cams[idx]);
 
-    // libera lock
     setTimeout(() => { switching = false; }, 250);
   }
 
@@ -328,7 +343,6 @@
     playing = !playing;
     if (btnToggle) btnToggle.textContent = playing ? "⏸" : "▶";
 
-    // si reanudas, recomputa deadline manteniendo remaining actual
     if (playing) {
       const rem = remainingSeconds();
       startRound(rem || 1);
@@ -364,18 +378,14 @@
   // ───────────────────────── Tick ─────────────────────────
   function tick() {
     if (!playing) return;
-
     const rem = remainingSeconds();
     setCountdownUI();
-
-    if (rem <= 0) {
-      nextCam("timer");
-    }
+    if (rem <= 0) nextCam("timer");
   }
 
   function startTick() {
     if (tickTimer) clearInterval(tickTimer);
-    tickTimer = setInterval(tick, 250); // más suave, y no “salta” por drift
+    tickTimer = setInterval(tick, 250);
   }
 
   // ───────────────────────── Boot ─────────────────────────
@@ -390,10 +400,18 @@
     if (P.admin) adminPanel.classList.remove("hidden");
     if (P.hideHud) hud.classList.add("hidden");
 
-    // mezcla inicial para random
+    // HUD colapsado por defecto (pero recordable)
+    setHudCollapsed(getHudCollapsed());
+    if (hudToggle) {
+      hudToggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        const collapsed = hud.classList.contains("hud--collapsed");
+        setHudCollapsed(!collapsed);
+      });
+    }
+
     shuffle(cams, rnd);
 
-    // carga estado previo
     const st = loadState();
     if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length) {
       idx = st.idx | 0;
@@ -409,22 +427,23 @@
     playCam(cams[idx]);
     startTick();
 
-    // admin
     if (btnNext) btnNext.addEventListener("click", () => nextCam("admin"));
     if (btnPrev) btnPrev.addEventListener("click", () => prevCam());
     if (btnToggle) btnToggle.addEventListener("click", () => togglePlay());
     if (btnShuffle) btnShuffle.addEventListener("click", () => reshuffle());
 
-    // teclado
     window.addEventListener("keydown", (e) => {
       const k = (e.key || "").toLowerCase();
       if (k === " ") { e.preventDefault(); togglePlay(); }
       else if (k === "n") { nextCam("key"); }
       else if (k === "p") { prevCam(); }
       else if (k === "h") { hud.classList.toggle("hidden"); }
+      else if (k === "i") { // ✅ i = expand/contrae
+        const collapsed = hud.classList.contains("hud--collapsed");
+        setHudCollapsed(!collapsed);
+      }
     });
 
-    // guardado
     setInterval(saveState, 2000);
     document.addEventListener("visibilitychange", () => { if (document.hidden) saveState(); });
   }

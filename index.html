@@ -12,7 +12,7 @@
   <!-- hls.js (solo se usa si añades cámaras HLS .m3u8 en cams.js) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <script>window.APP_VERSION = "1.0.0";</script>
+  <script>window.APP_VERSION = "1.0.1";</script>
 </head>
 <body>
   <main id="app" class="app">
@@ -51,40 +51,45 @@
         </div>
       </div>
 
-      <!-- HUD -->
-      <div id="hud" class="hud">
-        <div class="hudTop">
-          <div class="badge" id="badgeLive">EN DIRECTO</div>
-          <div class="hudTitle" id="hudTitle">Cargando cámara…</div>
-        </div>
-
-        <div class="hudRow">
-          <div class="hudLabel">Lugar</div>
-          <div class="hudValue" id="hudPlace">—</div>
-        </div>
-
-        <div class="hudRow">
-          <div class="hudLabel">Fuente</div>
-          <div class="hudValue">
-            <span id="hudSource">—</span>
-            <span class="dot">•</span>
-            <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
+      <!-- HUD (compacto) -->
+      <div id="hud" class="hud hud--collapsed">
+        <div class="hudBar">
+          <div class="hudLeft">
+            <span class="badge" id="badgeLive">EN DIRECTO</span>
+            <span class="hudTitle" id="hudTitle">Cargando cámara…</span>
           </div>
-        </div>
 
-        <div class="hudRow">
-          <div class="hudLabel">Siguiente en</div>
-          <div class="hudValue mono" id="hudCountdown">05:00</div>
+          <div class="hudRight">
+            <span class="mono hudCountdown" id="hudCountdown">05:00</span>
+            <button id="hudToggle" class="hudToggle" type="button" aria-label="Expandir HUD" aria-expanded="false">▸</button>
+          </div>
         </div>
 
         <div class="progress">
           <div id="progressBar" class="progressBar"></div>
         </div>
 
-        <div class="hudFooter">
-          <span id="hudIndex">—</span>
-          <span class="dot">•</span>
-          <span class="muted">Teclas: Espacio pausa · N siguiente · H HUD</span>
+        <!-- Detalles (se ocultan en collapsed) -->
+        <div id="hudDetails" class="hudDetails">
+          <div class="hudRow">
+            <div class="hudLabel">Lugar</div>
+            <div class="hudValue" id="hudPlace">—</div>
+          </div>
+
+          <div class="hudRow">
+            <div class="hudLabel">Fuente</div>
+            <div class="hudValue">
+              <span id="hudSource">—</span>
+              <span class="dot">•</span>
+              <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
+            </div>
+          </div>
+
+          <div class="hudFooter">
+            <span id="hudIndex">—</span>
+            <span class="dot">•</span>
+            <span class="muted">Espacio pausa · N siguiente · H HUD</span>
+          </div>
         </div>
       </div>
 
