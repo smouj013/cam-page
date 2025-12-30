@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="es" data-theme="dark">
+<html lang="es" data-theme="dark" data-ui="neo-atlas">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
   <meta name="format-detection" content="telephone=no" />
@@ -10,6 +10,7 @@
   <title>Random Live Cams</title>
   <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts y ads notice." />
 
+  <!-- Tip: si OBS cachea, añade ?v=2.0.7 al CSS al publicar -->
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
@@ -19,103 +20,128 @@
 </head>
 
 <body class="mode-player">
-  <main id="app" class="app">
+  <main id="app" class="app" role="application" aria-label="Random Live Cams">
     <section id="stage" class="stage" aria-label="Reproductor de cámara">
-      <!-- YouTube -->
-      <iframe
-        id="frame"
-        class="media hidden"
-        title="Live Cam"
-        referrerpolicy="strict-origin-when-cross-origin"
-        allow="autoplay; encrypted-media; picture-in-picture"
-        allowfullscreen
-      ></iframe>
+      <!-- ───────────────────────── Media Layer ───────────────────────── -->
+      <div class="layer layer-media" aria-hidden="true">
+        <!-- YouTube -->
+        <iframe
+          id="frame"
+          class="media hidden"
+          title="Live Cam"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowfullscreen
+        ></iframe>
 
-      <!-- HLS -->
-      <video
-        id="video"
-        class="media hidden"
-        autoplay
-        muted
-        playsinline
-        webkit-playsinline
-      ></video>
+        <!-- HLS -->
+        <video
+          id="video"
+          class="media hidden"
+          autoplay
+          muted
+          playsinline
+          webkit-playsinline
+        ></video>
 
-      <!-- Imagen -->
-      <img id="img" class="media hidden" alt="Webcam snapshot" />
+        <!-- Imagen -->
+        <img id="img" class="media hidden" alt="Webcam snapshot" />
+      </div>
 
-      <!-- Fallback -->
+      <!-- ───────────────────────── Fallback Layer ───────────────────────── -->
       <div id="fallback" class="fallback hidden" role="status" aria-live="polite">
         <div class="fallbackCard">
           <div class="fallbackTitle">No se puede mostrar esta cámara aquí</div>
-          <div class="fallbackText">Puede estar offline o bloquear el embed. Saltando…</div>
+          <div class="fallbackText">
+            Puede estar offline o bloquear el embed. Saltando…
+          </div>
           <a id="fallbackLink" class="btn" href="#" target="_blank" rel="noopener">Ver en origen</a>
         </div>
       </div>
 
-      <!-- HUD -->
-      <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
-        <div class="hudBar">
-          <div class="hudLeft">
-            <div class="badge" id="badgeLive">LIVE</div>
-            <div class="hudTitle" id="hudTitle">Cargando…</div>
-          </div>
-          <div class="hudRight">
-            <div class="hudCountdown mono" id="hudCountdown">05:00</div>
-            <button id="hudToggle" class="hudToggle" type="button" aria-label="Expandir HUD" aria-expanded="false">▸</button>
-          </div>
-        </div>
+      <!-- ───────────────────────── Overlay Layer ───────────────────────── -->
+      <div class="layer layer-ui" aria-label="Overlays">
+        <!-- HUD -->
+        <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
+          <div class="hudBar">
+            <div class="hudLeft">
+              <div class="badge" id="badgeLive">LIVE</div>
+              <div class="hudTitle" id="hudTitle">Cargando…</div>
+            </div>
 
-        <div class="progress" aria-hidden="true">
-          <div id="progressBar" class="progressBar"></div>
-        </div>
-
-        <div id="hudDetails" class="hudDetails">
-          <div class="hudRow">
-            <div class="hudLabel">Lugar</div>
-            <div class="hudValue" id="hudPlace">—</div>
-          </div>
-
-          <div class="hudRow">
-            <div class="hudLabel">Fuente</div>
-            <div class="hudValue">
-              <span id="hudSource">—</span>
-              <span class="dot">•</span>
-              <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
+            <div class="hudRight">
+              <div class="hudCountdown mono" id="hudCountdown">05:00</div>
+              <button
+                id="hudToggle"
+                class="hudToggle"
+                type="button"
+                aria-label="Expandir HUD"
+                aria-expanded="false"
+              >▸</button>
             </div>
           </div>
 
-          <div class="hudFooter">
-            <span id="hudIndex">—</span>
-            <span class="dot">•</span>
-            <span class="muted">Espacio pausa · N siguiente · P anterior · H HUD · I detalles · C chat</span>
+          <div class="progress" aria-hidden="true">
+            <div id="progressBar" class="progressBar"></div>
+          </div>
+
+          <div id="hudDetails" class="hudDetails">
+            <div class="hudRow">
+              <div class="hudLabel">Lugar</div>
+              <div class="hudValue" id="hudPlace">—</div>
+            </div>
+
+            <div class="hudRow">
+              <div class="hudLabel">Fuente</div>
+              <div class="hudValue">
+                <span id="hudSource">—</span>
+                <span class="dot">•</span>
+                <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
+              </div>
+            </div>
+
+            <div class="hudFooter">
+              <span id="hudIndex">—</span>
+              <span class="dot">•</span>
+              <span class="muted">
+                Espacio pausa · N siguiente · P anterior · H HUD · I detalles · C chat
+              </span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- VOTE overlay -->
-      <div id="voteBox" class="vote hidden" aria-label="Votación del chat" aria-live="polite">
-        <div class="voteTop">
-          <div class="voteTitle">VOTA</div>
-          <div class="voteTime mono" id="voteTime">00:20</div>
-        </div>
-        <div class="voteHint" id="voteHint">Votación en…</div>
-
-        <div class="voteBars" aria-hidden="false">
-          <div class="voteBar">
-            <div class="voteBarFill" id="voteYes"></div>
-            <div class="voteBarLabel">NEXT <span id="voteYesN">0</span></div>
+        <!-- VOTE overlay -->
+        <div id="voteBox" class="vote hidden" aria-label="Votación del chat" aria-live="polite">
+          <div class="voteTop">
+            <div class="voteTitle">VOTA</div>
+            <div class="voteTime mono" id="voteTime">00:20</div>
           </div>
-          <div class="voteBar">
-            <div class="voteBarFill no" id="voteNo"></div>
-            <div class="voteBarLabel">STAY <span id="voteNoN">0</span></div>
+
+          <div class="voteHint" id="voteHint">Votación en…</div>
+
+          <div class="voteBars" aria-hidden="false">
+            <div class="voteBar">
+              <div class="voteBarFill" id="voteYes"></div>
+              <div class="voteBarLabel">
+                <span>NEXT</span>
+                <span id="voteYesN">0</span>
+              </div>
+            </div>
+
+            <div class="voteBar">
+              <div class="voteBarFill no" id="voteNo"></div>
+              <div class="voteBarLabel">
+                <span>STAY</span>
+                <span id="voteNoN">0</span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Chat overlay (JS lo gestiona; si no existe, lo crea igual) -->
-      <div id="rlcChatRoot" class="rlcChatRoot" aria-label="Chat overlay" aria-live="polite" style="display:none">
-        <div id="rlcChatList"></div>
+        <!-- Chat overlay (JS lo gestiona; si no existe, lo crea igual) -->
+        <div id="rlcChatRoot" class="rlcChatRoot" aria-label="Chat overlay" aria-live="polite" style="display:none">
+          <div id="rlcChatList"></div>
+        </div>
       </div>
 
       <!-- Audio BGM -->
