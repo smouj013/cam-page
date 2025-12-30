@@ -1,8 +1,13 @@
+/* app.js — RLC Player v2.0.1 PRO (VOTE 1min + STAY 5min + YT cookies option)
+   ✅ Voto automático cuando falte 1 minuto del segmento actual
+   ✅ Si "mantener" gana / empate / 0 votos -> reinicia segmento a 5 min y vuelve a votar al faltar 1 min
+   ✅ ytCookies=1 -> usa youtube.com/embed (para sesión Premium); default nocookie
+*/
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V200_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V201_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // Bus
@@ -34,6 +39,11 @@
       // seguridad por key (si no hay, acepta todo)
       key: u.searchParams.get("key") || "",
 
+      // YouTube embed mode
+      // ytCookies=1 -> youtube.com/embed (usa sesión/cookies del entorno: OBS/navegador)
+      // ytCookies=0 -> youtube-nocookie.com/embed
+      ytCookies: (u.searchParams.get("ytCookies") ?? "0") === "1",
+
       // BGM init
       bgm: (u.searchParams.get("bgm") ?? "0") === "1",
       bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.25") || 0.25, 0, 1),
@@ -41,8 +51,14 @@
       // Vote init
       vote: (u.searchParams.get("vote") ?? "0") === "1",
       twitch: (u.searchParams.get("twitch") || "").trim().replace(/^@/,""),
-      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 20, 5, 60),
-      voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "61", 10) || 25, 5, 120),
+      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "20", 10) || 20, 5, 60),
+
+      // “voteAt” ahora significa “segundos antes del final” (default 60)
+      voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
+
+      // Si se mantiene: duración del siguiente “segmento” en minutos (default 5)
+      stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 60),
+
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
       voteOverlay: (u.searchParams.get("voteOverlay") ?? "1") !== "0"
     };
@@ -150,7 +166,13 @@
   // Playback state
   let idx = 0;
   let playing = true;
+
+  // base “mins” para cams (cuando NO estamos en segmento forzado de stay)
   let roundSeconds = P.mins * 60;
+
+  // segmento actual (lo que se muestra en el contador)
+  let segmentSeconds = roundSeconds;
+
   let roundEndsAt = 0;
   let pausedRemaining = 0;
 
@@ -167,15 +189,15 @@
   let currentFit = "cover";
   function setFit(mode) {
     currentFit = (mode === "contain") ? "contain" : "cover";
-    frame.style.objectFit = currentFit;
-    video.style.objectFit = currentFit;
-    img.style.objectFit = currentFit;
+    try { if (frame) frame.style.objectFit = currentFit; } catch (_) {}
+    try { if (video) video.style.objectFit = currentFit; } catch (_) {}
+    try { if (img) img.style.objectFit = currentFit; } catch (_) {}
   }
 
   // HUD collapse/hide
   function setHudCollapsed(v) {
     const collapsed = !!v;
-    hud.classList.toggle("hud--collapsed", collapsed);
+    if (hud) hud.classList.toggle("hud--collapsed", collapsed);
     if (hudToggle) {
       hudToggle.textContent = collapsed ? "▸" : "▾";
       hudToggle.setAttribute("aria-expanded", String(!collapsed));
@@ -188,7 +210,7 @@
 
   function setHudHidden(v) {
     const hidden = !!v;
-    hud.classList.toggle("hidden", hidden);
+    if (hud) hud.classList.toggle("hidden", hidden);
     try { localStorage.setItem(HUD_HIDE_KEY, hidden ? "1" : "0"); } catch (_) {}
     postState();
   }
@@ -196,7 +218,7 @@
   // Timer helpers (con pausa REAL)
   function remainingSeconds() {
     if (!playing) return Math.max(0, pausedRemaining | 0);
-    if (!roundEndsAt) return Math.max(0, roundSeconds | 0);
+    if (!roundEndsAt) return Math.max(0, segmentSeconds | 0);
     const ms = roundEndsAt - Date.now();
     return Math.max(0, Math.ceil(ms / 1000));
   }
@@ -204,19 +226,42 @@
   function setCountdownUI() {
     const rem = remainingSeconds();
     if (hudCountdown) hudCountdown.textContent = fmtMMSS(rem);
-    const denom = Math.max(1, (playing ? (roundSeconds | 0) : Math.max(1, pausedRemaining | 0)));
+    const denom = Math.max(1, (segmentSeconds | 0) || 1);
     const pct = 100 * (1 - (rem / denom));
     if (progressBar) progressBar.style.width = `${clamp(pct, 0, 100).toFixed(2)}%`;
   }
 
+  // VOTE scheduling flags
+  let voteTriggeredForSegment = false;
+
   function startRound(seconds) {
     const s = clamp(seconds | 0, 1, 120 * 60);
+    segmentSeconds = s;
+    voteTriggeredForSegment = false;
+
     if (playing) {
       roundEndsAt = Date.now() + s * 1000;
       pausedRemaining = 0;
     } else {
       roundEndsAt = 0;
       pausedRemaining = s;
+    }
+    setCountdownUI();
+  }
+
+  // arranca un segmento con “total” y “remaining” (para restore)
+  function startRoundWithRemaining(totalSec, remainingSec) {
+    const total = clamp(totalSec | 0, 1, 120 * 60);
+    const rem = clamp(remainingSec | 0, 0, total);
+    segmentSeconds = total;
+    voteTriggeredForSegment = false;
+
+    if (playing) {
+      roundEndsAt = Date.now() + rem * 1000;
+      pausedRemaining = 0;
+    } else {
+      roundEndsAt = 0;
+      pausedRemaining = rem;
     }
     setCountdownUI();
   }
@@ -233,9 +278,9 @@
     } else {
       // resume: reanudar con lo congelado
       playing = true;
-      const rem = Math.max(1, pausedRemaining | 0);
+      const rem = clamp(pausedRemaining | 0, 0, Math.max(1, segmentSeconds | 0));
       pausedRemaining = 0;
-      roundEndsAt = Date.now() + rem * 1000;
+      roundEndsAt = Date.now() + Math.max(1, rem) * 1000;
     }
     setCountdownUI();
     postState();
@@ -245,56 +290,62 @@
 
   // UI helpers
   function showOnly(kind) {
-    frame.classList.add("hidden");
-    video.classList.add("hidden");
-    img.classList.add("hidden");
-    fallback.classList.add("hidden");
+    if (frame) frame.classList.add("hidden");
+    if (video) video.classList.add("hidden");
+    if (img) img.classList.add("hidden");
+    if (fallback) fallback.classList.add("hidden");
 
-    if (kind === "youtube") frame.classList.remove("hidden");
-    else if (kind === "hls") video.classList.remove("hidden");
-    else if (kind === "image") img.classList.remove("hidden");
-    else fallback.classList.remove("hidden");
+    if (kind === "youtube") { if (frame) frame.classList.remove("hidden"); }
+    else if (kind === "hls") { if (video) video.classList.remove("hidden"); }
+    else if (kind === "image") { if (img) img.classList.remove("hidden"); }
+    else { if (fallback) fallback.classList.remove("hidden"); }
   }
 
   function clearMedia() {
     if (imgTimer) { clearInterval(imgTimer); imgTimer = null; }
     try { if (hls) { hls.destroy(); hls = null; } } catch (_) {}
 
-    try { frame.src = "about:blank"; } catch (_) {}
+    try { if (frame) frame.src = "about:blank"; } catch (_) {}
     try {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
+      if (video) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
     } catch (_) {}
-    try { img.removeAttribute("src"); } catch (_) {}
+    try { if (img) img.removeAttribute("src"); } catch (_) {}
 
-    try { img.onerror = null; } catch (_) {}
-    try { video.onerror = null; } catch (_) {}
+    try { if (img) img.onerror = null; } catch (_) {}
+    try { if (video) video.onerror = null; } catch (_) {}
   }
 
   function setHud(cam) {
-    hudTitle.textContent = cam?.title || "Live Cam";
-    hudPlace.textContent = cam?.place || "—";
-    hudSource.textContent = cam?.source || "—";
-    hudOrigin.href = cam?.originUrl || "#";
-    hudOrigin.style.pointerEvents = cam?.originUrl ? "auto" : "none";
-    hudOrigin.style.opacity = cam?.originUrl ? "1" : ".6";
-    if (hudIndex) hudIndex.textContent = `${idx + 1}/${cams.length}`;
+    if (hudTitle) hudTitle.textContent = cam?.title || "Live Cam";
+    if (hudPlace) hudPlace.textContent = cam?.place || "—";
+    if (hudSource) hudSource.textContent = cam?.source || "—";
+    if (hudOrigin) {
+      hudOrigin.href = cam?.originUrl || "#";
+      hudOrigin.style.pointerEvents = cam?.originUrl ? "auto" : "none";
+      hudOrigin.style.opacity = cam?.originUrl ? "1" : ".6";
+    }
+    if (hudIndex) hudIndex.textContent = `${idx + 1}/${Math.max(1, cams.length)}`;
   }
 
   function showFallback(cam, msg) {
     clearMedia();
     showOnly("fallback");
-    const t = fallback.querySelector(".fallbackText");
+    const t = fallback ? fallback.querySelector(".fallbackText") : null;
     if (t) t.textContent = msg || "Saltando…";
-    fallbackLink.href = cam?.originUrl || "#";
-    fallbackLink.style.pointerEvents = cam?.originUrl ? "auto" : "none";
-    fallbackLink.style.opacity = cam?.originUrl ? "1" : ".6";
+    if (fallbackLink) {
+      fallbackLink.href = cam?.originUrl || "#";
+      fallbackLink.style.pointerEvents = cam?.originUrl ? "auto" : "none";
+      fallbackLink.style.opacity = cam?.originUrl ? "1" : ".6";
+    }
   }
 
   async function safePlayVideo() {
     try {
-      const p = video.play();
+      const p = video && video.play ? video.play() : null;
       if (p && typeof p.then === "function") await p;
     } catch (_) {}
   }
@@ -306,17 +357,28 @@
     return roundSeconds;
   }
 
+  function resetVoteForNewCam() {
+    voteTriggeredForSegment = false;
+    voteReset();
+  }
+
   function playCam(cam) {
     clearMedia();
     setHud(cam);
+
+    // segmento nuevo = duración efectiva
     startRound(effectiveSeconds(cam));
+    resetVoteForNewCam();
 
     if (cam.kind === "youtube") {
       showOnly("youtube");
+
+      const base = P.ytCookies ? "https://www.youtube.com" : "https://www.youtube-nocookie.com";
       const src =
-        `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cam.youtubeId)}`
+        `${base}/embed/${encodeURIComponent(cam.youtubeId)}`
         + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1`;
-      frame.src = src;
+
+      if (frame) frame.src = src;
       postState();
       return;
     }
@@ -328,13 +390,13 @@
       const setSnap = () => {
         const u = cam.url;
         const sep = (u.indexOf("?") >= 0) ? "&" : "?";
-        img.src = `${u}${sep}t=${Date.now()}`;
+        if (img) img.src = `${u}${sep}t=${Date.now()}`;
       };
 
       setSnap();
       imgTimer = setInterval(setSnap, refreshMs);
 
-      if (autoskip) {
+      if (autoskip && img) {
         img.onerror = () => {
           img.onerror = null;
           showFallback(cam, "Imagen no disponible (error). Saltando…");
@@ -350,10 +412,10 @@
       const url = cam.url;
       const Hls = g.Hls;
 
-      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      if (video && video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = url;
         safePlayVideo();
-      } else if (Hls && Hls.isSupported()) {
+      } else if (video && Hls && Hls.isSupported && Hls.isSupported()) {
         hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30 });
         hls.loadSource(url);
         hls.attachMedia(video);
@@ -372,7 +434,7 @@
         if (autoskip) setTimeout(() => nextCam("hls_unsupported"), 900);
       }
 
-      if (autoskip) {
+      if (autoskip && video) {
         video.onerror = () => {
           video.onerror = null;
           showFallback(cam, "Stream no disponible (error). Saltando…");
@@ -437,7 +499,7 @@
     banned.add(id);
     try { localStorage.setItem(BAN_KEY, JSON.stringify(Array.from(banned))); } catch (_) {}
     applyFilters();
-    idx = idx % cams.length;
+    idx = idx % Math.max(1, cams.length);
     playCam(cams[idx]);
   }
 
@@ -464,12 +526,12 @@
 
   function bgmSetVol(v) {
     bgmVol = clamp(+v || 0, 0, 1);
-    try { bgmEl.volume = bgmVol; } catch (_) {}
+    try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
     postState();
   }
 
   function bgmLoadTrack(i) {
-    if (!bgmList.length) return;
+    if (!bgmList.length || !bgmEl) return;
     bgmIdx = (i % bgmList.length + bgmList.length) % bgmList.length;
     const t = bgmList[bgmIdx];
     try { bgmEl.src = t.url; bgmEl.load(); } catch (_) {}
@@ -477,7 +539,7 @@
   }
 
   async function bgmPlay() {
-    if (!bgmEnabled || !bgmList.length) return;
+    if (!bgmEnabled || !bgmList.length || !bgmEl) return;
     try {
       if (!bgmEl.src) bgmLoadTrack(bgmIdx);
       const p = bgmEl.play();
@@ -490,7 +552,7 @@
   }
 
   function bgmPause() {
-    try { bgmEl.pause(); } catch (_) {}
+    try { if (bgmEl) bgmEl.pause(); } catch (_) {}
     bgmPlaying = false;
     postState();
   }
@@ -515,7 +577,12 @@
   let voteOverlay = !!P.voteOverlay;
   let twitchChannel = P.twitch || "";
   let voteWindowSec = P.voteWindow;
-  let voteAtSec = P.voteAt;
+
+  // “segundos antes del final” (default 60)
+  let voteTriggerBeforeEndSec = P.voteAt;
+
+  // “si se mantiene, reinicia segmento a X minutos” (default 5)
+  let stayMins = P.stayMins;
 
   let cmdYes = new Set(["!next","!cam"]);
   let cmdNo = new Set(["!stay","!keep"]);
@@ -649,12 +716,28 @@
     renderVote();
   }
 
+  function restartStaySegment() {
+    const sec = clamp((stayMins | 0) * 60, 60, 120 * 60);
+    startRound(sec);                 // ✅ reinicia contador del segmento
+    voteTriggeredForSegment = false; // ✅ volverá a saltar voto al faltar 1 min
+    postState();
+  }
+
   function voteFinish() {
     if (!voteActive) return;
+
     const y = votesYes, n = votesNo;
     voteActive = false;
     renderVote();
-    if (y > n && y > 0) nextCam("vote");
+
+    // ✅ Regla:
+    // - si gana YES (y > n y y > 0) -> NEXT
+    // - si no -> STAY (reinicia segmento 5 min)
+    if (y > n && y > 0) {
+      nextCam("vote_yes");
+    } else {
+      restartStaySegment();
+    }
   }
 
   function renderVote() {
@@ -694,11 +777,13 @@
       idx,
       total: cams.length,
       mins: Math.max(1, (roundSeconds / 60) | 0),
+      segmentSec: segmentSeconds | 0,
       fit: currentFit,
-      hudHidden: hud.classList.contains("hidden"),
-      hudCollapsed: hud.classList.contains("hud--collapsed"),
+      hudHidden: !!hud?.classList?.contains?.("hidden"),
+      hudCollapsed: !!hud?.classList?.contains?.("hud--collapsed"),
       autoskip,
       adfree: modeAdfree,
+      ytCookies: !!P.ytCookies,
       cam: {
         id: cam.id, title: cam.title, place: cam.place, source: cam.source,
         originUrl: cam.originUrl, kind: cam.kind
@@ -718,7 +803,8 @@
         overlay: voteOverlay,
         channel: twitchChannel || "",
         windowSec: voteWindowSec,
-        voteAtSec: voteAtSec,
+        triggerBeforeEndSec: voteTriggerBeforeEndSec,
+        stayMins: stayMins,
         cmd: (P.voteCmd || "!next,!cam|!stay,!keep"),
         active: voteActive,
         yes: votesYes,
@@ -756,7 +842,7 @@
       case "SET_ADFREE":
         modeAdfree = !!payload?.on;
         applyFilters();
-        idx = idx % cams.length;
+        idx = idx % Math.max(1, cams.length);
         playCam(cams[idx]);
         break;
 
@@ -782,7 +868,10 @@
         voteEnabled = !!payload?.enabled;
         voteOverlay = !!payload?.overlay;
         voteWindowSec = clamp(parseInt(payload?.windowSec || voteWindowSec, 10) || voteWindowSec, 5, 60);
-        voteAtSec = clamp(parseInt(payload?.voteAtSec || voteAtSec, 10) || voteAtSec, 5, 120);
+
+        voteTriggerBeforeEndSec = clamp(parseInt(payload?.triggerBeforeEndSec || voteTriggerBeforeEndSec, 10) || voteTriggerBeforeEndSec, 5, 600);
+        stayMins = clamp(parseInt(payload?.stayMins || stayMins, 10) || stayMins, 1, 60);
+
         parseVoteCmds(payload?.cmd || "!next,!cam|!stay,!keep");
         ensureIrc();
         voteReset();
@@ -790,6 +879,8 @@
         break;
 
       case "VOTE_START":
+        // start manual: marca como “ya disparado” para que no se relance cada tick
+        voteTriggeredForSegment = true;
         voteStart(clamp(parseInt(payload?.windowSec || voteWindowSec, 10) || voteWindowSec, 5, 60));
         postState();
         break;
@@ -837,6 +928,7 @@
         remaining: remainingSeconds(),
         playing,
         mins: Math.max(1, (roundSeconds / 60) | 0),
+        segmentSec: segmentSeconds | 0,
         fit: currentFit,
         autoskip: autoskip ? 1 : 0,
         adfree: modeAdfree ? 1 : 0,
@@ -850,8 +942,11 @@
         voteOverlay: voteOverlay ? 1 : 0,
         twitchChannel,
         voteWindowSec,
-        voteAtSec,
+        voteTriggerBeforeEndSec,
+        stayMins,
         voteCmd: P.voteCmd,
+
+        ytCookies: P.ytCookies ? 1 : 0,
 
         ts: Date.now(),
         v: 2
@@ -863,14 +958,19 @@
   function tick() {
     setCountdownUI();
 
-    // voto auto
+    // voto auto: 1 minuto antes del final del segmento actual
     if (voteEnabled && twitchChannel) {
       ensureIrc();
 
-      if (playing && !voteActive) {
+      if (playing && !voteActive && !voteTriggeredForSegment) {
         const rem = remainingSeconds();
-        if (rem > 0 && rem <= voteAtSec) voteStart(voteWindowSec);
+        const trigger = Math.min(voteTriggerBeforeEndSec | 0, segmentSeconds | 0); // por cam/segmento
+        if (rem > 0 && rem <= trigger) {
+          voteTriggeredForSegment = true;
+          voteStart(voteWindowSec);
+        }
       }
+
       if (voteActive) {
         renderVote();
         if (Date.now() >= voteEndsAt) voteFinish();
@@ -933,12 +1033,21 @@
       voteOverlay = (st.voteOverlay ?? 1) !== 0;
       twitchChannel = st.twitchChannel || twitchChannel;
       voteWindowSec = clamp((st.voteWindowSec | 0) || voteWindowSec, 5, 60);
-      voteAtSec = clamp((st.voteAtSec | 0) || voteAtSec, 5, 120);
+      voteTriggerBeforeEndSec = clamp((st.voteTriggerBeforeEndSec | 0) || voteTriggerBeforeEndSec, 5, 600);
+      stayMins = clamp((st.stayMins | 0) || stayMins, 1, 60);
       if (st.voteCmd) parseVoteCmds(st.voteCmd);
 
-      const rem = clamp((st.remaining | 0) || roundSeconds, 1, 120 * 60);
-      if (playing) startRound(rem);
-      else { pausedRemaining = rem; roundEndsAt = 0; setCountdownUI(); }
+      // ytCookies restore (si existe)
+      if (typeof st.ytCookies !== "undefined") {
+        try { P.ytCookies = (st.ytCookies | 0) !== 0; } catch (_) {}
+      }
+
+      // restore segment + remaining
+      const totalSeg = clamp((st.segmentSec | 0) || roundSeconds, 1, 120 * 60);
+      const rem = clamp((st.remaining | 0) || totalSeg, 0, totalSeg);
+
+      startRoundWithRemaining(totalSeg, rem);
+      if (!playing) { pausedRemaining = rem; roundEndsAt = 0; setCountdownUI(); }
     } else {
       idx = 0;
       playing = true;
@@ -948,16 +1057,19 @@
       // init BGM/vote from query
       bgmEnabled = !!P.bgm;
       bgmVol = P.bgmVol;
+
       voteEnabled = !!P.vote;
       voteOverlay = !!P.voteOverlay;
       twitchChannel = P.twitch || "";
       voteWindowSec = P.voteWindow;
-      voteAtSec = P.voteAt;
+      voteTriggerBeforeEndSec = P.voteAt;
+      stayMins = P.stayMins;
+
       parseVoteCmds(P.voteCmd);
     }
 
     // BGM init
-    try { bgmEl.volume = bgmVol; } catch (_) {}
+    try { if (bgmEl) bgmEl.volume = bgmVol; } catch (_) {}
     if (bgmList.length) bgmLoadTrack(bgmIdx);
     if (bgmEnabled && bgmPlaying) bgmPlay();
     if (bgmEnabled && !bgmPlaying) postState();
@@ -971,7 +1083,9 @@
     tickTimer = setInterval(tick, 250);
 
     setInterval(() => { savePlayerState(); postState(); }, 2000);
-    document.addEventListener("visibilitychange", () => { if (document.hidden) { savePlayerState(); postState(); } });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { savePlayerState(); postState(); }
+    });
 
     // Teclas
     window.addEventListener("keydown", (e) => {
