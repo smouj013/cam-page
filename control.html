@@ -103,6 +103,65 @@
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
+      <!-- ✅ NEWS TICKER (CONFIG) -->
+      <div class="card">
+        <div class="cardTitle">Noticias (ticker)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Ticker</span>
+            <select id="ctlTickerOn" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlTickerStatus">Ticker: —</div>
+        </div>
+
+        <label class="row">
+          <span>Idioma</span>
+          <select id="ctlTickerLang" class="select">
+            <option value="auto">AUTO</option>
+            <option value="es">ES</option>
+            <option value="en">EN</option>
+          </select>
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Velocidad (px/s)</span>
+            <input id="ctlTickerSpeed" class="input" type="number" min="20" max="140" step="1" value="55" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0">
+            <span>Refresh (min)</span>
+            <input id="ctlTickerRefresh" class="input" type="number" min="3" max="60" step="1" value="12" inputmode="numeric" />
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0">
+            <span>Offset top (px)</span>
+            <input id="ctlTickerTop" class="input" type="number" min="0" max="120" step="1" value="10" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0">
+            <span>Ocultar en voto</span>
+            <select id="ctlTickerHideOnVote" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <button id="ctlTickerApply" class="btn full" type="button">Aplicar ticker</button>
+          <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
+        </div>
+
+        <div class="hint">
+          ✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>. Gratis (GDELT).
+        </div>
+      </div>
+
       <!-- CAM SELECT -->
       <div class="card">
         <div class="cardTitle">Cambiar cámara</div>
@@ -366,5 +425,8 @@
   <script defer src="./cams.js"></script>
   <script defer src="./music.js"></script>
   <script defer src="./control.js"></script>
+
+  <!-- ✅ NUEVO: panel/config del ticker -->
+  <script defer src="./newsTickerControl.js"></script>
 </body>
 </html>
