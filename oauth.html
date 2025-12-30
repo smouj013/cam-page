@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Twitch OAuth Return</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial; background:#0b0b10; color:#eaeaf0; margin:0; padding:24px;}
+    .card{max-width:860px; margin:0 auto; background:#141424; border:1px solid #2a2a45; border-radius:14px; padding:18px;}
+    h1{margin:0 0 10px; font-size:18px}
+    code,pre{background:#0f0f1a; border:1px solid #2a2a45; border-radius:10px; padding:10px; display:block; overflow:auto; color:#d7d7ff}
+    .row{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
+    button{cursor:pointer; border:0; border-radius:10px; padding:10px 12px; background:#7c3aed; color:white; font-weight:700}
+    button.secondary{background:#2b2b45}
+    .ok{color:#7CFF9B}
+    .bad{color:#FF7C7C}
+    .muted{opacity:.8}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>✅ Twitch OAuth recibido</h1>
+    <p class="muted">Esta página captura el token devuelto por Twitch (fragmento <code>#</code> o <code>?code=</code>).</p>
+
+    <div id="status" class="muted">Leyendo respuesta...</div>
+
+    <h2 style="font-size:14px;margin:14px 0 8px;">Access Token</h2>
+    <pre id="tokenBox">(vacío)</pre>
+
+    <h2 style="font-size:14px;margin:14px 0 8px;">Scopes</h2>
+    <pre id="scopeBox">(vacío)</pre>
+
+    <div class="row">
+      <button id="copyBtn">Copiar token</button>
+      <button id="closeBtn" class="secondary">Cerrar</button>
+    </div>
+
+    <p class="muted" style="margin-top:14px">
+      ⚠️ No publiques este token en GitHub. Guárdalo en local (localStorage / tu panel admin / config privada).
+    </p>
+  </div>
+
+<script>
+(() => {
+  const status = document.getElementById("status");
+  const tokenBox = document.getElementById("tokenBox");
+  const scopeBox = document.getElementById("scopeBox");
+  const copyBtn = document.getElementById("copyBtn");
+  const closeBtn = document.getElementById("closeBtn");
+
+  // 1) Implicit flow: token viene en el fragment (#access_token=...)
+  const hash = (location.hash || "").startsWith("#") ? location.hash.slice(1) : "";
+  const hp = new URLSearchParams(hash);
+
+  const accessToken = hp.get("access_token") || "";
+  const scope = hp.get("scope") || "";
+  const state = hp.get("state") || "";
+  const tokenType = hp.get("token_type") || "";
+
+  // 2) Authorization code flow: code viene en query (?code=...)
+  const qp = new URLSearchParams(location.search);
+  const code = qp.get("code") || "";
+  const err = qp.get("error") || "";
+  const errDesc = qp.get("error_description") || "";
+
+  function showOK(msg){ status.innerHTML = `<span class="ok">${msg}</span>`; }
+  function showBAD(msg){ status.innerHTML = `<span class="bad">${msg}</span>`; }
+
+  if (err) {
+    showBAD(`Error OAuth: ${err} — ${decodeURIComponent(errDesc || "")}`);
+  } else if (accessToken) {
+    showOK(`Token recibido (type: ${tokenType || "bearer"}) ${state ? "· state=" + state : ""}`);
+    tokenBox.textContent = accessToken;
+    scopeBox.textContent = decodeURIComponent(scope || "(sin scope)");
+
+    // Guarda local (si quieres leerlo desde tu app/panel)
+    try {
+      localStorage.setItem("twitch_oauth_access_token", accessToken);
+      localStorage.setItem("twitch_oauth_scope", scope);
+      localStorage.setItem("twitch_oauth_token_type", tokenType);
+    } catch (_) {}
+
+    // Si abriste esto con window.open desde tu panel, devuelve el token
+    try {
+      if (window.opener && window.opener !== window) {
+        window.opener.postMessage({
+          type: "TWITCH_OAUTH_TOKEN",
+          access_token: accessToken,
+          scope: decodeURIComponent(scope || ""),
+          token_type: tokenType || "bearer"
+        }, location.origin);
+      }
+    } catch (_) {}
+  } else if (code) {
+    // Solo informativo (este flujo requiere canjear el code por token en un servidor)
+    showOK("Recibido ?code=. Ahora debes canjearlo por token en /oauth2/token (flujo Authorization Code).");
+    tokenBox.textContent = code;
+    scopeBox.textContent = "(scope viene al canjear el code)";
+  } else {
+    showBAD("No llegó access_token ni code. Revisa que el link use el redirect_uri correcto.");
+  }
+
+  copyBtn.addEventListener("click", async () => {
+    const t = tokenBox.textContent.trim();
+    if (!t || t === "(vacío)") return;
+    try { await navigator.clipboard.writeText(t); showOK("Token copiado al portapapeles ✅"); }
+    catch { showBAD("No se pudo copiar (bloqueo del navegador). Copia manualmente."); }
+  });
+
+  closeBtn.addEventListener("click", () => window.close());
+})();
+</script>
+</body>
+</html>
