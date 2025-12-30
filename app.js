@@ -1,21 +1,28 @@
-/* app.js — RLC Player v2.0.6 PRO (ADS NOTICE + TWITCH ALERTS + YT HEALTH)
+/* app.js — RLC Player v2.0.7 PRO (ADS NOTICE + TWITCH ALERTS + YT HEALTH + OWNER DETECT)
    ✅ Autoskip hard (start timeout + stall timeout + cooldown)
    ✅ Ads overlay: AD_NOTICE / AD_BEGIN / AD_CLEAR
    ✅ IRC anon: chat overlay + votos + alerts (subs/gifts/raids)
    ✅ FIX: si la votación termina con 0 votos O EMPATE → NEXT
    ✅ YouTube: handshake postMessage (mejor “video unavailable”)
+   ✅ NEW: Detecta tu cuenta (owner) si hay ?key=... y no se pasa ?twitch=...
+         - Prioridad: URL twitch > saved state > control bot cfg (rlc_bot_cfg_v1) > fallback globaleyetv
+         - Solo auto-activa chat/vote/alerts por defecto en modo owner (con key) si no estaban explícitos
+   ✅ NEW: En AD_NOTICE/AD_BEGIN, si hay key (owner) emite BOT_SAY (para que control.js mande el mensaje al chat)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V206_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V207_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Bus ─────────────────────────
   const BUS = "rlc_bus_v1";
   const CMD_KEY = "rlc_cmd_v1";
   const STATE_KEY = "rlc_state_v1";
+
+  // Config del bot (solo lectura aquí) — control.html lo escribe
+  const BOT_STORE_KEY = "rlc_bot_cfg_v1";
 
   // ───────────────────────── Health / fail cache ─────────────────────────
   const BAD_KEY = "rlc_bad_ids_v1";
@@ -24,6 +31,9 @@
   const START_TIMEOUT_MS = 12000;
   const STALL_TIMEOUT_MS = 15000;
   const MAX_STALLS = 2;
+
+  // Owner defaults
+  const OWNER_DEFAULT_TWITCH = "globaleyetv";
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -46,11 +56,21 @@
   function parseParams() {
     const u = new URL(location.href);
 
-    const twitch = (u.searchParams.get("twitch") || "").trim().replace(/^@/, "");
+    const twitchRaw = (u.searchParams.get("twitch") || "").trim().replace(/^@/, "");
+    const twitchExplicit = (u.searchParams.get("twitch") != null);
 
     const chatParam = u.searchParams.get("chat") ?? u.searchParams.get("chatOverlay");
     const chatExplicit = (chatParam != null);
-    const chat = chatExplicit ? parseBoolParam(chatParam, true) : !!twitch;
+    const chat = chatExplicit ? parseBoolParam(chatParam, true) : !!twitchRaw;
+
+    const voteParam = u.searchParams.get("vote");
+    const voteExplicit = (voteParam != null);
+
+    const alertsParam = u.searchParams.get("alerts");
+    const alertsExplicit = (alertsParam != null);
+
+    const adsParam = (u.searchParams.get("ads") ?? u.searchParams.get("ad"));
+    const adsExplicit = (adsParam != null);
 
     return {
       mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
@@ -70,8 +90,10 @@
       bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.25") || 0.25, 0, 1),
 
       // Vote init
-      vote: (u.searchParams.get("vote") ?? "0") === "1",
-      twitch,
+      vote: voteExplicit ? (voteParam === "1") : ((u.searchParams.get("vote") ?? "0") === "1"),
+      voteExplicit,
+      twitch: twitchRaw,
+      twitchExplicit,
 
       voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
@@ -92,13 +114,15 @@
       chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
       chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
 
-      // Alerts (subs/gifts/raids via IRC + externos via cmd/eventsWs si lo usas)
-      alerts: (u.searchParams.get("alerts") ?? "1") !== "0",
+      // Alerts
+      alerts: alertsExplicit ? ((alertsParam ?? "1") !== "0") : ((u.searchParams.get("alerts") ?? "1") !== "0"),
+      alertsExplicit,
       alertsMax: clamp(parseInt(u.searchParams.get("alertsMax") || "3", 10) || 3, 1, 6),
       alertsTtl: clamp(parseInt(u.searchParams.get("alertsTtl") || "8", 10) || 8, 3, 20),
 
       // Ads overlay
-      ads: (u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1") !== "0",
+      ads: adsExplicit ? ((adsParam ?? "1") !== "0") : ((u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1") !== "0"),
+      adsExplicit,
       adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
       adShowDuring: (u.searchParams.get("adShowDuring") ?? "1") !== "0",
       adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
@@ -178,6 +202,8 @@
 
   const P = parseParams();
   const rnd = makeRng(P.seed);
+
+  const OWNER_MODE = !!P.key; // “si hay key, es tu enlace (OBS/control)”
 
   // State keys
   const STORAGE_KEY = "rlc_player_state_v2";
@@ -268,6 +294,7 @@
   let pausedRemaining = 0;
 
   let tickTimer = null;
+  let saveTimer = null;
   let imgTimer = null;
   let hls = null;
   let switching = false;
@@ -275,6 +302,26 @@
   // Comms
   const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   let lastCmdTs = 0;
+
+  // Helper: enviar comando al bus (para control/bot)
+  function busSendCmd(cmd, payload = {}) {
+    const msg = { type: "cmd", ts: Date.now(), cmd: String(cmd || ""), payload: payload || {} };
+    if (P.key) msg.key = P.key;
+    try { localStorage.setItem(CMD_KEY, JSON.stringify(msg)); } catch (_) {}
+    try { if (bc) bc.postMessage(msg); } catch (_) {}
+  }
+
+  function readBotCfgChannel() {
+    try {
+      const raw = localStorage.getItem(BOT_STORE_KEY);
+      if (!raw) return "";
+      const cfg = JSON.parse(raw);
+      if (!cfg || typeof cfg !== "object") return "";
+      const cand =
+        (cfg.twitch || cfg.channel || cfg.twitchChannel || cfg.username || cfg.user || cfg.login || cfg.name || "");
+      return String(cand || "").trim().replace(/^@/, "");
+    } catch (_) { return ""; }
+  }
 
   // Fit
   let currentFit = "cover";
@@ -767,6 +814,24 @@
     if (adRoot) adRoot.classList.add("on");
   }
 
+  function botAnnounceAd(kind, seconds) {
+    // Solo owner (con key) — el bot real vive en control.js
+    if (!OWNER_MODE) return;
+    if (!adChatText) return;
+
+    let msg = adChatText;
+    const sec = clamp(seconds | 0, 0, 3600);
+
+    if (kind === "notice" && sec > 0) {
+      msg = `${adChatText} (en ${fmtMMSS(sec)})`;
+    } else if (kind === "begin") {
+      msg = `🔴 Anuncio en curso… ${adChatText}`;
+    }
+
+    // cmd para que control.js (bot) lo mande al chat
+    busSendCmd("BOT_SAY", { text: msg, channel: String(twitchChannel || "").trim() });
+  }
+
   function adStartLead(secondsLeft) {
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
@@ -782,6 +847,9 @@
     if (adBarEl) adBarEl.style.width = "0%";
 
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
+
+    // NEW: mensaje chat (via bot en control)
+    botAnnounceAd("notice", left);
   }
 
   function adStartLive(durationSec) {
@@ -799,6 +867,9 @@
     if (adBarEl) adBarEl.style.width = "0%";
 
     if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
+
+    // NEW: mensaje chat (via bot en control)
+    botAnnounceAd("begin", d);
   }
 
   function adTick() {
@@ -1287,6 +1358,7 @@
   let voteUiSec = (P.voteUi > 0) ? P.voteUi : (voteLeadSec + voteWindowSec);
   let stayMins = P.stayMins;
 
+  let voteCmdStr = String(P.voteCmd || "!next,!cam|!stay,!keep").trim();
   let cmdYes = new Set(["!next","!cam"]);
   let cmdNo = new Set(["!stay","!keep"]);
 
@@ -1299,13 +1371,14 @@
   let voters = new Set();
 
   function parseVoteCmds(str) {
-    const parts = String(str || "").split("|");
+    voteCmdStr = String(str || "!next,!cam|!stay,!keep").trim() || "!next,!cam|!stay,!keep";
+    const parts = voteCmdStr.split("|");
     const a = (parts[0] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
     const b = (parts[1] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
     cmdYes = new Set(a.length ? a : ["!next","!cam"]);
     cmdNo = new Set(b.length ? b : ["!stay","!keep"]);
   }
-  parseVoteCmds(P.voteCmd);
+  parseVoteCmds(voteCmdStr);
 
   function unescapeTagValue(v) {
     const s = String(v || "");
@@ -1647,7 +1720,7 @@
         leadSec: voteLeadSec,
         uiSec: voteUiSec,
         stayMins: stayMins,
-        cmd: (P.voteCmd || "!next,!cam|!stay,!keep"),
+        cmd: voteCmdStr,
         sessionActive: voteSessionActive,
         phase: votePhase,
         yes: votesYes,
@@ -1737,7 +1810,7 @@
         voteUiSec = voteLeadSec + voteWindowSec;
 
         if (payload?.stayMins != null) stayMins = clamp(parseInt(payload?.stayMins, 10) || stayMins, 1, 120);
-        parseVoteCmds(payload?.cmd || "!next,!cam|!stay,!keep");
+        parseVoteCmds(payload?.cmd || voteCmdStr || "!next,!cam|!stay,!keep");
 
         if (payload?.chat != null || payload?.chatOverlay != null) chatSetEnabled(!!(payload?.chat ?? payload?.chatOverlay));
         if (payload?.chatHideCommands != null) chatHideCommands = !!payload.chatHideCommands;
@@ -1771,7 +1844,6 @@
       }
 
       case "AD_NOTICE": {
-        // leadSec inmediato
         const lead = (payload?.leadSec != null) ? (payload.leadSec | 0) : adLeadDefaultSec;
         adTotalLead = Math.max(1, clamp(lead | 0, 0, 3600));
         adStartLead(adTotalLead);
@@ -1858,7 +1930,7 @@
         voteLeadSec,
         voteUiSec,
         stayMins,
-        voteCmd: P.voteCmd,
+        voteCmd: voteCmdStr,
 
         chatEnabled: chatEnabled ? 1 : 0,
         chatHideCommands: chatHideCommands ? 1 : 0,
@@ -1875,7 +1947,7 @@
         adChatText,
 
         ts: Date.now(),
-        v: 206
+        v: 207
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
     } catch (_) {}
@@ -1971,6 +2043,26 @@
     shuffle(cams, rnd);
 
     const st = loadPlayerState();
+
+    // ─────────────── OWNER DETECT: canal twitch automático ───────────────
+    // Prioridad: URL twitch > saved state > bot cfg > fallback (solo si OWNER_MODE)
+    let inferredTwitch = String(P.twitch || "").trim().replace(/^@/, "");
+    if (!inferredTwitch) inferredTwitch = String(st?.twitchChannel || "").trim().replace(/^@/, "");
+    if (!inferredTwitch) inferredTwitch = readBotCfgChannel();
+
+    if (!inferredTwitch && OWNER_MODE) inferredTwitch = OWNER_DEFAULT_TWITCH;
+
+    // Si URL no traía twitch, aplicamos inferencia
+    if (!P.twitchExplicit && inferredTwitch) twitchChannel = inferredTwitch;
+
+    // Auto-defaults solo en owner mode si no se pasaron explícitos y no hay state que los defina
+    if (OWNER_MODE && twitchChannel) {
+      if (!P.chatExplicit && (st?.chatEnabled == null)) chatEnabled = true;
+      if (!P.voteExplicit && (st?.voteEnabled == null)) { voteEnabled = true; voteOverlay = true; }
+      if (!P.alertsExplicit && (st?.alertsEnabled == null)) alertsEnabled = true;
+    }
+
+    // ─────────────── Restore ───────────────
     if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length) {
       idx = st.idx | 0;
       playing = !!st.playing;
@@ -1991,7 +2083,9 @@
       // Vote restore
       voteEnabled = (st.voteEnabled ?? 0) !== 0 || voteEnabled;
       voteOverlay = (st.voteOverlay ?? 1) !== 0;
-      twitchChannel = st.twitchChannel || twitchChannel;
+      // twitchChannel ya inferido arriba si hacía falta
+      if (st.twitchChannel && !P.twitchExplicit) twitchChannel = String(st.twitchChannel || twitchChannel).trim().replace(/^@/, "");
+
       voteWindowSec = clamp((st.voteWindowSec | 0) || voteWindowSec, 5, 180);
       voteAtSec = clamp((st.voteAtSec | 0) || voteAtSec, 5, 600);
       voteLeadSec = clamp((st.voteLeadSec | 0) || voteLeadSec, 0, 30);
@@ -2013,7 +2107,7 @@
       else chatTtlSec = clamp((st.chatTtlSec | 0) || chatTtlSec, 5, 30);
 
       // Alerts restore
-      alertsEnabled = (st.alertsEnabled ?? 1) !== 0;
+      alertsEnabled = (st.alertsEnabled ?? (alertsEnabled ? 1 : 0)) !== 0;
 
       // Ads restore
       adsEnabled = (st.adsEnabled ?? (P.ads ? 1 : 0)) !== 0;
@@ -2037,27 +2131,28 @@
       bgmEnabled = !!P.bgm;
       bgmVol = P.bgmVol;
 
-      voteEnabled = !!P.vote;
-      voteOverlay = !!P.voteOverlay;
-      twitchChannel = P.twitch || "";
+      voteEnabled = !!P.vote || voteEnabled;
+      voteOverlay = !!P.voteOverlay || voteOverlay;
+      if (P.twitchExplicit) twitchChannel = P.twitch || twitchChannel;
+
       voteWindowSec = P.voteWindow;
       voteAtSec = P.voteAt;
       voteLeadSec = P.voteLead;
       voteUiSec = (P.voteUi > 0) ? P.voteUi : (voteLeadSec + voteWindowSec);
       stayMins = P.stayMins;
 
-      chatEnabled = !!P.chat;
+      chatEnabled = (P.chatExplicit ? !!P.chat : chatEnabled);
       chatHideCommands = !!P.chatHideCommands;
       chatMax = P.chatMax | 0;
       chatTtlSec = P.chatTtl | 0;
 
-      alertsEnabled = !!P.alerts;
+      alertsEnabled = !!P.alerts || alertsEnabled;
       adsEnabled = !!P.ads;
       adLeadDefaultSec = P.adLead | 0;
       adShowDuring = !!P.adShowDuring;
       adChatText = String(P.adChatText || adChatText);
 
-      parseVoteCmds(P.voteCmd);
+      parseVoteCmds(P.voteCmd || voteCmdStr);
     }
 
     // chat UI + activar
@@ -2085,7 +2180,9 @@
     if (tickTimer) clearInterval(tickTimer);
     tickTimer = setInterval(tick, 250);
 
-    setInterval(() => { savePlayerState(); postState(); }, 2000);
+    if (saveTimer) clearInterval(saveTimer);
+    saveTimer = setInterval(() => { savePlayerState(); postState(); }, 2000);
+
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) { savePlayerState(); postState(); }
     });
@@ -2101,7 +2198,7 @@
       else if (k === "c") chatSetEnabled(!chatEnabled);
     });
 
-    postState({ ready: true });
+    postState({ ready: true, owner: OWNER_MODE ? 1 : 0 });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

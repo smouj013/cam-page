@@ -1,8 +1,9 @@
-/* control.js — RLC Control v2.1.4 (BOT IRC + ADS + SAFE APPLY)
+/* control.js — RLC Control v2.1.5 (BOT IRC + ADS + SAFE APPLY + EVENTS BRIDGE)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
    ✅ Bot NO se incluye en URL (seguridad)
+   ✅ NUEVO: Events bridge Player -> Control (ads auto detectados => bot escribe)
 */
 (() => {
   "use strict";
@@ -10,12 +11,15 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V214";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V215";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS = "rlc_bus_v1";
   const CMD_KEY = "rlc_cmd_v1";
   const STATE_KEY = "rlc_state_v1";
+
+  // ✅ NUEVO: eventos Player -> Control
+  const EVT_KEY = "rlc_evt_v1";
 
   const BOT_STORE_KEY = "rlc_bot_cfg_v1"; // solo control.html (no player)
 
@@ -121,6 +125,9 @@
   const bgmList = Array.isArray(g.BGM_LIST) ? g.BGM_LIST.slice() : [];
   let lastState = null;
   let lastSeenAt = 0;
+
+  // ✅ eventos
+  let lastEventTs = 0;
 
   function fmtMMSS(sec) {
     sec = Math.max(0, sec | 0);
@@ -436,6 +443,22 @@
     saveBotCfg(botCfg);
   }
 
+  function botSayIfEnabled(text) {
+    const botOn = (ctlBotOn?.value === "on");
+    const sayOnAd = (ctlBotSayOnAd?.value !== "off");
+    if (!botOn || !sayOnAd) return false;
+    const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+    if (!ch) return false;
+    const msg = String(text || "").trim();
+    if (!msg) return false;
+    return bot.say(msg, ch);
+  }
+
+  function keyOk(msg) {
+    if (!P.key) return true;
+    return (msg && msg.key === P.key);
+  }
+
   // ✅ URL del stream (index.html) desde el panel
   function streamUrlFromHere() {
     const u = new URL(location.href);
@@ -585,12 +608,42 @@
     if (ctlAdsOn && st?.ads?.enabled != null && !isEditing(ctlAdsOn)) ctlAdsOn.value = st.ads.enabled ? "on" : "off";
   }
 
-  // Receive state
+  // ✅ NUEVO: manejar eventos Player -> Control
+  function handleEvent(evt) {
+    if (!evt || evt.type !== "event") return;
+    if (!keyOk(evt)) return;
+
+    const ts = evt.ts | 0;
+    if (ts && ts <= (lastEventTs | 0)) return;
+    lastEventTs = ts || Date.now();
+
+    const name = String(evt.name || "").toUpperCase();
+    const payload = evt.payload || {};
+
+    // Ads detectados automáticamente por el player
+    if (name === "AD_AUTO_NOTICE") {
+      const leadSec = (payload.leadSec | 0) || 0;
+      const msg = (ctlAdChatText?.value || "").trim() || `⚠️ Anuncio en ${leadSec || 30}s… ¡gracias por apoyar el canal! 💜`;
+      // Solo avisamos (NO iniciamos overlay aquí: el player ya lo hace)
+      botSayIfEnabled(msg);
+      return;
+    }
+
+    if (name === "AD_AUTO_BEGIN") {
+      const dur = (payload.durationSec | 0) || (parseInt(ctlAdDur?.value || "30", 10) || 30);
+      const msg = `⏳ Anuncio en curso (${dur}s)… 💜`;
+      botSayIfEnabled(msg);
+      return;
+    }
+  }
+
+  // Receive state / events (BroadcastChannel)
   if (bc) {
     bc.onmessage = (ev) => {
       const msg = ev?.data;
-      if (!msg || msg.type !== "state") return;
-      applyState(msg);
+      if (!msg) return;
+      if (msg.type === "state") applyState(msg);
+      else if (msg.type === "event") handleEvent(msg);
     };
   }
 
@@ -604,6 +657,28 @@
       applyState(st);
     } catch (_) {}
   }, 500);
+
+  // ✅ Fallback: events from localStorage
+  setInterval(() => {
+    try {
+      const raw = localStorage.getItem(EVT_KEY);
+      if (!raw) return;
+      const evt = JSON.parse(raw);
+      if (!evt || evt.type !== "event") return;
+      handleEvent(evt);
+    } catch (_) {}
+  }, 650);
+
+  // ✅ Storage events (por si BC falla)
+  window.addEventListener("storage", (e) => {
+    if (!e) return;
+    if (e.key === EVT_KEY && e.newValue) {
+      try {
+        const evt = JSON.parse(e.newValue);
+        handleEvent(evt);
+      } catch (_) {}
+    }
+  });
 
   // Watchdog
   setInterval(() => {
@@ -736,29 +811,18 @@
     });
 
     // ADS buttons (player overlay) + bot say opcional
-    function maybeBotSay(text) {
-      const botOn = (ctlBotOn?.value === "on");
-      const sayOnAd = (ctlBotSayOnAd?.value !== "off");
-      if (!botOn || !sayOnAd) return;
-      const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-      if (!ch) return;
-      const msg = String(text || "").trim();
-      if (!msg) return;
-      bot.say(msg, ch);
-    }
-
     if (ctlAdNoticeBtn) ctlAdNoticeBtn.addEventListener("click", () => {
       const lead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
       sendCmd("AD_NOTICE", { leadSec: lead });
       const msg = (ctlAdChatText?.value || "").trim();
-      if (lead > 0) maybeBotSay(msg || `⚠️ Anuncio en ${lead}s…`);
-      else maybeBotSay(msg || "⚠️ Anuncio en breve…");
+      if (lead > 0) botSayIfEnabled(msg || `⚠️ Anuncio en ${lead}s…`);
+      else botSayIfEnabled(msg || "⚠️ Anuncio en breve…");
     });
 
     if (ctlAdBeginBtn) ctlAdBeginBtn.addEventListener("click", () => {
       const dur = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 600);
       sendCmd("AD_BEGIN", { durationSec: dur });
-      maybeBotSay(`⏳ Anuncio en curso (${dur}s)…`);
+      botSayIfEnabled(`⏳ Anuncio en curso (${dur}s)…`);
     });
 
     if (ctlAdClearBtn) ctlAdClearBtn.addEventListener("click", () => {
