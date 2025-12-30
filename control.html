@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0b0f14" />
+  <title>Random Live Cams — Control</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script>window.APP_VERSION = "2.0.0";</script>
+</head>
+<body class="mode-control">
+  <main class="controlWrap">
+    <header class="controlHeader">
+      <div class="controlTitle">
+        <div class="kicker">CONTROL ROOM</div>
+        <div class="name">Random Live Cams</div>
+      </div>
+      <div class="pill mono" id="ctlStatus">Conectando…</div>
+    </header>
+
+    <section class="controlGrid">
+      <div class="card">
+        <div class="cardTitle">Ahora</div>
+        <div class="nowTitle" id="ctlNowTitle">—</div>
+        <div class="nowMeta">
+          <span id="ctlNowPlace">—</span>
+          <span class="dot">•</span>
+          <span class="mono" id="ctlNowTimer">--:--</span>
+        </div>
+        <div class="row2">
+          <a id="ctlOrigin" class="btn ghost" href="#" target="_blank" rel="noopener">Abrir origen</a>
+          <button id="ctlCopyStreamUrl" class="btn">Copiar URL stream</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">Transporte</div>
+        <div class="controls3">
+          <button class="btn" id="ctlPrev">◀</button>
+          <button class="btn" id="ctlPlay">⏸</button>
+          <button class="btn" id="ctlNext">▶</button>
+        </div>
+        <button class="btn ghost full" id="ctlShuffle">🎲 Mezclar</button>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">Ajustes</div>
+
+        <label class="row">
+          <span>Duración (min)</span>
+          <input id="ctlMins" class="input" type="number" min="1" max="120" step="1" value="5" />
+        </label>
+        <button id="ctlApplyMins" class="btn full">Aplicar duración</button>
+
+        <label class="row">
+          <span>Fit</span>
+          <select id="ctlFit" class="select">
+            <option value="cover">Cover</option>
+            <option value="contain">Contain</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>HUD</span>
+          <select id="ctlHud" class="select">
+            <option value="on">Mostrar</option>
+            <option value="off">Ocultar</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Detalles HUD</span>
+          <select id="ctlHudDetails" class="select">
+            <option value="collapsed">Colapsado</option>
+            <option value="expanded">Expandido</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Autoskip (errores)</span>
+          <select id="ctlAutoskip" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Adfree</span>
+          <select id="ctlAdfree" class="select">
+            <option value="off">OFF</option>
+            <option value="on">ON (sin YouTube)</option>
+          </select>
+        </label>
+
+        <button id="ctlReset" class="btn ghost full">Reset estado</button>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">Cambiar cámara</div>
+        <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" />
+        <select id="ctlSelect" class="select" size="10"></select>
+        <div class="row2">
+          <button id="ctlGo" class="btn full">Ir</button>
+          <button id="ctlBan" class="btn ghost full">Excluir esta (solo local)</button>
+        </div>
+        <div class="hint">Doble click en la lista = Ir.</div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">Preview (opcional)</div>
+        <label class="row">
+          <span>Mostrar</span>
+          <select id="ctlPreviewOn" class="select">
+            <option value="off">OFF</option>
+            <option value="on">ON</option>
+          </select>
+        </label>
+        <div id="ctlPreviewWrap" class="previewWrap hidden">
+          <iframe id="ctlPreview" class="previewFrame" title="Preview stream" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+        </div>
+        <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
+      </div>
+    </section>
+
+    <footer class="controlFooter">
+      <span class="muted">Teclas: N siguiente · P anterior · Espacio pausa</span>
+      <span class="dot">•</span>
+      <span class="muted mono">Canal: rlc_bus_v1</span>
+    </footer>
+  </main>
+
+  <script defer src="./cams.js"></script>
+  <script defer src="./control.js"></script>
+</body>
+</html>

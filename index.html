@@ -5,19 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
-  <title>Random Live Cams</title>
-
+  <title>Random Live Cams — Player</title>
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- hls.js (solo se usa si añades cámaras HLS .m3u8 en cams.js) -->
+  <!-- hls.js opcional -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <script>window.APP_VERSION = "1.0.1";</script>
+  <script>window.APP_VERSION = "2.0.0";</script>
 </head>
-<body>
-  <main id="app" class="app">
-    <section id="stage" class="stage" aria-label="Reproductor de cámara">
-      <!-- YouTube / Iframe -->
+<body class="mode-stream">
+  <main class="app">
+    <section class="stage" aria-label="Reproductor de cámara">
       <iframe
         id="frame"
         class="media hidden"
@@ -27,7 +25,6 @@
         allowfullscreen
       ></iframe>
 
-      <!-- HLS / Vídeo -->
       <video
         id="video"
         class="media hidden"
@@ -37,21 +34,17 @@
         webkit-playsinline
       ></video>
 
-      <!-- Imagen (snapshots) -->
       <img id="img" class="media hidden" alt="Webcam snapshot" />
 
-      <!-- Fallback -->
       <div id="fallback" class="fallback hidden">
         <div class="fallbackCard">
           <div class="fallbackTitle">Esta cámara no se puede mostrar aquí</div>
-          <div class="fallbackText">
-            Puede estar offline o bloquear el embed. Saltando automáticamente…
-          </div>
+          <div class="fallbackText">Puede estar offline o bloquear el embed. Saltando…</div>
           <a id="fallbackLink" class="btn" href="#" target="_blank" rel="noopener">Ver en origen</a>
         </div>
       </div>
 
-      <!-- HUD (compacto) -->
+      <!-- HUD compacto (sí sale en stream, admin no) -->
       <div id="hud" class="hud hud--collapsed">
         <div class="hudBar">
           <div class="hudLeft">
@@ -69,7 +62,6 @@
           <div id="progressBar" class="progressBar"></div>
         </div>
 
-        <!-- Detalles (se ocultan en collapsed) -->
         <div id="hudDetails" class="hudDetails">
           <div class="hudRow">
             <div class="hudLabel">Lugar</div>
@@ -88,22 +80,14 @@
           <div class="hudFooter">
             <span id="hudIndex">—</span>
             <span class="dot">•</span>
-            <span class="muted">Espacio pausa · N siguiente · H HUD</span>
+            <span class="muted">Control: usa control.html en Dock</span>
           </div>
         </div>
-      </div>
-
-      <!-- Mini panel (solo visible con ?admin=1) -->
-      <div id="admin" class="admin hidden">
-        <button class="btn" id="btnPrev">◀</button>
-        <button class="btn" id="btnToggle">⏯</button>
-        <button class="btn" id="btnNext">▶</button>
-        <button class="btn ghost" id="btnShuffle">🎲 Mezclar</button>
       </div>
     </section>
   </main>
 
   <script defer src="./cams.js"></script>
-  <script defer src="./app.js"></script>
+  <script defer src="./player.js"></script>
 </body>
 </html>

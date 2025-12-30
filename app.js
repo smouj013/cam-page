@@ -1,9 +1,8 @@
 (() => {
   "use strict";
 
-  // ───────────────────────── Guard anti doble carga ─────────────────────────
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RANDOM_LIVE_CAMS_APPJS_LOADED_V101";
+  const LOAD_GUARD = "__RANDOM_LIVE_CAMS_APPJS_LOADED_V110";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -26,11 +25,7 @@
     const fit = (u.searchParams.get("fit") || "cover"); // cover | contain
     const seedStr = u.searchParams.get("seed") || "";
     const debug = (u.searchParams.get("debug") === "1");
-
-    // ✅ autoskip: solo para errores reales en image/hls (por defecto ON)
     const autoskip = (u.searchParams.get("autoskip") ?? "1") !== "0";
-
-    // ✅ modo "adfree": filtra YouTube
     const mode = (u.searchParams.get("mode") || "").toLowerCase(); // "adfree" | ""
     return { mins, admin, hideHud, fit, seedStr, debug, autoskip, mode };
   }
@@ -91,50 +86,86 @@
   const hudCountdown = qs("#hudCountdown");
   const hudIndex = qs("#hudIndex");
   const progressBar = qs("#progressBar");
-
-  // ✅ nuevo: toggle HUD compacto
   const hudToggle = qs("#hudToggle");
   const hudDetails = qs("#hudDetails");
 
-  const adminPanel = qs("#admin");
+  // Admin
+  const adminDrawer = qs("#admin");
+  const adminFab = qs("#adminFab");
+  const adminClose = qs("#adminClose");
+
   const btnPrev = qs("#btnPrev");
-  const btnToggle = qs("#btnToggle");
+  const btnPlay = qs("#btnPlay");
   const btnNext = qs("#btnNext");
   const btnShuffle = qs("#btnShuffle");
 
+  const admNowTitle = qs("#admNowTitle");
+  const admNowPlace = qs("#admNowPlace");
+  const admNowTimer = qs("#admNowTimer");
+
+  const admMins = qs("#admMins");
+  const admApplyMins = qs("#admApplyMins");
+
+  const admHud = qs("#admHud");
+  const admHudDetails = qs("#admHudDetails");
+  const admFit = qs("#admFit");
+
+  const admAutoskip = qs("#admAutoskip");
+  const admAdfree = qs("#admAdfree");
+
+  const admResetState = qs("#admResetState");
+
+  const admSearch = qs("#admSearch");
+  const admCamSelect = qs("#admCamSelect");
+  const admGo = qs("#admGo");
+  const admOrigin = qs("#admOrigin");
+
+  const admUrl = qs("#admUrl");
+  const admCopyUrl = qs("#admCopyUrl");
+
   // ───────────────────────── State ─────────────────────────
   const P = parseParams();
-  const ROUND_SECONDS = P.mins * 60;
   const STORAGE_KEY = "random_live_cams_state_v1";
   const HUD_COLLAPSE_KEY = "random_live_cams_hud_collapsed_v1";
+  const HUD_HIDE_KEY = "random_live_cams_hud_hidden_v1";
 
   const rnd = makeRng(P.seedStr);
 
-  let cams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
+  const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
+  let cams = allCams.slice();
 
-  if (P.mode === "adfree") {
-    cams = cams.filter(c => c && c.kind && c.kind !== "youtube");
-  }
+  let adfree = (P.mode === "adfree");
+  if (adfree) cams = cams.filter(c => c && c.kind !== "youtube");
 
   let idx = 0;
   let playing = true;
+
+  // duración “en caliente”
+  let roundSeconds = (P.mins | 0) * 60;
+
+  // deadline (anti drift)
   let roundEndsAt = 0;
 
+  // Timers
   let tickTimer = null;
   let imgTimer = null;
 
+  // HLS
   let hls = null;
+
+  // locks
   let switching = false;
 
-  // ───────────────────────── HUD compact helpers ─────────────────────────
+  // flags runtime
+  let autoskip = !!P.autoskip;
+
+  // ───────────────────────── HUD helpers ─────────────────────────
   function getHudCollapsed() {
     try {
       const raw = localStorage.getItem(HUD_COLLAPSE_KEY);
-      if (raw === null || raw === undefined || raw === "") return true; // ✅ por defecto colapsado
+      if (raw === null || raw === undefined || raw === "") return true;
       return raw === "1";
-    } catch (_) {
-      return true;
-    }
+    } catch (_) { return true; }
   }
 
   function setHudCollapsed(v) {
@@ -147,6 +178,22 @@
     }
     if (hudDetails) hudDetails.style.display = collapsed ? "none" : "";
     try { localStorage.setItem(HUD_COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (_) {}
+    if (admHudDetails) admHudDetails.value = collapsed ? "collapsed" : "expanded";
+  }
+
+  function getHudHidden() {
+    try {
+      const raw = localStorage.getItem(HUD_HIDE_KEY);
+      if (raw === null || raw === undefined || raw === "") return !!P.hideHud;
+      return raw === "1";
+    } catch (_) { return !!P.hideHud; }
+  }
+
+  function setHudHidden(v) {
+    const hidden = !!v;
+    hud.classList.toggle("hidden", hidden);
+    try { localStorage.setItem(HUD_HIDE_KEY, hidden ? "1" : "0"); } catch (_) {}
+    if (admHud) admHud.value = hidden ? "off" : "on";
   }
 
   // ───────────────────────── UI helpers ─────────────────────────
@@ -167,6 +214,7 @@
     frame.style.objectFit = m;
     video.style.objectFit = m;
     img.style.objectFit = m;
+    if (admFit) admFit.value = m;
   }
 
   function clearMedia() {
@@ -194,10 +242,19 @@
     hudOrigin.style.pointerEvents = cam.originUrl ? "auto" : "none";
     hudOrigin.style.opacity = cam.originUrl ? "1" : ".6";
     hudIndex.textContent = `${idx + 1}/${cams.length}`;
+
+    // admin "now"
+    if (admNowTitle) admNowTitle.textContent = cam.title || "—";
+    if (admNowPlace) admNowPlace.textContent = cam.place || "—";
+    if (admOrigin) {
+      admOrigin.href = cam.originUrl || "#";
+      admOrigin.style.pointerEvents = cam.originUrl ? "auto" : "none";
+      admOrigin.style.opacity = cam.originUrl ? "1" : ".65";
+    }
   }
 
   function remainingSeconds() {
-    if (!roundEndsAt) return ROUND_SECONDS;
+    if (!roundEndsAt) return roundSeconds;
     const ms = roundEndsAt - Date.now();
     return Math.max(0, Math.ceil(ms / 1000));
   }
@@ -205,12 +262,14 @@
   function setCountdownUI() {
     const rem = remainingSeconds();
     hudCountdown.textContent = fmtMMSS(rem);
-    const pct = 100 * (1 - (rem / ROUND_SECONDS));
+    if (admNowTimer) admNowTimer.textContent = fmtMMSS(rem);
+
+    const pct = 100 * (1 - (rem / Math.max(1, roundSeconds)));
     progressBar.style.width = `${clamp(pct, 0, 100).toFixed(2)}%`;
   }
 
   function startRound(seconds) {
-    const s = clamp(seconds | 0, 1, ROUND_SECONDS);
+    const s = clamp(seconds | 0, 1, 120 * 60);
     roundEndsAt = Date.now() + s * 1000;
     setCountdownUI();
   }
@@ -232,10 +291,20 @@
     } catch (_) {}
   }
 
+  function effectiveCamSeconds(cam) {
+    // ✅ imágenes: 1 minuto, como pediste (o maxSeconds si lo defines)
+    if (cam && typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) return cam.maxSeconds | 0;
+    if (cam && cam.kind === "image") return 60;
+    return roundSeconds;
+  }
+
   // ───────────────────────── Playback ─────────────────────────
   function playCam(cam) {
     clearMedia();
     setHud(cam);
+
+    // reinicia round con duración efectiva
+    startRound(effectiveCamSeconds(cam));
 
     if (cam.kind === "youtube") {
       showOnly("youtube");
@@ -259,7 +328,7 @@
       setSnap();
       imgTimer = setInterval(setSnap, refreshMs);
 
-      if (P.autoskip) {
+      if (autoskip) {
         img.onerror = () => {
           img.onerror = null;
           showFallback(cam, "Imagen no disponible (error). Saltando…");
@@ -287,7 +356,7 @@
         hls.attachMedia(video);
 
         hls.on(Hls.Events.ERROR, (_ev, data) => {
-          if (!P.autoskip) return;
+          if (!autoskip) return;
           if (data && data.fatal) {
             showFallback(cam, "Stream HLS no disponible. Saltando…");
             setTimeout(() => nextCam("hls_fatal"), 900);
@@ -297,10 +366,10 @@
         video.addEventListener("canplay", () => safePlayVideo(), { once: true });
       } else {
         showFallback(cam, "HLS no soportado aquí.");
-        if (P.autoskip) setTimeout(() => nextCam("hls_unsupported"), 900);
+        if (autoskip) setTimeout(() => nextCam("hls_unsupported"), 900);
       }
 
-      if (P.autoskip) {
+      if (autoskip) {
         video.onerror = () => {
           video.onerror = null;
           showFallback(cam, "Stream no disponible (error). Saltando…");
@@ -311,7 +380,7 @@
     }
 
     showFallback(cam, "Tipo de cámara no soportado.");
-    if (P.autoskip) setTimeout(() => nextCam("unsupported"), 900);
+    if (autoskip) setTimeout(() => nextCam("unsupported"), 900);
   }
 
   // ───────────────────────── Rotation ─────────────────────────
@@ -320,12 +389,12 @@
     switching = true;
 
     idx = (idx + 1) % cams.length;
-    startRound(ROUND_SECONDS);
 
     if (P.debug) console.log("[cams] next:", reason, idx, cams[idx]);
     playCam(cams[idx]);
 
     setTimeout(() => { switching = false; }, 250);
+    syncAdminSelect();
   }
 
   function prevCam() {
@@ -333,20 +402,20 @@
     switching = true;
 
     idx = (idx - 1 + cams.length) % cams.length;
-    startRound(ROUND_SECONDS);
     playCam(cams[idx]);
 
     setTimeout(() => { switching = false; }, 250);
+    syncAdminSelect();
+  }
+
+  function setPlaying(v) {
+    playing = !!v;
+    if (btnPlay) btnPlay.textContent = playing ? "⏸" : "▶";
+    if (playing) startRound(Math.max(1, remainingSeconds()));
   }
 
   function togglePlay() {
-    playing = !playing;
-    if (btnToggle) btnToggle.textContent = playing ? "⏸" : "▶";
-
-    if (playing) {
-      const rem = remainingSeconds();
-      startRound(rem || 1);
-    }
+    setPlaying(!playing);
   }
 
   function reshuffle() {
@@ -354,8 +423,54 @@
     shuffle(cams, rnd);
     const n = cams.findIndex(c => c.id === curId);
     idx = (n >= 0) ? n : 0;
-    startRound(ROUND_SECONDS);
     playCam(cams[idx]);
+    syncAdminList();
+  }
+
+  function applyAdfree(on) {
+    const want = !!on;
+    if (want === adfree) return;
+
+    adfree = want;
+    const currentId = cams[idx] && cams[idx].id;
+
+    cams = allCams.slice();
+    if (adfree) cams = cams.filter(c => c && c.kind !== "youtube");
+    if (!cams.length) {
+      // fallback: si te quedas sin cams, revierte
+      adfree = false;
+      cams = allCams.slice();
+    }
+
+    let n = cams.findIndex(c => c && c.id === currentId);
+    idx = (n >= 0) ? n : 0;
+
+    syncAdminList();
+    playCam(cams[idx]);
+  }
+
+  function setRoundMins(mins) {
+    const m = clamp(parseInt(mins, 10) || 5, 1, 120);
+    roundSeconds = m * 60;
+    if (admMins) admMins.value = String(m);
+    // aplica ya sin reset brusco: mantiene remaining si es menor
+    const rem = remainingSeconds();
+    startRound(Math.min(rem, roundSeconds));
+  }
+
+  function goToIndex(i) {
+    const n = (i | 0);
+    if (!cams.length) return;
+    if (n < 0 || n >= cams.length) return;
+    idx = n;
+    playCam(cams[idx]);
+    syncAdminSelect();
+  }
+
+  function goToId(id) {
+    if (!cams.length) return;
+    const n = cams.findIndex(c => c && c.id === id);
+    if (n >= 0) goToIndex(n);
   }
 
   // ───────────────────────── Persistence ─────────────────────────
@@ -370,9 +485,30 @@
   function saveState() {
     try {
       const rem = remainingSeconds();
-      const st = { idx, remaining: rem, playing, ts: Date.now(), version: 1, mode: P.mode || "" };
+      const st = {
+        idx,
+        remaining: rem,
+        playing,
+        ts: Date.now(),
+        version: 2,
+        adfree: adfree ? 1 : 0,
+        autoskip: autoskip ? 1 : 0,
+        mins: Math.max(1, (roundSeconds / 60) | 0)
+      };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
     } catch (_) {}
+  }
+
+  function resetState() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    idx = 0;
+    setPlaying(true);
+    setRoundMins(5);
+    applyAdfree(false);
+    autoskip = true;
+    if (admAutoskip) admAutoskip.value = "on";
+    if (admAdfree) admAdfree.value = "off";
+    playCam(cams[idx]);
   }
 
   // ───────────────────────── Tick ─────────────────────────
@@ -388,62 +524,252 @@
     tickTimer = setInterval(tick, 250);
   }
 
+  // ───────────────────────── Admin UI ─────────────────────────
+  function openAdmin() {
+    adminDrawer.classList.remove("hidden");
+    adminFab.classList.add("hidden");
+  }
+  function closeAdmin() {
+    adminDrawer.classList.add("hidden");
+    adminFab.classList.remove("hidden");
+  }
+
+  function camLabel(cam) {
+    const t = (cam && cam.title) ? cam.title : "Live Cam";
+    const p = (cam && cam.place) ? cam.place : "";
+    return p ? `${t} — ${p}` : t;
+  }
+
+  function syncAdminList(filter = "") {
+    if (!admCamSelect) return;
+
+    const f = String(filter || "").trim().toLowerCase();
+    const list = [];
+    for (let i = 0; i < cams.length; i++) {
+      const cam = cams[i];
+      const hay = `${cam?.title || ""} ${cam?.place || ""} ${cam?.source || ""}`.toLowerCase();
+      if (!f || hay.includes(f)) list.push({ i, cam });
+    }
+
+    admCamSelect.innerHTML = "";
+    for (const it of list) {
+      const opt = document.createElement("option");
+      opt.value = it.cam.id;
+      opt.textContent = camLabel(it.cam);
+      if (it.i === idx) opt.selected = true;
+      admCamSelect.appendChild(opt);
+    }
+  }
+
+  function syncAdminSelect() {
+    if (!admCamSelect) return;
+    const cur = cams[idx];
+    if (!cur) return;
+
+    // intenta seleccionar por id incluso con filtro
+    const options = Array.from(admCamSelect.options || []);
+    const match = options.find(o => o.value === cur.id);
+    if (match) match.selected = true;
+
+    // actualiza enlace origen
+    if (admOrigin) {
+      admOrigin.href = cur.originUrl || "#";
+      admOrigin.style.pointerEvents = cur.originUrl ? "auto" : "none";
+      admOrigin.style.opacity = cur.originUrl ? "1" : ".65";
+    }
+  }
+
+  function fillObsUrl() {
+    if (!admUrl) return;
+    const u = new URL(location.href);
+    u.searchParams.set("admin", "1");
+    u.searchParams.set("hud", "1");
+    u.searchParams.set("mins", String(Math.max(1, (roundSeconds / 60) | 0)));
+    if (adfree) u.searchParams.set("mode", "adfree"); else u.searchParams.delete("mode");
+    if (!autoskip) u.searchParams.set("autoskip", "0"); else u.searchParams.delete("autoskip");
+    admUrl.value = u.toString();
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      // fallback
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  }
+
   // ───────────────────────── Boot ─────────────────────────
   function boot() {
-    if (!cams.length) {
-      showFallback({ originUrl: "#" }, "No hay cámaras definidas (revisa cams.js o mode=adfree).");
+    if (!allCams.length) {
+      showFallback({ originUrl: "#" }, "No hay cámaras definidas (revisa cams.js).");
       return;
     }
 
+    // Fit
     setFit(P.fit);
 
-    if (P.admin) adminPanel.classList.remove("hidden");
-    if (P.hideHud) hud.classList.add("hidden");
-
-    // HUD colapsado por defecto (pero recordable)
+    // HUD persisted
     setHudCollapsed(getHudCollapsed());
+    setHudHidden(getHudHidden());
+
     if (hudToggle) {
       hudToggle.addEventListener("click", (e) => {
         e.preventDefault();
-        const collapsed = hud.classList.contains("hud--collapsed");
-        setHudCollapsed(!collapsed);
+        setHudCollapsed(!hud.classList.contains("hud--collapsed"));
       });
     }
 
+    // Admin enable
+    const adminEnabled = !!P.admin;
+    if (adminEnabled) {
+      adminDrawer.classList.remove("hidden");
+      adminFab.classList.add("hidden");
+    } else {
+      adminDrawer.classList.add("hidden");
+      adminFab.classList.add("hidden"); // por defecto no se muestra si no admin
+    }
+
+    // mezcla inicial
     shuffle(cams, rnd);
 
+    // cargar estado previo
     const st = loadState();
     if (st && typeof st.idx === "number" && st.idx >= 0 && st.idx < cams.length) {
       idx = st.idx | 0;
-      playing = !!st.playing;
-      const rem = clamp((st.remaining | 0) || ROUND_SECONDS, 1, ROUND_SECONDS);
+      setPlaying(!!st.playing);
+
+      if (st.mins) setRoundMins(st.mins);
+      autoskip = (st.autoskip ?? 1) !== 0;
+      if (st.adfree) applyAdfree(!!st.adfree);
+
+      const rem = clamp((st.remaining | 0) || roundSeconds, 1, 120 * 60);
       startRound(rem);
     } else {
       idx = 0;
-      playing = true;
-      startRound(ROUND_SECONDS);
+      setPlaying(true);
+      setRoundMins(P.mins);
+      startRound(roundSeconds);
     }
 
+    // play
     playCam(cams[idx]);
     startTick();
 
-    if (btnNext) btnNext.addEventListener("click", () => nextCam("admin"));
-    if (btnPrev) btnPrev.addEventListener("click", () => prevCam());
-    if (btnToggle) btnToggle.addEventListener("click", () => togglePlay());
-    if (btnShuffle) btnShuffle.addEventListener("click", () => reshuffle());
+    // Admin wiring (si existe el panel en HTML)
+    if (adminEnabled) {
+      // fab/close
+      if (adminFab) adminFab.classList.remove("hidden");
+      if (adminClose) adminClose.addEventListener("click", closeAdmin);
+      if (adminFab) adminFab.addEventListener("click", openAdmin);
 
+      // buttons
+      if (btnNext) btnNext.addEventListener("click", () => nextCam("admin"));
+      if (btnPrev) btnPrev.addEventListener("click", () => prevCam());
+      if (btnPlay) btnPlay.addEventListener("click", () => togglePlay());
+      if (btnShuffle) btnShuffle.addEventListener("click", () => reshuffle());
+
+      // rotation mins
+      if (admMins) admMins.value = String(Math.max(1, (roundSeconds / 60) | 0));
+      if (admApplyMins) admApplyMins.addEventListener("click", () => setRoundMins(admMins.value));
+
+      // view
+      if (admHud) {
+        admHud.value = hud.classList.contains("hidden") ? "off" : "on";
+        admHud.addEventListener("change", () => setHudHidden(admHud.value === "off"));
+      }
+      if (admHudDetails) {
+        admHudDetails.value = hud.classList.contains("hud--collapsed") ? "collapsed" : "expanded";
+        admHudDetails.addEventListener("change", () => setHudCollapsed(admHudDetails.value === "collapsed"));
+      }
+      if (admFit) {
+        admFit.value = (P.fit === "contain") ? "contain" : "cover";
+        admFit.addEventListener("change", () => setFit(admFit.value));
+      }
+
+      // mode
+      if (admAutoskip) {
+        admAutoskip.value = autoskip ? "on" : "off";
+        admAutoskip.addEventListener("change", () => { autoskip = (admAutoskip.value === "on"); fillObsUrl(); });
+      }
+      if (admAdfree) {
+        admAdfree.value = adfree ? "on" : "off";
+        admAdfree.addEventListener("change", () => { applyAdfree(admAdfree.value === "on"); fillObsUrl(); });
+      }
+
+      if (admResetState) admResetState.addEventListener("click", resetState);
+
+      // cam list
+      syncAdminList("");
+      syncAdminSelect();
+
+      if (admSearch) {
+        admSearch.addEventListener("input", () => {
+          syncAdminList(admSearch.value);
+        });
+      }
+      if (admGo) {
+        admGo.addEventListener("click", () => {
+          const id = admCamSelect && admCamSelect.value;
+          if (id) goToId(id);
+        });
+      }
+      if (admCamSelect) {
+        admCamSelect.addEventListener("dblclick", () => {
+          const id = admCamSelect.value;
+          if (id) goToId(id);
+        });
+        admCamSelect.addEventListener("change", () => {
+          const id = admCamSelect.value;
+          const cam = cams.find(c => c && c.id === id);
+          if (cam && admOrigin) {
+            admOrigin.href = cam.originUrl || "#";
+            admOrigin.style.pointerEvents = cam.originUrl ? "auto" : "none";
+            admOrigin.style.opacity = cam.originUrl ? "1" : ".65";
+          }
+        });
+      }
+
+      // obs url
+      fillObsUrl();
+      if (admCopyUrl) {
+        admCopyUrl.addEventListener("click", async () => {
+          const ok = await copyToClipboard(admUrl.value || location.href);
+          admCopyUrl.textContent = ok ? "✅ Copiado" : "❌";
+          setTimeout(() => { admCopyUrl.textContent = "Copiar"; }, 900);
+        });
+      }
+    }
+
+    // teclado
     window.addEventListener("keydown", (e) => {
       const k = (e.key || "").toLowerCase();
       if (k === " ") { e.preventDefault(); togglePlay(); }
       else if (k === "n") { nextCam("key"); }
       else if (k === "p") { prevCam(); }
-      else if (k === "h") { hud.classList.toggle("hidden"); }
-      else if (k === "i") { // ✅ i = expand/contrae
-        const collapsed = hud.classList.contains("hud--collapsed");
-        setHudCollapsed(!collapsed);
+      else if (k === "h") { setHudHidden(!hud.classList.contains("hidden")); }
+      else if (k === "i") { setHudCollapsed(!hud.classList.contains("hud--collapsed")); }
+      else if (k === "a") {
+        if (!P.admin) return;
+        if (adminDrawer.classList.contains("hidden")) openAdmin();
+        else closeAdmin();
       }
     });
 
+    // guardado
     setInterval(saveState, 2000);
     document.addEventListener("visibilitychange", () => { if (document.hidden) saveState(); });
   }
