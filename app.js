@@ -41,8 +41,8 @@
       // Vote init
       vote: (u.searchParams.get("vote") ?? "0") === "1",
       twitch: (u.searchParams.get("twitch") || "").trim().replace(/^@/,""),
-      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "20", 10) || 20, 5, 60),
-      voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "25", 10) || 25, 5, 120),
+      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 20, 5, 60),
+      voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "61", 10) || 25, 5, 120),
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
       voteOverlay: (u.searchParams.get("voteOverlay") ?? "1") !== "0"
     };
