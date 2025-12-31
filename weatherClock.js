@@ -1,10 +1,11 @@
-/* weatherClock.js — RLC Weather+LocalTime v1.0.1 (NO KEY + NO LAYOUT JUMP)
+/* weatherClock.js — RLC Weather+LocalTime v1.0.2 (NO KEY + NO FLICKER + AUTO TZ)
    ✅ Muestra temperatura + hora local de la cam en el HUD (junto al título)
    ✅ Open-Meteo Geocoding + Weather (gratis, sin key)
+   ✅ Si hay lat/lon sin timezone -> usa timezone=auto (más fiable)  (docs Open-Meteo)
    ✅ Cache local (geo + meteo) para no spamear endpoints
    ✅ Key-namespaced (BUS/STATE) compatible con tu sistema
    ✅ window.RLCWx.getSummaryForCam() para catalogView.js
-   ✅ Importante: NO inyecta CSS (lo controla styles.css) -> evita reflow “tardío”
+   ✅ Importante: NO inyecta CSS (lo controla styles.css)
 */
 
 (() => {
@@ -12,7 +13,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_WX_LOADED_V101";
+  const LOAD_GUARD = "__RLC_WX_LOADED_V102";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -83,7 +84,7 @@
 
     chip = document.createElement("div");
     chip.id = "rlcHudWx";
-    chip.className = "wxOff"; // ocupa espacio pero no se ve (evita “jumps”)
+    chip.className = "wxOff"; // ocupa espacio pero no se ve (evita jumps)
     chip.innerHTML = `
       <span id="rlcHudWxIcon" aria-hidden="true">🌡️</span>
       <span id="rlcHudWxTemp" class="wxTemp">—°C</span>
@@ -91,8 +92,10 @@
       <span id="rlcHudWxTime" class="wxTime">--:--</span>
     `.trim();
 
-    // lo insertamos dentro del mismo contenedor del título (hudLeft)
-    hudTitle.parentElement?.appendChild(chip);
+    // Insertar junto al título, dentro del bloque izquierdo si existe
+    const hudLeft = hudTitle.closest("#hudLeft") || hudTitle.parentElement;
+    (hudLeft || hudTitle.parentElement || document.body).appendChild(chip);
+
     return chip;
   }
 
@@ -113,8 +116,6 @@
     if (elI) elI.textContent = icon || "🌡️";
     if (elT) elT.textContent = tempText || "—°C";
     if (elH) elH.textContent = timeText || "--:--";
-
-    setHudChipVisible(true);
   }
 
   // ───────────────────────── Open-Meteo helpers
@@ -153,8 +154,31 @@
     return safeStr(place).toLowerCase().replace(/\s+/g, " ").slice(0, 120);
   }
 
+  function cleanPlaceForGeocode(place) {
+    let p = safeStr(place);
+    if (!p) return "";
+
+    // quita brackets/paréntesis
+    p = p.replace(/\[[^\]]*\]/g, " ").replace(/\([^)]*\)/g, " ");
+
+    // corta por separadores típicos de títulos
+    p = p.split("|")[0];
+    p = p.split(" — ")[0];
+    p = p.split(" - ")[0];
+
+    // elimina palabras típicas
+    p = p.replace(/\b(live|webcam|cam|camera|stream|hd)\b/gi, " ");
+
+    // limpia símbolos raros
+    p = p.replace(/[•·–—]/g, " ");
+    p = p.replace(/\s+/g, " ").trim();
+
+    return p.slice(0, 90);
+  }
+
   async function geocodePlace(place, preferLang = "en") {
-    const p = safeStr(place);
+    const p0 = safeStr(place);
+    const p = cleanPlaceForGeocode(p0);
     if (!p) return null;
 
     const cache = getGeoCache();
@@ -194,13 +218,14 @@
     return out;
   }
 
-  function wxKey(lat, lon, tz) {
-    return `${lat.toFixed(3)},${lon.toFixed(3)}@${tz}`;
+  function wxKey(lat, lon, tzWanted) {
+    return `${lat.toFixed(3)},${lon.toFixed(3)}@${safeStr(tzWanted || "auto")}`;
   }
 
-  async function fetchCurrentWeather(lat, lon, timezone) {
+  async function fetchCurrentWeather(lat, lon, tzWanted) {
     const cache = getWxCache();
-    const k = wxKey(lat, lon, timezone);
+    const tz = safeStr(tzWanted || "auto"); // Open-Meteo soporta "auto" :contentReference[oaicite:1]{index=1}
+    const k = wxKey(lat, lon, tz);
 
     // cache 12 min
     const hit = cache[k];
@@ -212,7 +237,7 @@
       `&longitude=${encodeURIComponent(String(lon))}` +
       `&current=temperature_2m,weather_code,is_day` +
       `&temperature_unit=celsius` +
-      `&timezone=${encodeURIComponent(timezone)}`;
+      `&timezone=${encodeURIComponent(tz)}`;
 
     const data = await fetchJson(url);
     const cur = data?.current;
@@ -221,8 +246,12 @@
     const out = {
       tempC: Number(cur.temperature_2m),
       code: Number(cur.weather_code),
-      isDay: (cur.is_day === 1 || cur.is_day === true)
+      isDay: (cur.is_day === 1 || cur.is_day === true),
+      timezone: safeStr(data?.timezone || tzWanted || "")
     };
+
+    if (!Number.isFinite(out.tempC)) return null;
+    if (!out.timezone) return null;
 
     cache[k] = { ts: Date.now(), data: out };
     setWxCache(cache);
@@ -248,9 +277,11 @@
   }
 
   function extractPlace(cam) {
-    // prioridad: place -> city -> title
+    // prioridad: place -> location -> city -> title
     const p = safeStr(cam?.place || "");
     if (p) return p;
+    const l = safeStr(cam?.location || "");
+    if (l) return l;
     const c = safeStr(cam?.city || "");
     if (c) return c;
     const t = safeStr(cam?.title || "");
@@ -276,25 +307,26 @@
     if (!place) return null;
 
     const coords = extractCoords(cam);
-    let geo = null;
 
+    // 1) Si hay coords, intentamos directo (timezone explícita o auto)
     if (coords) {
-      if (coords.timezone) {
-        geo = { latitude: coords.lat, longitude: coords.lon, timezone: coords.timezone };
-      } else {
-        geo = await geocodePlace(place, "en");
-        if (!geo) geo = { latitude: coords.lat, longitude: coords.lon, timezone: "" };
-      }
-    } else {
-      geo = await geocodePlace(place, "en");
+      const wx = await fetchCurrentWeather(coords.lat, coords.lon, coords.timezone || "auto");
+      if (!wx) return null;
+
+      const icon = iconFromCode(wx.code, wx.isDay);
+      const temp = `${Math.round(wx.tempC)}°C`;
+      const tz = wx.timezone;
+      const time = formatTimeInTZ(tz);
+
+      return { icon, temp, time, timezone: tz };
     }
 
-    if (!geo || !Number.isFinite(geo.latitude) || !Number.isFinite(geo.longitude) || !geo.timezone) {
-      return null;
-    }
+    // 2) Si no hay coords -> geocode
+    const geo = await geocodePlace(place, "en");
+    if (!geo || !Number.isFinite(geo.latitude) || !Number.isFinite(geo.longitude) || !geo.timezone) return null;
 
     const wx = await fetchCurrentWeather(geo.latitude, geo.longitude, geo.timezone);
-    if (!wx || !Number.isFinite(wx.tempC)) return null;
+    if (!wx) return null;
 
     const icon = iconFromCode(wx.code, wx.isDay);
     const temp = `${Math.round(wx.tempC)}°C`;
@@ -326,7 +358,15 @@
 
   async function updateHudForCam(cam) {
     const camId = String(cam?.id || "");
-    if (!camId) { setHudChipVisible(false); return; }
+    if (!camId) {
+      setHudChipVisible(false);
+      activeTimezone = "";
+      stopClock();
+      return;
+    }
+
+    // SIEMPRE visible cuando hay cam (no flicker)
+    setHudChipVisible(true);
 
     if (camId === lastCamId && activeTimezone) {
       setHudChip(activeIcon, activeTempText, formatTimeInTZ(activeTimezone));
@@ -336,7 +376,7 @@
     lastCamId = camId;
     const token = ++lastReqToken;
 
-    // placeholder rápido (sin “jump” porque el chip ya ocupa espacio)
+    // placeholder estable
     setHudChip("🌡️", "…°C", "--:--");
 
     try {
@@ -344,9 +384,10 @@
       if (token !== lastReqToken) return;
 
       if (!sum) {
-        setHudChipVisible(false);
+        // NO ocultar: deja placeholder estable (evita el “aparece/desaparece”)
         activeTimezone = "";
         stopClock();
+        setHudChip("🌡️", "—°C", "--:--");
         return;
       }
 
@@ -357,13 +398,15 @@
       setHudChip(activeIcon, activeTempText, sum.time || "--:--");
       startClock();
 
-      log("HUD WX:", cam?.place, sum);
+      log("HUD WX:", { place: cam?.place, title: cam?.title, sum });
     } catch (e) {
       if (token !== lastReqToken) return;
       log("HUD WX error:", e?.message || e);
-      setHudChipVisible(false);
+
+      // NO ocultar: placeholder estable
       activeTimezone = "";
       stopClock();
+      setHudChip("🌡️", "—°C", "--:--");
     }
   }
 
