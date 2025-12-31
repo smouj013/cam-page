@@ -1,9 +1,9 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.1
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.2 (PATCH)
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
-   🎯 Fix clave v3.1:
-   - Reserva “zona superior” si existe #rlcNewsTicker (para que VOTE/ADS/alerts queden DEBAJO)
-   - Sin tocar ningún otro script
+   🎯 Patch:
+   - --ui-top-offset ahora NO deja “gap fantasma” cuando --rlcTickerH = 0px (sin depender de :has)
+   - line-clamp estándar añadido (evita warning) + mantiene -webkit-line-clamp
 */
 
 /* ───────────────────────── Theme Tokens ───────────────────────── */
@@ -56,14 +56,12 @@
   --line: 1.28;
   --letter: .01em;
 
-  /* ───────────────────────── Ticker stacking (NEW) ─────────────────────────
-     👉 Reservamos altura para el rótulo de noticias (newsTicker.js suele ser 34px).
-     Esto evita que el panel de VOTO / ADS / alerts “choque” por arriba.
-     Si el ticker se oculta, intentamos quitar la reserva con :has (si hay soporte).
-  */
-  --ticker-h: 34px;
-  --ticker-gap: 12px;
-  --ui-top-offset: calc(var(--ticker-h) + var(--ticker-gap));
+  /* ───────────────────────── Ticker stacking (ROBUST) ───────────────────────── */
+  --ticker-h: var(--rlcTickerH, 34px);
+  --ticker-gap: var(--rlcTickerGap, 12px);
+
+  /* ✅ FIX: si --ticker-h = 0px, el gap también queda en 0 (sin “espacio fantasma”) */
+  --ui-top-offset: calc(var(--ticker-h) + min(var(--ticker-h), var(--ticker-gap)));
 }
 
 /* Si el navegador soporta :has(), quitamos la reserva cuando NO hay ticker o está hidden */
@@ -126,7 +124,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
   color: var(--text);
 
-  /* “New but simple”: soft fill + prism border */
   background:
     linear-gradient(rgba(255,255,255,.07), rgba(255,255,255,.05)) padding-box,
     linear-gradient(135deg, rgba(77,215,255,.30), rgba(37,243,166,.26), rgba(255,255,255,.12)) border-box;
@@ -172,7 +169,6 @@ input[type="range"]{ accent-color: var(--accent); }
   inset: 0;
   overflow: hidden;
 
-  /* “Neo-Atlas”: glow + micro-grid + soft scanline (sin imágenes) */
   background:
     radial-gradient(1100px 650px at 50% 18%, rgba(77,215,255,.13), transparent 58%),
     radial-gradient(900px 720px at 78% 78%, rgba(37,243,166,.11), transparent 62%),
@@ -229,19 +225,18 @@ input[type="range"]{ accent-color: var(--accent); }
   margin: 0 0 12px;
 }
 
-/* ───────────────────────── HUD Stream (simple + “nuevo”) ───────────────────────── */
+/* ───────────────────────── HUD Stream (WIDE + STABLE) ───────────────────────── */
 
 .hud{
   position:absolute;
   left: max(12px, env(safe-area-inset-left));
   bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(460px, calc(100vw - 24px));
+  width: min(620px, calc(100vw - 24px));
   z-index: 5;
 
   pointer-events:none;
-  overflow: visible; /* evita cortes raros */
+  overflow: visible;
 
-  /* Panel con borde prismático suave */
   border-radius: var(--r-lg);
   border: 1px solid transparent;
   background:
@@ -251,28 +246,29 @@ input[type="range"]{ accent-color: var(--accent); }
 
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+
+  contain: layout paint;
 }
 .hud a, .hud button{ pointer-events:auto; }
 
 .hudBar{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items:center;
   gap: 10px;
-  padding: 10px 10px 8px;
-
-  /* ✅ evita solapes si hay mucho texto */
-  flex-wrap: wrap;
+  padding: 10px 12px 8px;
+  min-height: 46px;
 }
 
 .hudLeft{
-  display:flex;
+  display:grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items:center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  flex: 1 1 260px; /* deja respirar al texto */
 }
 
+/* Badge */
 .badge{
   font-size: 10.5px;
   letter-spacing: .14em;
@@ -285,26 +281,35 @@ input[type="range"]{ accent-color: var(--accent); }
   white-space: nowrap;
 }
 
+/* Title clamped -> no cambia altura raro */
 .hudTitle{
   font-size: 13px;
   font-weight: 900;
   min-width: 0;
-
-  /* ✅ no esconder: permitimos wrap */
-  white-space: normal;
   line-height: 1.22;
 
-  /* si el título es gigante, se corta solo por el tamaño del HUD */
-  flex: 1 1 auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+
+  /* ✅ Standard + WebKit (evita warning + mantiene soporte real) */
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud.hud--collapsed .hudTitle{
+  line-clamp: 1;
+  -webkit-line-clamp: 1;
 }
 
+/* Right */
 .hudRight{
   display:flex;
   align-items:center;
   gap: 8px;
   flex-shrink: 0;
 }
-
 .hudCountdown{
   font-size: 12px;
   padding: 4px 8px;
@@ -313,7 +318,6 @@ input[type="range"]{ accent-color: var(--accent); }
   background: rgba(255,255,255,.055);
   white-space: nowrap;
 }
-
 .hudToggle{
   width: 32px;
   height: 30px;
@@ -327,26 +331,31 @@ input[type="range"]{ accent-color: var(--accent); }
 .hudToggle:hover{ filter: brightness(1.08); }
 .hudToggle:active{ transform: translateY(1px); }
 
+/* Progress estable */
 .progress{
-  height: 3px;
+  height: 4px;
   background: rgba(255,255,255,.06);
   border-radius: 999px;
-  margin: 0 10px;
+  margin: 0 12px;
+  overflow: hidden;
+  contain: paint;
 }
 .progressBar{
   height:100%;
   width:0%;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(37,243,166,.98), rgba(77,215,255,.86));
+  will-change: width;
+  transform: translateZ(0);
 }
 
+/* Details */
 .hudDetails{
-  padding: 8px 10px 10px;
+  padding: 8px 12px 12px;
 }
-
 .hudRow{
   display:grid;
-  grid-template-columns: 76px 1fr;
+  grid-template-columns: 78px 1fr;
   gap: 10px;
   padding: 6px 0;
   align-items: start;
@@ -359,8 +368,6 @@ input[type="range"]{ accent-color: var(--accent); }
   font-size: 12px;
   color: rgba(255,255,255,.88);
   min-width: 0;
-
-  /* ✅ no esconder texto */
   white-space: normal;
 }
 .hudLink{
@@ -375,14 +382,50 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 .hud.hud--collapsed .hudDetails{ display:none; }
-.hud.hud--collapsed{ width: min(400px, calc(100vw - 24px)); }
 .hud.hidden{ display:none !important; }
 
-/* ───────────────────────── Vote Overlay ───────────────────────── */
+/* ───────────────────────── Weather Chip (HUD) ───────────────────────── */
+#rlcHudWx{
+  justify-self:end;
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
 
+  background: rgba(0,0,0,.30);
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 10px 28px rgba(0,0,0,.40);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  font: 900 12px/1 var(--sans);
+  color: rgba(255,255,255,.92);
+  user-select:none;
+  white-space: nowrap;
+
+  font-variant-numeric: tabular-nums;
+  min-width: 132px;
+}
+
+#rlcHudWx .wxDot{ opacity:.72; }
+#rlcHudWx .wxTemp{ opacity:.88; font-weight: 950; }
+#rlcHudWx .wxTime{
+  font-family: var(--mono);
+  letter-spacing: .02em;
+  width: 5ch;
+  text-align: right;
+}
+
+#rlcHudWx.wxOff{
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ───────────────────────── Vote Overlay ───────────────────────── */
 .vote{
   position:absolute;
-  /* ✅ DEBAJO del ticker */
   top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
   right: max(12px, env(safe-area-inset-right));
   width: min(320px, calc(100vw - 24px));
@@ -406,8 +449,6 @@ input[type="range"]{ accent-color: var(--accent); }
   justify-content:space-between;
   padding: 10px 10px 6px;
   gap: 10px;
-
-  /* ✅ evita solapes */
   flex-wrap: wrap;
 }
 .voteTitle{
@@ -460,16 +501,11 @@ input[type="range"]{ accent-color: var(--accent); }
   font-size: 11px;
   font-weight: 900;
   color: rgba(255,255,255,.90);
-
-  /* ✅ evita que porcentajes largos rompan */
   min-width: 0;
 }
 .voteBarLabel > *{ min-width:0; }
 
-/* ───────────────────────── ADS/ALERT overlays (compat genérica) ─────────────────────────
-   No tocamos scripts. Esto “atrapa” IDs/clases típicas si ya existen en tu proyecto.
-   Si alguno no existe, no pasa nada.
-*/
+/* ───────────────────────── ADS/ALERT overlays (compat genérica) ───────────────────────── */
 #adsBox, #adBox, #adOverlay, #adsOverlay, #rlcAdsBox, #rlcAdBox, #rlcAdOverlay, #rlcAdsOverlay,
 .adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice, .alertBox, .alertsBox, .alertOverlay{
   position: absolute;
@@ -478,7 +514,6 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── Chat Overlay ───────────────────────── */
-
 .rlcChatRoot{
   position:absolute;
   right: max(12px, env(safe-area-inset-right));
@@ -500,12 +535,8 @@ input[type="range"]{ accent-color: var(--accent); }
 
   max-height: min(46vh, 460px);
   overflow:hidden;
-
-  /* “dock” look: no solapes, aire */
   padding: 2px;
 }
-
-/* ✅ Estilo genérico para cualquier item que metas (div/li/p/whatever) */
 #rlcChatList > *{
   pointer-events:none;
   border-radius: 14px;
@@ -522,12 +553,8 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 8px 10px;
   font-size: 12.5px;
   line-height: 1.28;
-
-  /* ✅ nunca “corta” raro */
   white-space: normal;
 }
-
-/* Si tu JS añade spans, esto los hace legibles */
 #rlcChatList b, #rlcChatList strong{
   font-weight: 900;
   color: rgba(255,255,255,.94);
@@ -538,7 +565,6 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── CONTROL ROOM ───────────────────────── */
-
 .mode-control{
   overflow:auto;
 
@@ -590,7 +616,6 @@ input[type="range"]{ accent-color: var(--accent); }
   gap: 12px;
 }
 
-/* Card (Control) — simple, aireado, sin cortes */
 .card{
   border-radius: var(--r-lg);
   border: 1px solid transparent;
@@ -602,8 +627,6 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 12px;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-
-  /* ✅ si algo crece, que no se solape */
   overflow: visible;
 }
 
@@ -619,8 +642,6 @@ input[type="range"]{ accent-color: var(--accent); }
   font-weight: 950;
   font-size: 14px;
   margin: 0;
-
-  /* ✅ no esconder: wrap */
   white-space: normal;
   line-height: 1.22;
 }
@@ -628,8 +649,6 @@ input[type="range"]{ accent-color: var(--accent); }
   margin-top: 6px;
   font-size: 12px;
   color: rgba(255,255,255,.70);
-
-  /* ✅ no esconder: wrap */
   white-space: normal;
   line-height: 1.28;
 }
@@ -646,7 +665,7 @@ input[type="range"]{ accent-color: var(--accent); }
   justify-content:space-between;
   gap: 10px;
   margin: 10px 0;
-  flex-wrap: wrap; /* ✅ evita solapes en pantallas raras */
+  flex-wrap: wrap;
 }
 .row > span{
   min-width: 120px;
@@ -691,17 +710,15 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── Responsive ───────────────────────── */
-
 @media (max-width: 980px){
   .controlGrid{ grid-template-columns: 1fr; }
   .row > span{ min-width: 108px; }
   .controls3{ grid-template-columns: 1fr; }
-  .hud{ width: min(520px, calc(100vw - 24px)); }
+  .hud{ width: min(700px, calc(100vw - 24px)); }
   .vote{ width: min(360px, calc(100vw - 24px)); }
 }
 
 /* ───────────────────────── Accessibility ───────────────────────── */
-
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle{ transition: none; }
 }

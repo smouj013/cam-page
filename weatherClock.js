@@ -1,9 +1,10 @@
-/* weatherClock.js — RLC Weather+LocalTime v1.0.0 (NO KEY)
+/* weatherClock.js — RLC Weather+LocalTime v1.0.1 (NO KEY + NO LAYOUT JUMP)
    ✅ Muestra temperatura + hora local de la cam en el HUD (junto al título)
-   ✅ Usa Open-Meteo Geocoding + Weather (gratis, sin key)
+   ✅ Open-Meteo Geocoding + Weather (gratis, sin key)
    ✅ Cache local (geo + meteo) para no spamear endpoints
    ✅ Key-namespaced (BUS/STATE) compatible con tu sistema
-   ✅ Expone window.RLCWx para que catalogView.js también lo use
+   ✅ window.RLCWx.getSummaryForCam() para catalogView.js
+   ✅ Importante: NO inyecta CSS (lo controla styles.css) -> evita reflow “tardío”
 */
 
 (() => {
@@ -11,7 +12,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_WX_LOADED_V100";
+  const LOAD_GUARD = "__RLC_WX_LOADED_V101";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -21,7 +22,6 @@
   const WX_CACHE_KEY_BASE  = "rlc_wx_cache_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
 
   function parseParams() {
@@ -67,52 +67,14 @@
     try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
 
-  function getGeoCache() {
-    return readJson(GEO_CACHE_KEY) || {};
-  }
-  function setGeoCache(map) {
-    writeJson(GEO_CACHE_KEY, map || {});
-  }
-  function getWxCache() {
-    return readJson(WX_CACHE_KEY) || {};
-  }
-  function setWxCache(map) {
-    writeJson(WX_CACHE_KEY, map || {});
-  }
+  function getGeoCache() { return readJson(GEO_CACHE_KEY) || {}; }
+  function setGeoCache(map) { writeJson(GEO_CACHE_KEY, map || {}); }
 
-  // ───────────────────────── UI inject
-  function injectStyles() {
-    if (qs("#rlcWxStyle")) return;
-    const st = document.createElement("style");
-    st.id = "rlcWxStyle";
-    st.textContent = `
-/* HUD weather chip */
-#hud .hudLeft{ gap: 10px; }
-#rlcHudWx{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(0,0,0,.30);
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: 0 10px 28px rgba(0,0,0,.40);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  font: 900 12px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  color: rgba(255,255,255,.92);
-  user-select:none;
-  white-space: nowrap;
-}
-#rlcHudWx .muted{ opacity:.85; font-weight: 850; }
-#rlcHudWx .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; letter-spacing: .02em; }
-#rlcHudWx.hidden{ display:none !important; }
-`.trim();
-    document.head.appendChild(st);
-  }
+  function getWxCache() { return readJson(WX_CACHE_KEY) || {}; }
+  function setWxCache(map) { writeJson(WX_CACHE_KEY, map || {}); }
 
+  // ───────────────────────── UI (sin CSS injection)
   function ensureHudChip() {
-    injectStyles();
     const hudTitle = qs("#hudTitle");
     if (!hudTitle) return null;
 
@@ -121,12 +83,12 @@
 
     chip = document.createElement("div");
     chip.id = "rlcHudWx";
-    chip.className = "hidden";
+    chip.className = "wxOff"; // ocupa espacio pero no se ve (evita “jumps”)
     chip.innerHTML = `
       <span id="rlcHudWxIcon" aria-hidden="true">🌡️</span>
-      <span id="rlcHudWxTemp" class="muted">—°C</span>
-      <span class="muted">·</span>
-      <span id="rlcHudWxTime" class="mono">--:--</span>
+      <span id="rlcHudWxTemp" class="wxTemp">—°C</span>
+      <span class="wxDot" aria-hidden="true">·</span>
+      <span id="rlcHudWxTime" class="wxTime">--:--</span>
     `.trim();
 
     // lo insertamos dentro del mismo contenedor del título (hudLeft)
@@ -137,7 +99,7 @@
   function setHudChipVisible(on) {
     const chip = ensureHudChip();
     if (!chip) return;
-    chip.classList.toggle("hidden", !on);
+    chip.classList.toggle("wxOff", !on);
   }
 
   function setHudChip(icon, tempText, timeText) {
@@ -270,7 +232,9 @@
 
   function formatTimeInTZ(timezone) {
     try {
-      const fmt = new Intl.DateTimeFormat("es-ES", {
+      const lang = (document.documentElement.getAttribute("lang") || "es").toLowerCase();
+      const locale = (lang.startsWith("es")) ? "es-ES" : "en-GB";
+      const fmt = new Intl.DateTimeFormat(locale, {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
@@ -278,16 +242,17 @@
       });
       return fmt.format(new Date());
     } catch (_) {
-      // fallback local
       const d = new Date();
       return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
     }
   }
 
   function extractPlace(cam) {
-    // prioridad: place -> title (si place vacío)
+    // prioridad: place -> city -> title
     const p = safeStr(cam?.place || "");
     if (p) return p;
+    const c = safeStr(cam?.city || "");
+    if (c) return c;
     const t = safeStr(cam?.title || "");
     return t;
   }
@@ -310,7 +275,6 @@
     const place = extractPlace(cam);
     if (!place) return null;
 
-    // coords directos si existen
     const coords = extractCoords(cam);
     let geo = null;
 
@@ -318,7 +282,6 @@
       if (coords.timezone) {
         geo = { latitude: coords.lat, longitude: coords.lon, timezone: coords.timezone };
       } else {
-        // si no hay timezone, intentamos geocode con place para sacar tz (sin duplicar lat/lon)
         geo = await geocodePlace(place, "en");
         if (!geo) geo = { latitude: coords.lat, longitude: coords.lon, timezone: "" };
       }
@@ -366,7 +329,6 @@
     if (!camId) { setHudChipVisible(false); return; }
 
     if (camId === lastCamId && activeTimezone) {
-      // solo refresca hora
       setHudChip(activeIcon, activeTempText, formatTimeInTZ(activeTimezone));
       return;
     }
@@ -374,8 +336,8 @@
     lastCamId = camId;
     const token = ++lastReqToken;
 
-    // placeholder rápido
-    setHudChip("🌡️", "…", "--:--");
+    // placeholder rápido (sin “jump” porque el chip ya ocupa espacio)
+    setHudChip("🌡️", "…°C", "--:--");
 
     try {
       const sum = await getSummaryForCam(cam);
@@ -444,7 +406,6 @@
   setInterval(() => {
     const st = readStateFromLS();
     if (!st) return;
-    // no compares deep, solo cam id
     const id = String(st?.cam?.id || "");
     const prev = String(lastState?.cam?.id || "");
     if (id && id !== prev) onState(st);

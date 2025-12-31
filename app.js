@@ -10,7 +10,7 @@
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V223_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V224_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -38,11 +38,9 @@
   let lastTickerStateAt = 0;
 
   function tickerNotify(kind, data) {
-    // kind: "STATE" | "EVENT" | "CAM"
     try {
       const api = g.RLCNewsTicker || g.NewsTicker || g.newsTicker || null;
 
-      // Hooks opcionales (no obligatorios)
       if (api) {
         if (typeof api.onPlayerEvent === "function") api.onPlayerEvent(kind, data);
         if (typeof api.emit === "function") api.emit(kind, data);
@@ -51,7 +49,6 @@
       }
     } catch (_) {}
 
-    // CustomEvent universal (el ticker puede escuchar esto)
     try {
       window.dispatchEvent(new CustomEvent(TICKER_EVT, { detail: { kind, data } }));
     } catch (_) {}
@@ -93,16 +90,13 @@
 
     const key = (u.searchParams.get("key") || "").trim();
 
-    // Legacy allow
     const legacyParam = u.searchParams.get("legacy");
     const allowLegacy = (legacyParam != null) ? parseBoolParam(legacyParam, true) : true;
 
-    // Health override
     const startTimeoutMs = clamp(parseInt(u.searchParams.get("startTimeoutMs") || "20000", 10) || 20000, 3000, 90000);
     const stallTimeoutMs = clamp(parseInt(u.searchParams.get("stallTimeoutMs") || "25000", 10) || 25000, 4000, 120000);
     const maxStalls = clamp(parseInt(u.searchParams.get("maxStalls") || "3", 10) || 3, 1, 8);
 
-    // YouTube cookies/session (ON por defecto)
     const ytCookiesParam = u.searchParams.get("ytCookies");
     const ytSessionParam = u.searchParams.get("ytSession");
     const ytCookiesExplicit = (ytCookiesParam != null) || (ytSessionParam != null);
@@ -122,7 +116,6 @@
       ytCookies,
       ytCookiesExplicit,
 
-      // BGM ON por defecto
       bgm: parseBoolParam(u.searchParams.get("bgm") ?? "1", true),
       bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.22") || 0.22, 0, 1),
 
@@ -133,7 +126,7 @@
 
       voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
 
-      // ⚠️ IMPORTANTE: voteAt = “a falta” (segundos restantes cuando empieza la votación REAL)
+      // ⚠️ voteAt = “a falta” (segundos restantes cuando empieza la votación REAL)
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
 
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
@@ -337,7 +330,6 @@
     try { if (bcMain) bcMain.postMessage(evt); } catch (_) {}
     try { if (bcLegacy) bcLegacy.postMessage(evt); } catch (_) {}
 
-    // ✅ News ticker hook (no rompe nada si no existe)
     tickerNotify("EVENT", evt);
   }
 
@@ -540,7 +532,7 @@
   }
 
   let lastBotCmdAt = 0;
-  let twitchChannel = ""; // set in boot
+  let twitchChannel = "";
   function botSay(text) {
     if (!OWNER_MODE) return false;
     if (!twitchChannel) return false;
@@ -1086,21 +1078,18 @@
   let voteEnabled = !!P.vote;
   let voteOverlay = !!P.voteOverlay;
 
-  // Config
   let voteWindowCfgSec = P.voteWindow | 0;
-  let voteAtCfgSec = P.voteAt | 0;      // seconds remaining when vote window should begin
+  let voteAtCfgSec = P.voteAt | 0;      // remaining cuando empieza el voto real
   let voteLeadCfgSec = P.voteLead | 0;  // pre-warning
   let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : (voteLeadCfgSec + voteWindowCfgSec);
   let stayMins = P.stayMins | 0;
 
-  // Segment schedule
   let voteWindowSegSec = voteWindowCfgSec;
-  let voteAtSegSec = voteAtCfgSec;         // (auto trigger) remaining seconds when LEAD begins = voteAtBase + lead
-  let voteAtSegBaseSec = voteAtCfgSec;     // (auto) remaining seconds when VOTE window begins
+  let voteAtSegSec = voteAtCfgSec;         // trigger (lead start) = voteAt + lead
+  let voteAtSegBaseSec = voteAtCfgSec;     // base (vote start)
   let voteLeadSegSec = voteLeadCfgSec;
   let voteUiSegSec = voteUiCfgSec;
 
-  // Active session
   let voteWindowActiveSec = voteWindowCfgSec;
   let voteLeadActiveSec = voteLeadCfgSec;
 
@@ -1116,7 +1105,6 @@
   let votesYes = 0, votesNo = 0;
   let voters = new Set();
 
-  // TagVote flag (declarado antes para ensureIrc)
   let tagVoteActive = false;
 
   function parseVoteCmds(str) {
@@ -1139,22 +1127,15 @@
     renderVote();
   }
 
-  // ✅ NUEVO: Auto schedule por "remaining"
-  // - voteAtCfgSec = remaining cuando EMPIEZA el VOTO (sin lead)
-  // - auto trigger = remaining <= (voteAtSegBaseSec + voteLeadSegSec)  (cuando empieza el lead)
   function recalcVoteScheduleForSegment(segTotalSec) {
     const total = clamp(segTotalSec | 0, 1, 120 * 60);
 
     voteWindowSegSec = clamp(voteWindowCfgSec | 0, 5, 180);
     voteLeadSegSec = clamp(voteLeadCfgSec | 0, 0, 30);
 
-    // base "voteAt" (cuando empieza el voto real) no puede ser mayor que total
     voteAtSegBaseSec = clamp(voteAtCfgSec | 0, 1, total);
-
-    // trigger (lead empieza) = voteAt + lead, pero nunca mayor que total
     voteAtSegSec = clamp((voteAtSegBaseSec + voteLeadSegSec) | 0, 1, total);
 
-    // UI hint (informativo)
     voteUiSegSec = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : (voteLeadSegSec + voteWindowSegSec);
   }
 
@@ -1210,7 +1191,6 @@
     if (!voteBox) return;
     const show = voteOverlay && voteEnabled && !!twitchChannel && voteSessionActive;
 
-    // ✅ FIX: fuerza ocultar/mostrar incluso si falta .hidden en CSS
     setShown(voteBox, show);
 
     if (!show) return;
@@ -1385,7 +1365,6 @@
     if (!tagVoteBox) return;
     const show = tagVoteActive && tagVoteTags.length === 3;
 
-    // ✅ FIX: fuerza ocultar/mostrar aunque falte .hidden
     setShown(tagVoteBox, show);
 
     if (!show) return;
@@ -1788,7 +1767,6 @@
     clearMedia();
     setHud(cam);
 
-    // ✅ News ticker: evento “CAM” (no rompe si no existe)
     try {
       tickerNotify("CAM", {
         ts: Date.now(),
@@ -2029,17 +2007,13 @@
         overlay: voteOverlay,
         channel: twitchChannel || "",
         windowSec: voteWindowCfgSec,
-        // voteAt = “a falta” cuando empieza el voto (sin lead)
         voteAtSec: voteAtCfgSec,
         leadSec: voteLeadCfgSec,
         uiSec: voteUiCfgSec,
         stayMins,
         cmd: voteCmdStr,
-        // segment-adjusted
         segWindowSec: voteWindowSegSec,
-        // segVoteAtSec = “a falta” cuando empieza el LEAD (voteAt + lead) ya clamped al segmento
         segVoteAtSec: voteAtSegSec,
-        // segVoteAtBaseSec = “a falta” cuando empieza el voto real
         segVoteAtBaseSec: voteAtSegBaseSec,
         segLeadSec: voteLeadSegSec,
         sessionActive: voteSessionActive,
@@ -2066,10 +2040,7 @@
     try { if (bcMain) bcMain.postMessage(state); } catch (_) {}
     try { if (bcLegacy) bcLegacy.postMessage(state); } catch (_) {}
 
-    // ✅ Exponer último state para el ticker (lectura inmediata si quiere)
     try { g.__RLC_LAST_STATE = state; } catch (_) {}
-
-    // ✅ News ticker hook (STATE throttled)
     tickerState(state, !!force);
   }
 
@@ -2163,10 +2134,7 @@
           if (payload.enabled != null) voteEnabled = !!payload.enabled;
           if (payload.overlay != null) voteOverlay = !!payload.overlay;
           if (payload.windowSec != null) voteWindowCfgSec = clamp(payload.windowSec | 0, 5, 180);
-
-          // ✅ voteAt sigue siendo "a falta" cuando empieza el voto real (sin lead)
           if (payload.voteAtSec != null) voteAtCfgSec = clamp(payload.voteAtSec | 0, 5, 600);
-
           if (payload.leadSec != null) voteLeadCfgSec = clamp(payload.leadSec | 0, 0, 30);
           if (payload.uiSec != null) voteUiCfgSec = clamp(payload.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
           if (payload.stayMins != null) stayMins = clamp(payload.stayMins | 0, 1, 120);
@@ -2474,20 +2442,16 @@
   function tick() {
     setCountdownUI();
 
-    // Vote tick
     if (voteSessionActive) {
       const now = Date.now();
       if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) { votePhase = "vote"; renderVote(); }
       if (voteEndsAt && now >= voteEndsAt) voteFinish();
     }
 
-    // TagVote tick
     if (tagVoteActive && tagVoteEndsAt && Date.now() >= tagVoteEndsAt) tagVoteFinish();
 
-    // Ads tick
     adTick();
 
-    // YouTube stall guard
     try {
       const cam = cams[idx] || null;
       if (playing && autoskip && cam && cam.kind === "youtube" && startedOk) {
@@ -2496,12 +2460,9 @@
       }
     } catch (_) {}
 
-    // ✅ FIX: Auto-trigger vote por "remaining" (a falta)
-    // - trigger cuando rem <= voteAtSegSec (lead start = voteAt + lead)
-    // - en auto, ventana efectiva no excede voteAtSegBaseSec (para que no “corte” al final)
+    // ✅ Auto-trigger vote por remaining (a falta)
     if (playing && !voteSessionActive && !tagVoteActive && voteEnabled && twitchChannel) {
       const rem = remainingSeconds();
-
       if (!voteTriggeredForSegment && rem > 0 && rem <= (voteAtSegSec | 0)) {
         voteTriggeredForSegment = true;
 
@@ -2512,7 +2473,6 @@
       }
     }
 
-    // Fin del segmento => no saltar si hay votación/TagVote
     if (playing && remainingSeconds() <= 0) {
       if (voteSessionActive) voteFinish();
       else if (tagVoteActive) tagVoteFinish();
@@ -2535,13 +2495,11 @@
 
     const saved = loadPlayerState();
 
-    // Twitch channel: URL explícita > saved > bot cfg > default(owner)
     if (P.twitchExplicit) twitchChannel = P.twitch || "";
     else if (saved?.twitch) twitchChannel = String(saved.twitch || "").trim().replace(/^@/, "");
     else if (OWNER_MODE) twitchChannel = readBotCfgChannel() || OWNER_DEFAULT_TWITCH;
     else twitchChannel = P.twitch || "";
 
-    // Aplica saved
     if (saved && typeof saved === "object") {
       if (saved.playing != null) playing = !!saved.playing;
       if (saved.mins != null) roundSeconds = clamp((saved.mins | 0), 1, 120) * 60;
@@ -2559,7 +2517,6 @@
         if (saved.health.maxStalls != null) maxStalls = clamp(saved.health.maxStalls | 0, 1, 8);
       }
 
-      // vote
       if (!P.voteExplicit && saved.vote && typeof saved.vote === "object") voteEnabled = !!saved.vote.enabled;
       if (saved.vote && typeof saved.vote === "object") {
         if (saved.vote.overlay != null) voteOverlay = !!saved.vote.overlay;
@@ -2571,7 +2528,6 @@
         if (saved.vote.cmd != null) parseVoteCmds(String(saved.vote.cmd || ""));
       }
 
-      // chat
       if (!P.chatExplicit && saved.chat && typeof saved.chat === "object") chatEnabled = !!saved.chat.enabled;
       if (saved.chat && typeof saved.chat === "object") {
         if (!P.chatHideExplicit && saved.chat.hideCommands != null) chatHideCommands = !!saved.chat.hideCommands;
@@ -2579,7 +2535,6 @@
         if (!P.chatTtlExplicit && saved.chat.ttl != null) chatTtlSec = clamp(saved.chat.ttl | 0, 5, 30);
       }
 
-      // ads
       if (!P.adsExplicit && saved.ads && typeof saved.ads === "object") adsEnabled = !!saved.ads.enabled;
       if (saved.ads && typeof saved.ads === "object") {
         if (saved.ads.adLead != null) adLeadDefaultSec = clamp(saved.ads.adLead | 0, 0, 300);
@@ -2587,7 +2542,6 @@
         if (saved.ads.chatText != null) adChatText = String(saved.ads.chatText || "").trim();
       }
 
-      // bgm
       if (saved.bgm && typeof saved.bgm === "object") {
         if (saved.bgm.enabled != null) bgmEnabled = !!saved.bgm.enabled;
         if (saved.bgm.vol != null) bgmSetVol(saved.bgm.vol);
@@ -2605,14 +2559,12 @@
       if (n >= 0) idx = n;
     }
 
-    // ✅ recalcula schedule (con semantics por remaining)
     recalcVoteScheduleForSegment(segmentSeconds | 0);
 
     if (chatEnabled) { ensureChatUI(); chatRoot?.classList?.add?.("chat--on"); }
     ensureAlertsUI();
     ensureIrc();
 
-    // ✅ asegurar que voteBox esté oculto en boot, aunque CSS falle
     voteReset();
     tagVoteActive = false;
     tagVoteTags = [];
