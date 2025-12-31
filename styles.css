@@ -1,10 +1,17 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.2.1 (PATCH + WX CHIP FIX)
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.3.1 (BROADCAST + HUD TITLE TICKER)
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
-   🎯 Patch:
-   - --ui-top-offset ahora NO deja “gap fantasma” cuando --rlcTickerH = 0px (sin depender de :has)
-   - line-clamp estándar añadido (evita warning) + mantiene -webkit-line-clamp
-   - ✅ FIX WX CHIP: evita “solo emojis / se va a otra fila” en .hudLeft grid
+   ✅ Mantiene: --ui-top-offset robusto + line-clamp estándar + FIX WX CHIP
+   🚀 Mejora:
+   - HUD/Countdown/Progress estilo “noticiero” (como NewsTicker)
+   - Animaciones suaves (pop-in, shimmer, pulse, sheen) + reduced-motion friendly
+   - ✅ HUD TITLE TICKER (marquee): se activa si #hudTitle tiene:
+       data-title="texto..." y data-marquee="1"
+     (si no lo tienes, se queda en clamp normal y perfecto)
+
+   TIP: si quieres que sea auto, en app.js al setear hudTitle:
+     hudTitle.dataset.title = hudTitle.textContent;
+     hudTitle.dataset.marquee = (hudTitle.scrollWidth > hudTitle.clientWidth + 4) ? "1" : "0";
 */
 
 /* ───────────────────────── Theme Tokens ───────────────────────── */
@@ -34,6 +41,12 @@
   --danger: #ff4d6d;
   --warn: #ffcc4d;
 
+  /* “Broadcast / News” */
+  --news-red: #ff375f;
+  --news-red2: rgba(255,55,95,.22);
+  --news-bg-top: rgba(10,14,20,.88);
+  --news-bg-bot: rgba(8,10,14,.78);
+
   /* Radius & shadow */
   --r: 16px;
   --r-sm: 12px;
@@ -42,7 +55,7 @@
   --shadow: 0 18px 60px rgba(0,0,0,.45);
   --shadow-soft: 0 12px 34px rgba(0,0,0,.28);
 
-  /* Typography (simple + perfecta en stream, sin imports) */
+  /* Typography */
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --mono: ui-monospace, "Cascadia Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
@@ -56,6 +69,17 @@
   /* Crispness */
   --line: 1.28;
   --letter: .01em;
+
+  /* Motion */
+  --ease-out: cubic-bezier(.2,.9,.2,1);
+  --ease-soft: cubic-bezier(.22,.7,.2,1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 420ms;
+
+  /* Marquee */
+  --hudMarqueeGap: 44px;
+  --hudMarqueeDur: 12s;
 
   /* ───────────────────────── Ticker stacking (ROBUST) ───────────────────────── */
   --ticker-h: var(--rlcTickerH, 34px);
@@ -73,6 +97,30 @@
   }
 }
 
+/* ───────────────────────── Keyframes ───────────────────────── */
+@keyframes rlcPopIn{
+  from{ opacity: 0; transform: translate3d(0,10px,0) scale(.985); filter: blur(.6px); }
+  to  { opacity: 1; transform: translate3d(0,0,0) scale(1); filter: blur(0); }
+}
+@keyframes rlcFloat{
+  0%,100%{ transform: translate3d(0,0,0); }
+  50%{ transform: translate3d(0,-2px,0); }
+}
+@keyframes rlcPulseDot{
+  0%,100%{ transform: scale(1); opacity: .92; box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45); }
+  50%{ transform: scale(1.15); opacity: 1; box-shadow: 0 0 0 4px rgba(255,55,95,.22), 0 0 22px rgba(255,55,95,.60); }
+}
+@keyframes rlcBarSheen{
+  from{ transform: translateX(-70%); opacity: 0; }
+  25%{ opacity: .35; }
+  to{ transform: translateX(170%); opacity: 0; }
+}
+@keyframes rlcHudMarquee{
+  from{ transform: translate3d(0,0,0); }
+  to{ transform: translate3d(calc(-100% - var(--hudMarqueeGap)),0,0); }
+}
+
+/* ───────────────────────── Base ───────────────────────── */
 *{ box-sizing: border-box; }
 html, body{ height:100%; }
 html{ color-scheme: dark; }
@@ -108,7 +156,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* ───────────────────────── Controls (Buttons / Inputs) ───────────────────────── */
-
 .btn{
   appearance:none;
   border: 1px solid transparent;
@@ -130,9 +177,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     linear-gradient(135deg, rgba(77,215,255,.30), rgba(37,243,166,.26), rgba(255,255,255,.12)) border-box;
 
   box-shadow: 0 10px 26px rgba(0,0,0,.22);
-  transition: transform .12s ease, filter .12s ease, box-shadow .12s ease;
+  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
 }
-.btn:hover{ filter: brightness(1.06); }
+.btn:hover{ filter: brightness(1.07); box-shadow: 0 14px 34px rgba(0,0,0,.28); }
 .btn:active{ transform: translateY(1px); }
 .btn.ghost{
   background:
@@ -150,7 +197,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   padding: 10px 12px;
   border-radius: var(--r-sm);
   outline:none;
-  transition: border-color .12s ease, background .12s ease, box-shadow .12s ease;
+  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 .input::placeholder{ color: rgba(255,255,255,.40); }
 .select:focus, .input:focus{
@@ -162,7 +209,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 input[type="range"]{ accent-color: var(--accent); }
 
 /* ───────────────────────── Player Layout ───────────────────────── */
-
 .app, .stage{ width:100%; height:100%; }
 
 .stage{
@@ -213,6 +259,8 @@ input[type="range"]{ accent-color: var(--accent); }
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+
+  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
 }
 .fallbackTitle{
   font-weight: 900;
@@ -226,8 +274,7 @@ input[type="range"]{ accent-color: var(--accent); }
   margin: 0 0 12px;
 }
 
-/* ───────────────────────── HUD Stream (WIDE + STABLE) ───────────────────────── */
-
+/* ───────────────────────── HUD Stream (BROADCAST) ───────────────────────── */
 .hud{
   position:absolute;
   left: max(12px, env(safe-area-inset-left));
@@ -236,29 +283,40 @@ input[type="range"]{ accent-color: var(--accent); }
   z-index: 5;
 
   pointer-events:none;
-  overflow: visible;
+  overflow: hidden;
 
-  border-radius: var(--r-lg);
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--panel), var(--panel)) padding-box,
-    linear-gradient(135deg, rgba(37,243,166,.22), rgba(77,215,255,.24), rgba(255,255,255,.10)) border-box;
+  border-radius: 14px;
+  border: 1px solid var(--stroke);
+  background: linear-gradient(180deg, var(--news-bg-top), var(--news-bg-bot));
   box-shadow: var(--shadow-soft);
 
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 
   contain: layout paint;
+  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
 }
 .hud a, .hud button{ pointer-events:auto; }
+
+.hud::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    radial-gradient(260px 90px at 18% 0%, rgba(255,55,95,.14), transparent 70%),
+    radial-gradient(260px 90px at 72% 0%, rgba(77,215,255,.12), transparent 70%);
+  opacity:.85;
+}
 
 .hudBar{
   display:grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items:center;
   gap: 10px;
-  padding: 10px 12px 8px;
-  min-height: 46px;
+  padding: 10px 12px 9px;
+  min-height: 48px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
 }
 
 .hudLeft{
@@ -271,54 +329,138 @@ input[type="range"]{ accent-color: var(--accent); }
 
 /* Badge */
 .badge{
-  font-size: 10.5px;
-  letter-spacing: .14em;
-  padding: 4px 8px;
+  height: 28px;
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 0 12px;
   border-radius: 999px;
 
-  border: 1px solid rgba(37,243,166,.22);
-  background: rgba(37,243,166,.10);
-  color: rgba(235,255,248,.96);
+  border: 1px solid var(--stroke);
+  background: linear-gradient(90deg, var(--news-red2), rgba(255,55,95,0));
+  color: rgba(255,255,255,.92);
+
+  font: 950 11px/1 var(--sans);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  user-select:none;
   white-space: nowrap;
 }
+.badge::before{
+  content:"";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--news-red);
+  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
+  animation: rlcPulseDot 2.1s ease-in-out infinite;
+}
 
-/* Title clamped -> no cambia altura raro */
+/* Title base: clamp + fade */
 .hudTitle{
   font-size: 13px;
-  font-weight: 900;
+  font-weight: 950;
   min-width: 0;
   line-height: 1.22;
+  text-shadow: 0 2px 12px rgba(0,0,0,.35);
 
   display: -webkit-box;
   -webkit-box-orient: vertical;
 
-  /* ✅ Standard + WebKit (evita warning + mantiene soporte real) */
+  /* ✅ Standard + WebKit */
   line-clamp: 2;
   -webkit-line-clamp: 2;
 
   overflow: hidden;
   text-overflow: ellipsis;
+
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
 }
 .hud.hud--collapsed .hudTitle{
   line-clamp: 1;
   -webkit-line-clamp: 1;
 }
 
-/* Right */
+/* ✅ HUD TITLE TICKER (solo si data-marquee="1" y normalmente en collapsed) */
+.hud.hud--collapsed .hudTitle[data-marquee="1"]{
+  position: relative;
+  display: block;
+  white-space: nowrap;
+
+  /* anulamos el clamp para que el marquee sea real */
+  line-clamp: unset;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: initial;
+
+  /* escondemos el texto real, renderiza el pseudo con data-title */
+  color: transparent;
+
+  /* clipping del marquee */
+  overflow: hidden;
+
+  /* mantenemos el fade broadcast */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
+}
+.hud.hud--collapsed .hudTitle[data-marquee="1"]::before,
+.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{
+  content: attr(data-title);
+  position: absolute;
+  top: 0;
+  left: 0;
+
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+
+  white-space: nowrap;
+  color: rgba(255,255,255,.92);
+
+  will-change: transform;
+  transform: translate3d(0,0,0);
+  animation: rlcHudMarquee var(--hudMarqueeDur) linear infinite;
+}
+.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{
+  left: calc(100% + var(--hudMarqueeGap));
+}
+.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::before,
+.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::after{
+  animation-play-state: paused;
+}
+
 .hudRight{
   display:flex;
   align-items:center;
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* Countdown chip */
 .hudCountdown{
-  font-size: 12px;
-  padding: 4px 8px;
+  position: relative;
+  font-size: 12.5px;
+  font-weight: 950;
+  padding: 6px 10px 6px 30px;
   border-radius: 999px;
+
   border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.055);
+  background: rgba(0,0,0,.28);
+
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
 }
+.hudCountdown::before{
+  content:"⏱";
+  position:absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: .82;
+  font-size: 12px;
+}
+
 .hudToggle{
   width: 32px;
   height: 30px;
@@ -327,43 +469,71 @@ input[type="range"]{ accent-color: var(--accent); }
   background: rgba(255,255,255,.06);
   color: rgba(255,255,255,.92);
   cursor:pointer;
-  transition: transform .12s ease, filter .12s ease;
+  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
 }
-.hudToggle:hover{ filter: brightness(1.08); }
+.hudToggle:hover{ filter: brightness(1.10); background: rgba(255,255,255,.08); }
 .hudToggle:active{ transform: translateY(1px); }
 
-/* Progress estable */
+/* Progress + sheen */
 .progress{
-  height: 4px;
+  height: 3px;
   background: rgba(255,255,255,.06);
   border-radius: 999px;
   margin: 0 12px;
   overflow: hidden;
   contain: paint;
+  position: relative;
 }
 .progressBar{
   height:100%;
   width:0%;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(37,243,166,.98), rgba(77,215,255,.86));
+  background: linear-gradient(90deg, rgba(37,243,166,.98), rgba(77,215,255,.88));
+  box-shadow: 0 0 18px rgba(77,215,255,.22);
   will-change: width;
   transform: translateZ(0);
+  position: relative;
+}
+.progressBar::after{
+  content:"";
+  position:absolute;
+  top:-6px;
+  bottom:-6px;
+  width: 40%;
+  left: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent);
+  filter: blur(.2px);
+  transform: translateX(-70%);
+  opacity: 0;
+  animation: rlcBarSheen 2.8s linear infinite;
+  pointer-events:none;
 }
 
-/* Details */
+/* Details: animables */
 .hudDetails{
-  padding: 8px 12px 12px;
+  padding: 10px 12px 12px;
+  background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,0));
+
+  max-height: 220px;
+  opacity: 1;
+  transform: translate3d(0,0,0);
+  transition: max-height var(--dur-3) var(--ease-soft), opacity var(--dur-2) var(--ease-soft), transform var(--dur-2) var(--ease-soft), padding var(--dur-2) var(--ease-soft);
 }
 .hudRow{
   display:grid;
-  grid-template-columns: 78px 1fr;
+  grid-template-columns: 86px 1fr;
   gap: 10px;
-  padding: 6px 0;
+  padding: 8px 0;
   align-items: start;
+  border-top: 1px solid rgba(255,255,255,.06);
 }
+.hudRow:first-child{ border-top: 0; }
 .hudLabel{
-  font-size: 11px;
-  color: var(--muted2);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  font-weight: 950;
+  color: rgba(255,255,255,.60);
 }
 .hudValue{
   font-size: 12px;
@@ -372,18 +542,25 @@ input[type="range"]{ accent-color: var(--accent); }
   white-space: normal;
 }
 .hudLink{
-  color: rgba(77,215,255,.95);
+  color: rgba(255,255,255,.92);
   text-decoration: none;
+  border-bottom: 1px solid rgba(77,215,255,.35);
 }
-.hudLink:hover{ text-decoration: underline; }
+.hudLink:hover{ border-bottom-color: rgba(77,215,255,.70); }
 .hudFooter{
   margin-top: 8px;
   font-size: 11px;
   color: rgba(255,255,255,.62);
 }
 
-.hud.hud--collapsed .hudDetails{ display:none; }
-.hud.hidden{ display:none !important; }
+.hud.hud--collapsed .hudDetails{
+  max-height: 0px;
+  opacity: 0;
+  transform: translate3d(0,-4px,0);
+  padding-top: 0;
+  padding-bottom: 0;
+  pointer-events:none;
+}
 
 /* ───────────────────────── Weather Chip (HUD) ───────────────────────── */
 #rlcHudWx{
@@ -400,7 +577,7 @@ input[type="range"]{ accent-color: var(--accent); }
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 
-  font: 900 12px/1 var(--sans);
+  font: 950 12px/1 var(--sans);
   color: rgba(255,255,255,.92);
   user-select:none;
   white-space: nowrap;
@@ -413,34 +590,24 @@ input[type="range"]{ accent-color: var(--accent); }
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
-}
 
-/* ✅ FIX: si el script lo añade como 4º hijo de .hudLeft, lo forzamos a 3ª columna */
+  animation: rlcFloat 3.2s ease-in-out infinite;
+}
 .hudLeft > #rlcHudWx{
   grid-column: 3;
   grid-row: 1;
   align-self: center;
 }
-
-#rlcHudWxIcon{
-  font-size: 13px;
-  line-height: 1;
-}
-
+#rlcHudWxIcon{ font-size: 13px; line-height: 1; }
 #rlcHudWx .wxDot{ opacity:.72; }
-
 #rlcHudWx .wxTemp,
-#rlcHudWx .wxTime{
-  display:inline-block; /* ✅ evita casos raros de colapso */
-}
-
+#rlcHudWx .wxTime{ display:inline-block; }
 #rlcHudWx .wxTemp{
   opacity:.88;
   font-weight: 950;
-  min-width: 3.2em;     /* ✅ evita “solo emojis” */
+  min-width: 3.2em;
   text-align: right;
 }
-
 #rlcHudWx .wxTime{
   font-family: var(--mono);
   letter-spacing: .02em;
@@ -448,12 +615,11 @@ input[type="range"]{ accent-color: var(--accent); }
   min-width: 3.6em;
   text-align: right;
 }
-
-/* ✅ NO display:none (si no, hay salto/flicker) */
 #rlcHudWx.wxOff{
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+  animation: none !important;
 }
 
 /* ───────────────────────── Vote Overlay ───────────────────────── */
@@ -465,17 +631,16 @@ input[type="range"]{ accent-color: var(--accent); }
   z-index: 6;
   pointer-events:none;
 
-  border-radius: var(--r-lg);
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--panel), var(--panel)) padding-box,
-    linear-gradient(135deg, rgba(255,255,255,.14), rgba(77,215,255,.20), rgba(37,243,166,.18)) border-box;
-
+  border-radius: 14px;
+  border: 1px solid var(--stroke);
+  background: linear-gradient(180deg, var(--news-bg-top), rgba(8,10,14,.70));
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-}
 
+  overflow:hidden;
+  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
+}
 .voteTop{
   display:flex;
   align-items:flex-start;
@@ -483,6 +648,7 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 10px 10px 6px;
   gap: 10px;
   flex-wrap: wrap;
+  border-bottom: 1px solid rgba(255,255,255,.06);
 }
 .voteTitle{
   font-weight: 950;
@@ -490,14 +656,25 @@ input[type="range"]{ accent-color: var(--accent); }
   letter-spacing: .16em;
   color: rgba(255,255,255,.84);
   white-space: nowrap;
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  text-transform: uppercase;
+}
+.voteTitle::before{
+  content:"";
+  width: 8px; height: 8px; border-radius: 999px;
+  background: var(--news-red);
+  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
 }
 .voteTime{
   font-size: 12px;
   color: rgba(255,255,255,.70);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .voteHint{
-  padding: 0 10px 10px;
+  padding: 8px 10px 10px;
   font-size: 12px;
   color: rgba(255,255,255,.62);
   line-height: 1.32;
@@ -532,7 +709,7 @@ input[type="range"]{ accent-color: var(--accent); }
   gap: 8px;
 
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(255,255,255,.90);
   min-width: 0;
 }
@@ -574,11 +751,8 @@ input[type="range"]{ accent-color: var(--accent); }
   pointer-events:none;
   border-radius: 14px;
 
-  border: 1px solid transparent;
-  background:
-    linear-gradient(rgba(12,16,24,.64), rgba(12,16,24,.58)) padding-box,
-    linear-gradient(135deg, rgba(77,215,255,.18), rgba(37,243,166,.16), rgba(255,255,255,.08)) border-box;
-
+  border: 1px solid rgba(255,255,255,.10);
+  background: linear-gradient(180deg, rgba(10,14,20,.82), rgba(8,10,14,.70));
   box-shadow: 0 10px 22px rgba(0,0,0,.22);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -587,9 +761,11 @@ input[type="range"]{ accent-color: var(--accent); }
   font-size: 12.5px;
   line-height: 1.28;
   white-space: normal;
+
+  animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
 }
 #rlcChatList b, #rlcChatList strong{
-  font-weight: 900;
+  font-weight: 950;
   color: rgba(255,255,255,.94);
 }
 #rlcChatList em{
@@ -600,7 +776,6 @@ input[type="range"]{ accent-color: var(--accent); }
 /* ───────────────────────── CONTROL ROOM ───────────────────────── */
 .mode-control{
   overflow:auto;
-
   background:
     radial-gradient(900px 620px at 22% 12%, rgba(77,215,255,.10), transparent 60%),
     radial-gradient(980px 720px at 82% 82%, rgba(37,243,166,.10), transparent 60%),
@@ -661,7 +836,10 @@ input[type="range"]{ accent-color: var(--accent); }
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   overflow: visible;
+
+  transition: transform var(--dur-2) var(--ease-out), filter var(--dur-2) var(--ease-out);
 }
+.card:hover{ transform: translate3d(0,-2px,0); filter: brightness(1.02); }
 
 .cardTitle{
   font-weight: 950;
@@ -669,6 +847,7 @@ input[type="range"]{ accent-color: var(--accent); }
   letter-spacing: .08em;
   margin: 0 0 10px;
   color: rgba(255,255,255,.86);
+  text-transform: uppercase;
 }
 
 .nowTitle{
@@ -750,10 +929,33 @@ input[type="range"]{ accent-color: var(--accent); }
   .hud{ width: min(700px, calc(100vw - 24px)); }
   .vote{ width: min(360px, calc(100vw - 24px)); }
 }
+@media (max-width: 420px){
+  .hudRow{ grid-template-columns: 78px 1fr; }
+  .hud{ left: max(10px, env(safe-area-inset-left)); bottom: max(10px, env(safe-area-inset-bottom)); }
+  .hudBar{ padding-left: 10px; padding-right: 10px; }
+  .progress{ margin-left: 10px; margin-right: 10px; }
+}
 
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
-  .btn, .hudToggle{ transition: none; }
+  .btn, .hudToggle, .card, .pill{ transition: none !important; }
+  .badge::before, #rlcHudWx, .progressBar::after{ animation: none !important; }
+  .fallbackCard, .hud, .vote, #rlcChatList > *{ animation: none !important; }
+}
+
+/* ───────────────────────── Fallback si no hay backdrop-filter ───────────────────────── */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+  .hud, .vote, #rlcChatList > *, .card, .pill, .fallbackCard{
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .hud, .vote, #rlcChatList > *{
+    background: rgba(10,14,20,.92) !important;
+  }
+  .card{
+    background: rgba(12,16,24,.88) !important;
+    border-color: rgba(255,255,255,.10) !important;
+  }
 }
 
 /* ───────────────────────── Optional: better rendering on OLED ───────────────────────── */
