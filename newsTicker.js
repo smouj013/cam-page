@@ -1,12 +1,10 @@
-/* newsTicker.js — RLC Global News Ticker v1.3.0 (LANG PRIORITY + SOURCELANG FIX)
-   ✅ FIX REAL: filtra por idioma de FUENTE con sourcelang:(eng/spa) para evitar árabe/chino/etc.
-   ✅ Prioridad:
-      - lang=auto -> ENG (contenido) + label según navegador (NOTICIAS/NEWS)
-      - lang=en   -> ENG
-      - lang=es   -> SPA primero, fallback a ENG si falta contenido
+/* newsTicker.js — RLC Global News Ticker v1.4.0 (BILINGUAL EN+ES + TRANSLATE CACHE)
+   ✅ Titulares: GDELT con sourcelang:eng (evita árabe/chino/coreano/etc)
+   ✅ Bilingüe: muestra MISMA noticia con título EN + traducción ES
+   ✅ Traducción gratuita (MyMemory) + cache local + limit por refresh
+   ✅ Toggle: ?tickerBilingual=0 (OFF) / 1 (ON)
    ✅ timespan configurable (por defecto 1d)
-   ✅ HideOnVote robusto (no depende solo de class "hidden")
-   ✅ Debug opcional: ?tickerDebug=1
+   ✅ HideOnVote robusto + Debug opcional: ?tickerDebug=1
 */
 
 (() => {
@@ -14,12 +12,13 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V130";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V140";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS = "rlc_bus_v1";
   const CFG_KEY = "rlc_ticker_cfg_v1";
-  const CACHE_KEY = "rlc_ticker_cache_v1"; // { ts, lang, items }
+  const CACHE_KEY = "rlc_ticker_cache_v1";     // { ts, key, items }
+  const TRANS_KEY = "rlc_ticker_trans_v1";     // { ts, map: { hash: { ts, es } }, order: [hash...] }
 
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -52,7 +51,8 @@
       refresh: safeStr(u.searchParams.get("tickerRefresh") || ""),
       top: safeStr(u.searchParams.get("tickerTop") || ""),
       hideOnVote: safeStr(u.searchParams.get("tickerHideOnVote") || ""),
-      span: safeStr(u.searchParams.get("tickerSpan") || ""),     // ej: 12h, 1d, 3d, 1w
+      span: safeStr(u.searchParams.get("tickerSpan") || ""),
+      bilingual: safeStr(u.searchParams.get("tickerBilingual") || ""),
       debug: safeStr(u.searchParams.get("tickerDebug") || "")
     };
   }
@@ -63,17 +63,21 @@
   const DEBUG = (P.debug === "1" || P.debug === "true");
   const log = (...a) => { if (DEBUG) console.log("[RLC:TICKER]", ...a); };
 
-  // UI auto (solo para etiqueta)
+  // UI auto (solo etiqueta)
   const uiLangAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
 
   const DEFAULTS = {
     enabled: true,
-    lang: "auto",           // auto|es|en (UI / intención)
+    lang: "auto",           // auto|es|en (UI/intención)
     speedPxPerSec: 55,      // 20..140
     refreshMins: 12,        // 3..60
     topPx: 10,              // 0..120
     hideOnVote: true,
-    timespan: "1d"
+    timespan: "1d",
+
+    // ✅ Bilingüe (misma noticia EN + ES)
+    bilingual: true,        // ON por defecto
+    translateMax: 10        // máximo titulares a traducir por refresh
   };
 
   function cfgFromUrl() {
@@ -84,6 +88,10 @@
     if (P.top) out.topPx = clamp(num(P.top, DEFAULTS.topPx), 0, 120);
     if (P.hideOnVote === "0") out.hideOnVote = false;
     if (P.span) out.timespan = P.span;
+
+    if (P.bilingual === "0") out.bilingual = false;
+    if (P.bilingual === "1") out.bilingual = true;
+
     return out;
   }
 
@@ -103,17 +111,18 @@
     c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
     c.hideOnVote = (c.hideOnVote !== false);
     c.timespan = normalizeTimespan(c.timespan);
+
+    c.bilingual = (c.bilingual !== false);
+    c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
+
     return c;
   }
 
-  // Prioridad: defaults <- localStorage <- URL
   let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readJson(CFG_KEY) || {}, cfgFromUrl()));
 
   const API = {
     gdelt: {
       endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
-      // queries “safe” (sin acentos para evitar rarezas)
-      query_es: 'internacional OR mundo OR "ultima hora" OR cumbre OR economia OR tecnologia OR ciencia OR clima OR salud OR mercados',
       query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
     },
     maxItems: 22
@@ -224,6 +233,10 @@
   color: rgba(255,255,255,.70);
   letter-spacing: .02em;
 }
+#rlcNewsTicker .b2{
+  opacity: .72;
+  font-weight: 750;
+}
 
 @keyframes rlcTickerMove{
   from{ transform: translate3d(0,0,0); }
@@ -305,7 +318,7 @@
     }
   }
 
-  // ───────────────────────────────────────── Fetch (robusto)
+  // ───────────────────────────────────────── Fetch robusto
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -364,6 +377,7 @@
     throw lastErr || new Error("fetchJsonRobust failed");
   }
 
+  // ───────────────────────────────────────── Helpers
   function uniqBy(arr, keyFn) {
     const seen = new Set();
     const out = [];
@@ -374,6 +388,12 @@
       out.push(it);
     }
     return out;
+  }
+
+  function clampLen(s, max) {
+    let t = safeStr(s).replace(/\s+/g, " ").trim();
+    if (t.length > max) t = t.slice(0, Math.max(8, max - 1)).trim() + "…";
+    return t;
   }
 
   function cleanTitle(s) {
@@ -392,49 +412,115 @@
     return cleaned.toUpperCase().slice(0, 22);
   }
 
-  // ───────────────────────────────────────── Idioma: UI vs Contenido
-  function uiLangEffective() {
-    return (CFG.lang === "auto") ? uiLangAuto : CFG.lang;
+  // ───────────────────────────────────────── Traducción (gratis) + cache
+  function simpleHash(str) {
+    // hash barato pero estable
+    const s = String(str || "");
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16);
   }
 
-  // AUTO -> prioriza inglés SIEMPRE
-  function contentLangPlan() {
-    if (CFG.lang === "es") return ["spa", "eng"]; // español primero, fallback a inglés
-    return ["eng"]; // auto/en -> inglés
+  function readTransStore() {
+    const o = readJson(TRANS_KEY);
+    if (!o || typeof o !== "object") return { ts: Date.now(), map: {}, order: [] };
+    if (!o.map || typeof o.map !== "object") o.map = {};
+    if (!Array.isArray(o.order)) o.order = [];
+    return o;
   }
 
-  function queryForSourceLang(sl) {
-    return (sl === "spa") ? API.gdelt.query_es : API.gdelt.query_en;
+  function writeTransStore(store) {
+    try { writeJson(TRANS_KEY, store); } catch (_) {}
   }
 
-  function buildGdeltUrl(q, sourcelang3) {
-    // IMPORTANTE: sourcelang filtra por idioma de la FUENTE, evita árabe/chino/coreano/etc.
-    // Query final: (q) sourcelang:eng
-    const finalQ = `(${q}) sourcelang:${sourcelang3}`;
-    return (
+  function getCachedEs(titleEn) {
+    const store = readTransStore();
+    const k = simpleHash(titleEn);
+    const it = store.map[k];
+    if (!it || !it.es) return "";
+    // TTL “suave” 7 días
+    const age = Date.now() - (it.ts || 0);
+    if (age > 7 * 24 * 60 * 60 * 1000) return "";
+    return String(it.es || "");
+  }
+
+  function putCachedEs(titleEn, es) {
+    const store = readTransStore();
+    const k = simpleHash(titleEn);
+    store.map[k] = { ts: Date.now(), es: String(es || "") };
+    // orden LRU simple
+    store.order = store.order.filter(x => x !== k);
+    store.order.push(k);
+
+    // cap 500 entradas
+    while (store.order.length > 500) {
+      const old = store.order.shift();
+      if (old) delete store.map[old];
+    }
+
+    store.ts = Date.now();
+    writeTransStore(store);
+  }
+
+  function decodeEntities(s) {
+    // decodificación básica (MyMemory a veces devuelve entidades)
+    return String(s || "")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  }
+
+  async function translateEnToEs(titleEn) {
+    const cached = getCachedEs(titleEn);
+    if (cached) return cached;
+
+    const q = encodeURIComponent(titleEn);
+    // MyMemory (gratis)
+    const url = `https://api.mymemory.translated.net/get?q=${q}&langpair=en|es`;
+
+    try {
+      const data = await fetchJsonRobust(url);
+      const t = decodeEntities(
+        safeStr(data?.responseData?.translatedText || "")
+      );
+
+      const out = clampLen(t, 140);
+      if (out && out.length >= 6) {
+        putCachedEs(titleEn, out);
+        return out;
+      }
+    } catch (e) {
+      log("translate fail:", e?.message || e);
+    }
+    return "";
+  }
+
+  // ───────────────────────────────────────── Headlines (GDELT)
+  async function getHeadlinesEn() {
+    const q = API.gdelt.query_en;
+
+    // ✅ clave: sourcelang:eng (filtra idiomas raros)
+    const finalQ = `(${q}) sourcelang:eng`;
+
+    const url =
       `${API.gdelt.endpoint}` +
       `?query=${encodeURIComponent(finalQ)}` +
       `&mode=ArtList` +
       `&format=json` +
       `&sort=HybridRel` +
       `&timespan=${encodeURIComponent(CFG.timespan)}` +
-      `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`
-    );
-  }
-
-  async function fetchHeadlinesForSourceLang(sl3) {
-    const q = queryForSourceLang(sl3);
-    const url = buildGdeltUrl(q, sl3);
+      `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`;
 
     log("GDELT URL:", url);
 
     const data = await fetchJsonRobust(url);
-    log("GDELT raw:", data);
-
     const errMsg = safeStr(data?.error || data?.message || data?.status || "");
-    if (errMsg && /error|invalid|failed/i.test(errMsg)) {
-      throw new Error(errMsg || "GDELT error");
-    }
+    if (errMsg && /error|invalid|failed/i.test(errMsg)) throw new Error(errMsg || "GDELT error");
 
     const articles = Array.isArray(data?.articles) ? data.articles
                    : Array.isArray(data?.results) ? data.results
@@ -445,46 +531,52 @@
       const title = cleanTitle(a?.title || a?.name || "");
       const link  = safeStr(a?.url || a?.link || a?.url_mobile || "");
       if (!title || !link) return null;
-      return { title, url: link, source: normalizeSource(a) };
+      return { titleEn: title, url: link, source: normalizeSource(a) };
     }).filter(Boolean);
 
-    return uniqBy(mapped, x => (x.title + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
+    return uniqBy(mapped, x => (x.titleEn + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
   }
 
-  async function getHeadlines() {
-    const plan = contentLangPlan();
+  async function makeBilingual(items) {
+    if (!CFG.bilingual) return items;
 
-    let best = [];
-    for (const sl of plan) {
-      try {
-        const items = await fetchHeadlinesForSourceLang(sl);
-        if (items.length > best.length) best = items;
+    const maxN = CFG.translateMax | 0;
+    if (maxN <= 0) return items;
 
-        // si ya tenemos suficiente, devolvemos
-        if (items.length >= Math.min(12, API.maxItems)) return items;
-      } catch (e) {
-        log("fetch lang failed:", sl, e?.message || e);
-      }
+    const out = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it || !it.titleEn) { out.push(it); continue; }
+
+      // traducimos solo primeros N por refresh (el resto va con cache si existe)
+      let es = "";
+      if (i < maxN) es = await translateEnToEs(it.titleEn);
+      else es = getCachedEs(it.titleEn) || "";
+
+      out.push(Object.assign({}, it, { titleEs: es }));
     }
-
-    // Si no hay suficiente, devolvemos lo mejor que tengamos (evita 0 items)
-    return best.slice(0, API.maxItems);
+    return out;
   }
 
-  // ───────────────────────────────────────── Render (loop suave)
+  // ───────────────────────────────────────── Render
+  function uiLangEffective() {
+    return (CFG.lang === "auto") ? uiLangAuto : CFG.lang;
+  }
+
   function setLabel(root) {
     const label = qs("#rlcNewsTickerLabel", root);
     if (!label) return;
-    const l = uiLangEffective();
-    label.textContent = (l === "en") ? "NEWS" : "NOTICIAS";
+
+    if (CFG.bilingual) label.textContent = "NEWS · NOTICIAS";
+    else label.textContent = (uiLangEffective() === "en") ? "NEWS" : "NOTICIAS";
   }
 
-  function buildItemsDOM(items, uiLang) {
+  function buildItemsDOM(items) {
+    const uiLang = uiLangEffective();
     const list = (Array.isArray(items) && items.length) ? items : [
       {
-        title: (uiLang === "es")
-          ? "No hay titulares ahora mismo… reintentando."
-          : "No headlines right now… retrying.",
+        titleEn: (uiLang === "es") ? "No hay titulares ahora mismo… reintentando." : "No headlines right now… retrying.",
+        titleEs: "",
         url: "#",
         source: "RLC"
       }
@@ -509,7 +601,19 @@
 
       const title = document.createElement("span");
       title.className = "t";
-      title.textContent = it.title;
+
+      if (CFG.bilingual) {
+        const en = clampLen(it.titleEn || "", 110);
+        const es = clampLen(it.titleEs || "", 110);
+
+        // EN / ES en una línea (misma noticia)
+        title.textContent = es
+          ? `${en} — ${es}`
+          : en;
+        if (es) title.classList.add("b2"); // look sutil (opcional)
+      } else {
+        title.textContent = it.titleEn || "";
+      }
 
       const src = document.createElement("span");
       src.className = "src";
@@ -531,10 +635,8 @@
     const seg1 = qs("#rlcNewsTickerSeg", root);
     const seg2 = qs("#rlcNewsTickerSeg2", root);
     const viewport = track ? track.parentElement : null;
-
     if (!root || !track || !seg1 || !seg2) return;
 
-    const uiLang = uiLangEffective();
     setLabel(root);
 
     root.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
@@ -544,8 +646,7 @@
     seg1.innerHTML = "";
     seg2.innerHTML = "";
 
-    const frag = buildItemsDOM(items, uiLang);
-    seg1.appendChild(frag);
+    seg1.appendChild(buildItemsDOM(items));
 
     const vw = viewport ? (viewport.clientWidth || 900) : 900;
 
@@ -567,7 +668,7 @@
     requestAnimationFrame(() => { track.style.animation = ""; });
   }
 
-  // ───────────────────────────────────────── Hide on vote (robusto)
+  // ───────────────────────────────────────── Hide on vote
   let voteObs = null;
   let domObs = null;
 
@@ -606,16 +707,16 @@
 
     domObs = new MutationObserver(() => {
       const vote = qs("#voteBox");
-      if (vote) {
-        log("voteBox detected");
-        setupHideOnVote();
-      }
+      if (vote) setupHideOnVote();
     });
-
     domObs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // ───────────────────────────────────────── Cache
+  // ───────────────────────────────────────── Cache headlines
+  function cacheKey() {
+    return `${CFG.timespan}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
+  }
+
   function readCache() {
     const c = readJson(CACHE_KEY);
     if (!c || typeof c !== "object") return null;
@@ -623,29 +724,24 @@
     return c;
   }
 
-  function writeCache(langKey, items) {
-    writeJson(CACHE_KEY, { ts: Date.now(), lang: langKey, items });
+  function writeCache(key, items) {
+    writeJson(CACHE_KEY, { ts: Date.now(), key, items });
   }
 
   // ───────────────────────────────────────── Refresh loop
   let refreshTimer = null;
   let refreshInFlight = false;
 
-  function cacheLangKey() {
-    // cache por intención (lang) + timespan (para no mezclar)
-    return `${CFG.lang}|${CFG.timespan}`;
-  }
-
   async function refresh(force = false) {
     if (!CFG.enabled) { setVisible(false); return; }
     setVisible(true);
 
-    const langKey = cacheLangKey();
+    const key = cacheKey();
 
     if (!force) {
       const cache = readCache();
       const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
-      if (cache && cache.lang === langKey && (Date.now() - (cache.ts || 0) <= maxAge)) {
+      if (cache && cache.key === key && (Date.now() - (cache.ts || 0) <= maxAge)) {
         log("cache hit");
         setTickerItems(cache.items);
         return;
@@ -656,10 +752,11 @@
     refreshInFlight = true;
 
     try {
-      const items = await getHeadlines();
-      log("items:", items?.length || 0);
-      setTickerItems(items);
-      writeCache(langKey, items);
+      const en = await getHeadlinesEn();
+      const bi = await makeBilingual(en);
+
+      setTickerItems(bi);
+      writeCache(key, bi);
     } catch (e) {
       log("refresh error:", e?.message || e);
       const cache = readCache();
