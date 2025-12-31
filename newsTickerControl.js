@@ -1,7 +1,7 @@
-/* newsTickerControl.js — RLC Ticker Control v1.2.0 (KEY-NAMESPACE + COMPAT)
+/* newsTickerControl.js — RLC Ticker Control v1.2.0 (KEY NAMESPACE + DUAL BUS)
    ✅ Solo para control.html
-   ✅ Guarda config en localStorage (rlc_ticker_cfg_v1[:key])
-   ✅ Emite config por BroadcastChannel (rlc_bus_v1[:key]) + compat legacy
+   ✅ Guarda config en localStorage (por key y legacy)
+   ✅ Emite config por BroadcastChannel (namespaced y legacy)
    ✅ No toca control.js / app.js
 */
 
@@ -26,10 +26,10 @@
 
   function parseParams() {
     const u = new URL(location.href);
-    return { key: (u.searchParams.get("key") || "").trim() };
+    return { key: safeStr(u.searchParams.get("key") || "") };
   }
   const P = parseParams();
-  const KEY = String(P.key || "").trim();
+  const KEY = P.key;
 
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const BUS_LEGACY = BUS_BASE;
@@ -46,26 +46,26 @@
     speedPxPerSec: 55,
     refreshMins: 12,
     topPx: 10,
-    hideOnVote: true
+    hideOnVote: true,
+    timespan: "1d" // opcional, si no existe en UI se mantiene
   };
 
-  function readCfgAny() {
-    // Prioridad: keyed -> legacy
+  function readCfgFirst() {
     try {
-      const rawK = localStorage.getItem(CFG_KEY);
-      if (rawK) return JSON.parse(rawK);
+      const raw1 = localStorage.getItem(CFG_KEY);
+      if (raw1) return JSON.parse(raw1);
     } catch (_) {}
     try {
-      const rawL = localStorage.getItem(CFG_KEY_LEGACY);
-      if (rawL) return JSON.parse(rawL);
+      const raw2 = localStorage.getItem(CFG_KEY_LEGACY);
+      if (raw2) return JSON.parse(raw2);
     } catch (_) {}
     return null;
   }
 
   function writeCfg(cfg) {
-    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (_) {}
-    // compat
-    try { localStorage.setItem(CFG_KEY_LEGACY, JSON.stringify(cfg)); } catch (_) {}
+    const raw = JSON.stringify(cfg);
+    try { localStorage.setItem(CFG_KEY, raw); } catch (_) {}
+    try { localStorage.setItem(CFG_KEY_LEGACY, raw); } catch (_) {} // compat
   }
 
   function clearCfg() {
@@ -73,17 +73,12 @@
     try { localStorage.removeItem(CFG_KEY_LEGACY); } catch (_) {}
   }
 
-  function busPost(msg) {
-    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
-    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
-  }
-
   function sendCfg(cfg) {
     const msg = { type: "TICKER_CFG", cfg, ts: Date.now() };
-    if (KEY) msg.key = KEY;
-    busPost(msg);
+    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
 
-    // storage ping cross-tab
+    // fallback para disparar storage events cross-tab
     try { localStorage.setItem("__rlc_ticker_ping", String(Date.now())); } catch (_) {}
   }
 
@@ -106,6 +101,11 @@
     c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
     c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
     c.hideOnVote = (c.hideOnVote !== false);
+
+    // timespan opcional (si lo usas en un futuro)
+    const ts = safeStr(c.timespan).toLowerCase();
+    c.timespan = ts ? ts : DEFAULTS.timespan;
+
     return c;
   }
 
@@ -137,20 +137,27 @@
     const topPx = num(qs("#ctlTickerTop")?.value, DEFAULTS.topPx);
     const hideOnVote = (qs("#ctlTickerHideOnVote")?.value || "on") !== "off";
 
-    return normalizeCfg({
+    // timespan (si algún día lo añades al HTML como #ctlTickerSpan)
+    const spanEl = qs("#ctlTickerSpan");
+    const timespan = spanEl ? safeStr(spanEl.value) : undefined;
+
+    const cfg = normalizeCfg({
       enabled: (on !== "off"),
       lang,
       speedPxPerSec: speed,
       refreshMins: refresh,
       topPx,
-      hideOnVote
+      hideOnVote,
+      ...(timespan ? { timespan } : {})
     });
+
+    return cfg;
   }
 
   function boot() {
     if (!qs("#ctlTickerApply") || !qs("#ctlTickerOn")) return;
 
-    const saved = normalizeCfg(readCfgAny() || DEFAULTS);
+    const saved = normalizeCfg(readCfgFirst() || DEFAULTS);
     writeCfg(saved);
     applyUIFromCfg(saved);
 
@@ -171,14 +178,14 @@
       applyUIFromCfg(cfg);
     });
 
-    // Live apply
     const liveEls = [
       "#ctlTickerOn",
       "#ctlTickerLang",
       "#ctlTickerSpeed",
       "#ctlTickerRefresh",
       "#ctlTickerTop",
-      "#ctlTickerHideOnVote"
+      "#ctlTickerHideOnVote",
+      "#ctlTickerSpan"
     ];
 
     for (const sel of liveEls) {
@@ -193,7 +200,7 @@
     window.addEventListener("storage", (e) => {
       if (!e) return;
       if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
-        const c = readCfgAny();
+        const c = readCfgFirst();
         if (c) applyUIFromCfg(c);
       }
     });
