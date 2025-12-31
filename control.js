@@ -1,17 +1,15 @@
 /* control.js — RLC Control v2.2.1
    ✅ Controla el Player por BroadcastChannel/localStorage
-   ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
-   ✅ Bot NO se incluye en URL (seguridad)
    ✅ Events bridge Player -> Control (ads auto detectados => bot escribe)
    ✅ KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy
-   ✅ BOT_SAY desde Player (cmd) => Control lo envía al chat (con anti-spam)
    ✅ Anuncio automático al chat cuando cambia la cámara (anti-spam)
-   ✅ News Ticker cfg (storage + BC)
+   ✅ News Ticker cfg (local + BC + params URL)
    ✅ NEW v2.2.1:
-      - Auto Twitch Title (Helix) según cámara (título/lugar/fuente)
-      - Countdown cfg (Fin de año) + BC/LS + URL params
+      - Auto-update del TÍTULO del stream (Twitch Helix: Modify Channel Information)
+      - Countdown overlay cfg (local + BC + params URL para el player)
 */
+
 (() => {
   "use strict";
 
@@ -26,10 +24,10 @@
   const STATE_KEY_BASE = "rlc_state_v1";
   const EVT_KEY_BASE = "rlc_evt_v1";
 
-  const BOT_STORE_KEY_BASE = "rlc_bot_cfg_v1";          // solo control.html
-  const TICKER_CFG_KEY_BASE = "rlc_ticker_cfg_v1";      // player + control
-  const HELIX_CFG_KEY_BASE  = "rlc_helix_cfg_v1";       // solo control.html
-  const COUNTDOWN_CFG_KEY_BASE = "rlc_countdown_cfg_v1";// player + control
+  const BOT_STORE_KEY_BASE = "rlc_bot_cfg_v1";         // solo control.html (no player)
+  const TICKER_CFG_KEY_BASE = "rlc_ticker_cfg_v1";     // ticker (player + control)
+  const TITLE_CFG_KEY_BASE = "rlc_title_cfg_v1";       // auto title (solo control)
+  const COUNTDOWN_CFG_KEY_BASE = "rlc_countdown_cfg_v1"; // countdown (player + control)
 
   const qs = (s) => document.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -37,13 +35,14 @@
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : fallback;
   };
+  const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
 
   function parseParams() {
     const u = new URL(location.href);
-    return { key: (u.searchParams.get("key") || "").trim() };
+    return { key: safeStr(u.searchParams.get("key") || "") };
   }
   const P = parseParams();
-  const KEY = String(P.key || "").trim();
+  const KEY = safeStr(P.key);
 
   // Namespaced (si hay key) + legacy (compat)
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
@@ -57,20 +56,56 @@
   const EVT_KEY_LEGACY = EVT_KEY_BASE;
 
   const BOT_STORE_KEY = KEY ? `${BOT_STORE_KEY_BASE}:${KEY}` : BOT_STORE_KEY_BASE;
+
+  // ticker cfg (guardamos en keyed + base; el player/ticker suele leer base)
   const TICKER_CFG_KEY = KEY ? `${TICKER_CFG_KEY_BASE}:${KEY}` : TICKER_CFG_KEY_BASE;
   const TICKER_CFG_KEY_LEGACY = TICKER_CFG_KEY_BASE;
 
-  const HELIX_CFG_KEY = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
-  const HELIX_CFG_KEY_LEGACY = HELIX_CFG_KEY_BASE;
+  // title cfg (solo control)
+  const TITLE_CFG_KEY = KEY ? `${TITLE_CFG_KEY_BASE}:${KEY}` : TITLE_CFG_KEY_BASE;
+  const TITLE_CFG_KEY_LEGACY = TITLE_CFG_KEY_BASE;
 
+  // countdown cfg (player + control)
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY_LEGACY = COUNTDOWN_CFG_KEY_BASE;
 
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
-  // ───────────────────────── UI ─────────────────────────
+  function keyOk(msg, isMainChannel) {
+    if (!KEY) return true;
+    // En canal main (namespaced) aceptamos aunque no venga key en msg
+    if (isMainChannel) return true;
+    // En legacy exige key para evitar cross-talk
+    return (msg && msg.key === KEY);
+  }
+
+  function busPost(msg) {
+    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
+  }
+
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} }
+
+  function sendCmd(cmd, payload = {}) {
+    const msg = { type: "cmd", ts: Date.now(), cmd, payload: payload || {} };
+    if (KEY) msg.key = KEY;
+
+    const raw = JSON.stringify(msg);
+
+    // Escribe en ambos (namespaced + legacy) para compat
+    lsSet(CMD_KEY, raw);
+    lsSet(CMD_KEY_LEGACY, raw);
+
+    busPost(msg);
+  }
+
+  // ───────────────────────── UI refs ─────────────────────────
   const ctlStatus = qs("#ctlStatus");
+  const ctlBusName = qs("#ctlBusName");
+
   const ctlNowTitle = qs("#ctlNowTitle");
   const ctlNowPlace = qs("#ctlNowPlace");
   const ctlNowTimer = qs("#ctlNowTimer");
@@ -151,7 +186,7 @@
   const ctlBotTestText = qs("#ctlBotTestText");
   const ctlBotTestSend = qs("#ctlBotTestSend");
 
-  // NEWS Ticker
+  // NEWS Ticker UI
   const ctlTickerOn = qs("#ctlTickerOn");
   const ctlTickerLang = qs("#ctlTickerLang");
   const ctlTickerSpeed = qs("#ctlTickerSpeed");
@@ -162,28 +197,25 @@
   const ctlTickerApply = qs("#ctlTickerApply");
   const ctlTickerReset = qs("#ctlTickerReset");
   const ctlTickerStatus = qs("#ctlTickerStatus");
-  const ctlTickerCopyUrl = qs("#ctlTickerCopyUrl");
 
-  // HELIX Auto Title (NEW)
-  const ctlHelixOn = qs("#ctlHelixOn");
-  const ctlHelixClientId = qs("#ctlHelixClientId");
-  const ctlHelixToken = qs("#ctlHelixToken");
-  const ctlHelixTpl = qs("#ctlHelixTpl");
-  const ctlHelixCooldown = qs("#ctlHelixCooldown");
-  const ctlHelixApply = qs("#ctlHelixApply");
-  const ctlHelixTest = qs("#ctlHelixTest");
-  const ctlHelixStatus = qs("#ctlHelixStatus");
+  // ✅ AUTO TITLE UI
+  const ctlTitleOn = qs("#ctlTitleOn");
+  const ctlTitleClientId = qs("#ctlTitleClientId");
+  const ctlTitleBroadcasterId = qs("#ctlTitleBroadcasterId");
+  const ctlTitleToken = qs("#ctlTitleToken");
+  const ctlTitleTemplate = qs("#ctlTitleTemplate");
+  const ctlTitleApply = qs("#ctlTitleApply");
+  const ctlTitleReset = qs("#ctlTitleReset");
+  const ctlTitleStatus = qs("#ctlTitleStatus");
+  const ctlTitleTest = qs("#ctlTitleTest");
 
-  // COUNTDOWN (NEW)
-  const ctlCountdownOn = qs("#ctlCountdownOn");
-  const ctlCountdownLabel = qs("#ctlCountdownLabel");
-  const ctlCountdownTarget = qs("#ctlCountdownTarget");
-  const ctlCountdownApply = qs("#ctlCountdownApply");
-  const ctlCountdownReset = qs("#ctlCountdownReset");
-  const ctlCountdownStatus = qs("#ctlCountdownStatus");
-
-  // footer
-  const ctlBusName = qs("#ctlBusName");
+  // ✅ COUNTDOWN UI
+  const ctlCdOn = qs("#ctlCountdownOn");
+  const ctlCdLabel = qs("#ctlCountdownLabel");
+  const ctlCdTarget = qs("#ctlCountdownTarget"); // datetime-local
+  const ctlCdApply = qs("#ctlCountdownApply");
+  const ctlCdReset = qs("#ctlCountdownReset");
+  const ctlCdStatus = qs("#ctlCountdownStatus");
 
   // Data
   const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
@@ -210,36 +242,6 @@
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
-  function keyOk(msg, isMainChannel) {
-    if (!KEY) return true;
-    // En canal main (namespaced) aceptamos aunque no venga key en msg
-    if (isMainChannel) return true;
-    // En legacy exige key para evitar cross-talk
-    return (msg && msg.key === KEY);
-  }
-
-  function busPost(msg) {
-    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
-    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
-  }
-
-  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
-  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
-  function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} }
-
-  function sendCmd(cmd, payload = {}) {
-    const msg = { type: "cmd", ts: Date.now(), cmd, payload: payload || {} };
-    if (KEY) msg.key = KEY;
-
-    const raw = JSON.stringify(msg);
-
-    // Escribe en ambos (namespaced + legacy) para compat
-    lsSet(CMD_KEY, raw);
-    lsSet(CMD_KEY_LEGACY, raw);
-
-    busPost(msg);
-  }
-
   function setStatus(text, ok = true) {
     if (!ctlStatus) return;
     ctlStatus.textContent = text;
@@ -254,27 +256,11 @@
     ctlBotStatus.classList.toggle("pill--bad", !ok);
   }
 
-  function setHelixStatus(text, ok = true) {
-    if (!ctlHelixStatus) return;
-    ctlHelixStatus.textContent = text;
-    ctlHelixStatus.classList.toggle("pill--ok", !!ok);
-    ctlHelixStatus.classList.toggle("pill--bad", !ok);
-  }
-
-  function setTickerStatusFromCfg(cfg) {
-    if (!ctlTickerStatus) return;
-    const on = !!cfg?.enabled;
-    ctlTickerStatus.textContent = on ? "Ticker: ON" : "Ticker: OFF";
-    ctlTickerStatus.classList.toggle("pill--ok", on);
-    ctlTickerStatus.classList.toggle("pill--bad", !on);
-  }
-
-  function setCountdownStatusFromCfg(cfg) {
-    if (!ctlCountdownStatus) return;
-    const on = !!cfg?.enabled;
-    ctlCountdownStatus.textContent = on ? "Cuenta atrás: ON" : "Cuenta atrás: OFF";
-    ctlCountdownStatus.classList.toggle("pill--ok", on);
-    ctlCountdownStatus.classList.toggle("pill--bad", !on);
+  function setPill(el, text, ok = true) {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle("pill--ok", !!ok);
+    el.classList.toggle("pill--bad", !ok);
   }
 
   function label(cam) {
@@ -361,16 +347,16 @@
 
   function computeVoteTiming() {
     const totalSec = getTotalCamSecFallback();
+
     const voteAtSec = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, totalSec);
 
-    // window/lead no pueden “sobrepasar” voteAtSec
+    // ✅ extra-hardening: window/lead no pueden “sobrepasar” voteAtSec
     const windowWanted = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
     const leadWanted = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
 
     const leadSec = clamp(leadWanted, 0, Math.max(0, voteAtSec - 1));
     const windowSec = clamp(windowWanted, 1, voteAtSec);
 
-    // UI nunca puede durar más que “hasta votar”
     const uiSec = clamp(Math.min(windowSec + leadSec, voteAtSec), 1, 999999);
 
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
@@ -403,7 +389,6 @@
   }
 
   function loadTickerCfg() {
-    // prioridad: keyed -> base
     try {
       const rawKeyed = lsGet(TICKER_CFG_KEY);
       if (rawKeyed) return normalizeTickerCfg(JSON.parse(rawKeyed));
@@ -419,7 +404,6 @@
     const c = normalizeTickerCfg(cfg);
     const raw = JSON.stringify(c);
 
-    // guardamos en keyed + base
     lsSet(TICKER_CFG_KEY, raw);
     lsSet(TICKER_CFG_KEY_BASE, raw);
     lsSet(TICKER_CFG_KEY_LEGACY, raw);
@@ -448,7 +432,7 @@
     if (ctlTickerHideOnVote) ctlTickerHideOnVote.value = tickerCfg.hideOnVote ? "on" : "off";
     if (ctlTickerSpan) ctlTickerSpan.value = String(tickerCfg.timespan || "1d");
 
-    setTickerStatusFromCfg(tickerCfg);
+    setPill(ctlTickerStatus, tickerCfg.enabled ? "Ticker: ON" : "Ticker: OFF", tickerCfg.enabled);
   }
 
   function readTickerUI() {
@@ -475,34 +459,188 @@
     return normalizeTickerCfg({ enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan });
   }
 
-  // ───────────────────────── COUNTDOWN (CFG + BC + URL PARAMS) ─────────────────────────
-  const COUNTDOWN_DEFAULTS = {
+  // ───────────────────────── AUTO TITLE (Twitch Helix) ─────────────────────────
+  const TITLE_DEFAULTS = {
     enabled: false,
-    label: "Fin de año",
-    targetMs: 0
+    clientId: "",
+    broadcasterId: "",
+    token: "", // user access token (Bearer) con scope channel:manage:broadcast
+    template: "🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV",
+    minIntervalSec: 20
   };
 
-  function nextNewYearTargetMs() {
-    try {
-      const now = new Date();
-      const y = now.getFullYear() + 1;
-      const d = new Date(y, 0, 1, 0, 0, 0, 0); // local tz
-      return d.getTime();
-    } catch (_) { return 0; }
+  function normalizeTitleCfg(inCfg) {
+    const c = Object.assign({}, TITLE_DEFAULTS, inCfg || {});
+    c.enabled = (c.enabled === true);
+    c.clientId = safeStr(c.clientId);
+    c.broadcasterId = safeStr(c.broadcasterId);
+    c.token = safeStr(c.token);
+    c.template = safeStr(c.template) || TITLE_DEFAULTS.template;
+    c.minIntervalSec = clamp(parseInt(c.minIntervalSec, 10) || TITLE_DEFAULTS.minIntervalSec, 10, 180);
+    return c;
   }
 
+  function loadTitleCfg() {
+    try {
+      const rawKeyed = lsGet(TITLE_CFG_KEY);
+      if (rawKeyed) return normalizeTitleCfg(JSON.parse(rawKeyed));
+    } catch (_) {}
+    try {
+      const rawBase = lsGet(TITLE_CFG_KEY_BASE);
+      if (rawBase) return normalizeTitleCfg(JSON.parse(rawBase));
+    } catch (_) {}
+    return normalizeTitleCfg(TITLE_DEFAULTS);
+  }
+
+  function saveTitleCfg(cfg) {
+    const c = normalizeTitleCfg(cfg);
+    const raw = JSON.stringify(c);
+    lsSet(TITLE_CFG_KEY, raw);
+    lsSet(TITLE_CFG_KEY_BASE, raw);
+    lsSet(TITLE_CFG_KEY_LEGACY, raw);
+    return c;
+  }
+
+  function tokenToBearer(t) {
+    const s = safeStr(t);
+    if (!s) return "";
+    return s.startsWith("oauth:") ? s.slice(6) : s;
+  }
+
+  function clampTitleLen(s, max = 140) {
+    const str = String(s || "").trim();
+    if (str.length <= max) return str;
+    return str.slice(0, max - 1).trimEnd() + "…";
+  }
+
+  function buildStreamTitle(cam, cfg) {
+    const title = safeStr(cam?.title || "Live Cam");
+    const place = safeStr(cam?.place || "");
+    const source = safeStr(cam?.source || "");
+
+    const placeSep = place ? " — " : "";
+    const srcSep = source ? " · " : "";
+
+    let out = String(cfg.template || TITLE_DEFAULTS.template);
+    out = out.replaceAll("{title}", title);
+    out = out.replaceAll("{place}", place);
+    out = out.replaceAll("{source}", source);
+    out = out.replaceAll("{placeSep}", placeSep);
+    out = out.replaceAll("{srcSep}", srcSep);
+
+    out = out.replace(/\s+/g, " ").trim();
+    // limpia separadores raros al final
+    out = out.replace(/[—\-|·:]\s*$/g, "").trim();
+
+    return clampTitleLen(out, 140);
+  }
+
+  async function twitchModifyChannelTitle(cfg, newTitle) {
+    const clientId = safeStr(cfg.clientId);
+    const broadcasterId = safeStr(cfg.broadcasterId);
+    const token = tokenToBearer(cfg.token);
+
+    if (!clientId || !broadcasterId || !token) {
+      throw new Error("Faltan Client ID / Broadcaster ID / Token");
+    }
+
+    const url = `https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(broadcasterId)}`;
+    const body = { title: String(newTitle || "").trim() };
+
+    const r = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        "Client-Id": clientId,
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!r.ok) {
+      let txt = "";
+      try { txt = await r.text(); } catch (_) {}
+      throw new Error(`HTTP ${r.status}${txt ? ` · ${txt.slice(0, 160)}` : ""}`);
+    }
+
+    return true;
+  }
+
+  let titleCfg = loadTitleCfg();
+  let lastTitleAppliedAt = 0;
+  let lastTitleApplied = "";
+
+  function syncTitleUIFromStore() {
+    titleCfg = loadTitleCfg();
+    if (ctlTitleOn) ctlTitleOn.value = titleCfg.enabled ? "on" : "off";
+    if (ctlTitleClientId) ctlTitleClientId.value = titleCfg.clientId || "";
+    if (ctlTitleBroadcasterId) ctlTitleBroadcasterId.value = titleCfg.broadcasterId || "";
+    if (ctlTitleToken) ctlTitleToken.value = titleCfg.token || "";
+    if (ctlTitleTemplate) ctlTitleTemplate.value = titleCfg.template || TITLE_DEFAULTS.template;
+
+    setPill(ctlTitleStatus, titleCfg.enabled ? "Título: AUTO" : "Título: OFF", titleCfg.enabled);
+  }
+
+  function readTitleUI() {
+    const base = titleCfg || loadTitleCfg();
+    const enabled = ctlTitleOn ? (ctlTitleOn.value === "on") : base.enabled;
+    const clientId = ctlTitleClientId ? safeStr(ctlTitleClientId.value) : base.clientId;
+    const broadcasterId = ctlTitleBroadcasterId ? safeStr(ctlTitleBroadcasterId.value) : base.broadcasterId;
+    const token = ctlTitleToken ? safeStr(ctlTitleToken.value) : base.token;
+    const template = ctlTitleTemplate ? safeStr(ctlTitleTemplate.value) : base.template;
+
+    return normalizeTitleCfg({ enabled, clientId, broadcasterId, token, template, minIntervalSec: base.minIntervalSec });
+  }
+
+  async function autoUpdateTitleIfNeeded(cam, force = false) {
+    const cfg = titleCfg || loadTitleCfg();
+    if (!cfg.enabled) return;
+
+    const camId = String(cam?.id || "");
+    if (!camId) return;
+
+    const now = Date.now();
+    const minMs = (cfg.minIntervalSec | 0) * 1000;
+    if (!force && (now - lastTitleAppliedAt) < minMs) return;
+
+    const newTitle = buildStreamTitle(cam, cfg);
+    if (!newTitle) return;
+
+    if (!force && newTitle === lastTitleApplied) return;
+
+    setPill(ctlTitleStatus, "Título: enviando…", true);
+
+    try {
+      await twitchModifyChannelTitle(cfg, newTitle);
+      lastTitleAppliedAt = now;
+      lastTitleApplied = newTitle;
+      setPill(ctlTitleStatus, "Título: OK ✅", true);
+      setTimeout(() => {
+        const c = titleCfg || loadTitleCfg();
+        setPill(ctlTitleStatus, c.enabled ? "Título: AUTO" : "Título: OFF", c.enabled);
+      }, 1300);
+    } catch (e) {
+      setPill(ctlTitleStatus, `Título: ERROR`, false);
+      // consola para debug, sin spamear UI
+      try { console.warn("[RLC] Title update failed:", e?.message || e); } catch (_) {}
+    }
+  }
+
+  // ───────────────────────── COUNTDOWN CFG (BC + LS + URL params) ─────────────────────────
+  const COUNTDOWN_DEFAULTS = {
+    enabled: false,
+    label: "FIN DE AÑO",
+    // ISO con offset recomendado (ej: 2026-01-01T00:00:00+01:00)
+    targetIso: "",
+    position: "tr" // tr/tl/br/bl (por ahora solo usado en player)
+  };
+
   function normalizeCountdownCfg(inCfg) {
-    const c = Object.assign({}, COUNTDOWN_DEFAULTS, (inCfg || {}));
+    const c = Object.assign({}, COUNTDOWN_DEFAULTS, inCfg || {});
     c.enabled = (c.enabled === true);
-
-    c.label = String(c.label || COUNTDOWN_DEFAULTS.label).trim().slice(0, 60) || COUNTDOWN_DEFAULTS.label;
-
-    const t = (typeof c.targetMs === "number") ? c.targetMs : parseInt(String(c.targetMs || "0"), 10);
-    c.targetMs = Number.isFinite(t) ? Math.max(0, t) : 0;
-
-    // Si no viene target, sugerimos el próximo 1 de enero
-    if (!c.targetMs) c.targetMs = nextNewYearTargetMs();
-
+    c.label = safeStr(c.label || COUNTDOWN_DEFAULTS.label).slice(0, 48);
+    c.targetIso = safeStr(c.targetIso || "");
+    c.position = (c.position === "tl" || c.position === "tr" || c.position === "bl" || c.position === "br") ? c.position : "tr";
     return c;
   }
 
@@ -521,274 +659,82 @@
   function saveCountdownCfg(cfg) {
     const c = normalizeCountdownCfg(cfg);
     const raw = JSON.stringify(c);
-
     lsSet(COUNTDOWN_CFG_KEY, raw);
     lsSet(COUNTDOWN_CFG_KEY_BASE, raw);
     lsSet(COUNTDOWN_CFG_KEY_LEGACY, raw);
-
     return c;
   }
 
-  function sendCountdownCfg(cfg, persist = true) {
-    const c = persist ? saveCountdownCfg(cfg) : normalizeCountdownCfg(cfg);
+  function toIsoWithOffset(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    if (!Number.isFinite(d.getTime())) return "";
 
-    // Mensaje “suave” para módulos (player)
-    const msg = { type: "COUNTDOWN_CFG", ts: Date.now(), cfg: c };
-    if (KEY) msg.key = KEY;
-    busPost(msg);
+    const pad = (n) => String(n).padStart(2, "0");
+    const y = d.getFullYear();
+    const m = pad(d.getMonth() + 1);
+    const da = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mm = pad(d.getMinutes());
+    const ss = pad(d.getSeconds());
 
-    // También como cmd (si el player lo implementa)
-    sendCmd("COUNTDOWN_SET", c);
+    const offMin = -d.getTimezoneOffset();
+    const sign = offMin >= 0 ? "+" : "-";
+    const abs = Math.abs(offMin);
+    const oh = pad((abs / 60) | 0);
+    const om = pad(abs % 60);
 
-    return c;
+    return `${y}-${m}-${da}T${hh}:${mm}:${ss}${sign}${oh}:${om}`;
   }
 
   let countdownCfg = loadCountdownCfg();
 
   function syncCountdownUIFromStore() {
     countdownCfg = loadCountdownCfg();
+    if (ctlCdOn) ctlCdOn.value = countdownCfg.enabled ? "on" : "off";
+    if (ctlCdLabel) ctlCdLabel.value = countdownCfg.label || COUNTDOWN_DEFAULTS.label;
 
-    if (ctlCountdownOn) ctlCountdownOn.value = countdownCfg.enabled ? "on" : "off";
-    if (ctlCountdownLabel) ctlCountdownLabel.value = String(countdownCfg.label || "Fin de año");
-
-    // datetime-local espera "YYYY-MM-DDTHH:MM"
-    if (ctlCountdownTarget) {
-      const ms = countdownCfg.targetMs || nextNewYearTargetMs();
-      const d = new Date(ms);
-      const pad = (n) => String(n).padStart(2, "0");
-      const v = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      if (!ctlCountdownTarget.value || !isEditing(ctlCountdownTarget)) ctlCountdownTarget.value = v;
+    // datetime-local: si targetIso existe, lo llevamos a local sin offset
+    if (ctlCdTarget) {
+      if (countdownCfg.targetIso) {
+        const d = new Date(countdownCfg.targetIso);
+        if (Number.isFinite(d.getTime())) {
+          const pad = (n) => String(n).padStart(2, "0");
+          const v = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          ctlCdTarget.value = v;
+        }
+      }
     }
 
-    setCountdownStatusFromCfg(countdownCfg);
+    setPill(ctlCdStatus, countdownCfg.enabled ? "Countdown: ON" : "Countdown: OFF", countdownCfg.enabled);
   }
 
   function readCountdownUI() {
     const base = countdownCfg || loadCountdownCfg();
+    const enabled = ctlCdOn ? (ctlCdOn.value === "on") : base.enabled;
+    const label = ctlCdLabel ? safeStr(ctlCdLabel.value) : base.label;
 
-    const enabled = ctlCountdownOn ? (ctlCountdownOn.value !== "off") : base.enabled;
-    const label = ctlCountdownLabel ? String(ctlCountdownLabel.value || base.label || "Fin de año").trim() : (base.label || "Fin de año");
-
-    let targetMs = base.targetMs || nextNewYearTargetMs();
-    if (ctlCountdownTarget && ctlCountdownTarget.value) {
-      const d = new Date(ctlCountdownTarget.value);
-      const ms = d.getTime();
-      if (Number.isFinite(ms) && ms > 0) targetMs = ms;
-    }
-
-    return normalizeCountdownCfg({ enabled, label, targetMs });
-  }
-
-  // ───────────────────────── HELIX AUTO TITLE (CFG + API) ─────────────────────────
-  const HELIX_DEFAULTS = {
-    enabled: false,
-    clientId: "",
-    token: "",
-    template: "🌍 {place} — {title}",
-    cooldownSec: 20
-  };
-
-  function normalizeHelixCfg(inCfg) {
-    const c = Object.assign({}, HELIX_DEFAULTS, (inCfg || {}));
-    c.enabled = (c.enabled === true);
-    c.clientId = String(c.clientId || "").trim();
-    c.token = String(c.token || "").trim();
-    c.template = String(c.template || HELIX_DEFAULTS.template).trim().slice(0, 200) || HELIX_DEFAULTS.template;
-    c.cooldownSec = clamp(parseInt(String(c.cooldownSec || HELIX_DEFAULTS.cooldownSec), 10) || HELIX_DEFAULTS.cooldownSec, 10, 180);
-    return c;
-  }
-
-  function loadHelixCfg() {
-    try {
-      const rawKeyed = lsGet(HELIX_CFG_KEY);
-      if (rawKeyed) return normalizeHelixCfg(JSON.parse(rawKeyed));
-    } catch (_) {}
-    try {
-      const rawBase = lsGet(HELIX_CFG_KEY_BASE);
-      if (rawBase) return normalizeHelixCfg(JSON.parse(rawBase));
-    } catch (_) {}
-    return normalizeHelixCfg(HELIX_DEFAULTS);
-  }
-
-  function saveHelixCfg(cfg) {
-    const c = normalizeHelixCfg(cfg);
-    const raw = JSON.stringify(c);
-
-    lsSet(HELIX_CFG_KEY, raw);
-    lsSet(HELIX_CFG_KEY_BASE, raw);
-    lsSet(HELIX_CFG_KEY_LEGACY, raw);
-
-    return c;
-  }
-
-  let helixCfg = loadHelixCfg();
-
-  function syncHelixUIFromStore() {
-    helixCfg = loadHelixCfg();
-
-    if (ctlHelixOn) ctlHelixOn.value = helixCfg.enabled ? "on" : "off";
-    if (ctlHelixClientId) ctlHelixClientId.value = helixCfg.clientId || "";
-    if (ctlHelixToken) ctlHelixToken.value = helixCfg.token || "";
-    if (ctlHelixTpl) ctlHelixTpl.value = helixCfg.template || HELIX_DEFAULTS.template;
-    if (ctlHelixCooldown) ctlHelixCooldown.value = String(helixCfg.cooldownSec || 20);
-
-    setHelixStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
-  }
-
-  function readHelixUI() {
-    const base = helixCfg || loadHelixCfg();
-
-    const enabled = ctlHelixOn ? (ctlHelixOn.value !== "off") : base.enabled;
-    const clientId = ctlHelixClientId ? String(ctlHelixClientId.value || base.clientId || "").trim() : String(base.clientId || "").trim();
-    const token = ctlHelixToken ? String(ctlHelixToken.value || base.token || "").trim() : String(base.token || "").trim();
-    const template = ctlHelixTpl ? String(ctlHelixTpl.value || base.template || HELIX_DEFAULTS.template).trim() : String(base.template || HELIX_DEFAULTS.template).trim();
-
-    const cooldownSec = ctlHelixCooldown
-      ? clamp(parseInt(String(ctlHelixCooldown.value || base.cooldownSec || 20), 10) || 20, 10, 180)
-      : (base.cooldownSec || 20);
-
-    return normalizeHelixCfg({ enabled, clientId, token, template, cooldownSec });
-  }
-
-  function buildTitleFromState(st, template) {
-    const cam = st?.cam || {};
-    const t = String(cam?.title || "Live Cam").trim();
-    const p = String(cam?.place || "").trim();
-    const s = String(cam?.source || "").trim();
-
-    const repl = (k) => {
-      const kk = String(k || "").toLowerCase();
-      if (kk === "title") return t;
-      if (kk === "place") return p;
-      if (kk === "source") return s;
-      if (kk === "label") return p ? `${t} — ${p}` : t;
-      return "";
-    };
-
-    let out = String(template || HELIX_DEFAULTS.template);
-
-    // {place} {title} {source} {label}
-    out = out.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, k) => repl(k));
-
-    // Limpieza final
-    out = out.replace(/\s+/g, " ").trim();
-    out = out.replace(/[^\S\r\n]+/g, " ").replace(/[\r\n]+/g, " ").trim();
-
-    // Si queda vacío, fallback
-    if (!out) out = p ? `${t} — ${p}` : t;
-
-    // Twitch title: no vacío; clamp seguro
-    if (out.length > 140) out = out.slice(0, 140).trim();
-
-    return out;
-  }
-
-  async function helixFetch(path, { method = "GET", clientId, token, body = null, timeoutMs = 12000 } = {}) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const r = await fetch(`https://api.twitch.tv/helix/${path}`, {
-        method,
-        signal: ctrl.signal,
-        headers: {
-          "Client-Id": clientId,
-          "Authorization": `Bearer ${token}`,
-          ...(body ? { "Content-Type": "application/json" } : {})
-        },
-        body: body ? JSON.stringify(body) : null
-      });
-
-      if (!r.ok) {
-        let extra = "";
-        try { extra = await r.text(); } catch (_) {}
-        throw new Error(`Helix HTTP ${r.status}${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+    let targetIso = base.targetIso || "";
+    if (ctlCdTarget) {
+      const v = safeStr(ctlCdTarget.value);
+      if (v) {
+        // datetime-local -> Date local -> ISO con offset local
+        const d = new Date(v);
+        const iso = toIsoWithOffset(d);
+        if (iso) targetIso = iso;
       }
-
-      // PATCH /channels suele devolver 204 no content
-      if (r.status === 204) return { ok: true, data: null };
-      const data = await r.json().catch(() => null);
-      return { ok: true, data };
-    } finally {
-      clearTimeout(t);
-    }
-  }
-
-  async function helixGetBroadcasterId(login, clientId, token) {
-    const ch = String(login || "").trim().replace(/^@/, "").toLowerCase();
-    if (!ch) return "";
-
-    const res = await helixFetch(`users?login=${encodeURIComponent(ch)}`, { method: "GET", clientId, token });
-    const user = Array.isArray(res?.data?.data) ? res.data.data[0] : null;
-    const id = String(user?.id || "").trim();
-    return id;
-  }
-
-  async function helixSetTitle(broadcasterId, title, clientId, token) {
-    const bid = String(broadcasterId || "").trim();
-    const ttl = String(title || "").trim();
-    if (!bid || !ttl) throw new Error("broadcasterId/title vacío");
-
-    await helixFetch(`channels?broadcaster_id=${encodeURIComponent(bid)}`, {
-      method: "PATCH",
-      clientId,
-      token,
-      body: { title: ttl }
-    });
-    return true;
-  }
-
-  let helixBroadcasterId = "";
-  let helixLastUpdateAt = 0;
-  let helixLastSig = "";
-
-  async function maybeAutoUpdateTwitchTitleFromState(st, force = false) {
-    const cfg = helixCfg || loadHelixCfg();
-    const enabled = !!cfg.enabled && (ctlHelixOn ? (ctlHelixOn.value === "on") : true);
-    if (!enabled) return;
-
-    const channel = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-    if (!channel) { setHelixStatus("Auto título: falta canal", false); return; }
-
-    const clientId = String(cfg.clientId || "").trim();
-    const token = String(cfg.token || "").trim();
-    if (!clientId || !token) { setHelixStatus("Auto título: falta ClientId/Token", false); return; }
-
-    const title = buildTitleFromState(st, cfg.template);
-    if (!title) return;
-
-    const sig = `${channel}|${title}`;
-    const now = Date.now();
-    const cool = (cfg.cooldownSec | 0) * 1000;
-
-    if (!force) {
-      if (sig === helixLastSig) return;
-      if ((now - helixLastUpdateAt) < cool) return;
     }
 
-    try {
-      setHelixStatus("Actualizando título…", true);
+    return normalizeCountdownCfg({ enabled, label, targetIso, position: base.position });
+  }
 
-      if (!helixBroadcasterId) {
-        helixBroadcasterId = await helixGetBroadcasterId(channel, clientId, token);
-        if (!helixBroadcasterId) {
-          setHelixStatus("Helix: no puedo resolver broadcaster_id", false);
-          return;
-        }
-      }
+  function sendCountdownCfg(cfg, persist = true) {
+    const c = persist ? saveCountdownCfg(cfg) : normalizeCountdownCfg(cfg);
 
-      await helixSetTitle(helixBroadcasterId, title, clientId, token);
+    const msg = { type: "COUNTDOWN_CFG", ts: Date.now(), cfg: c };
+    if (KEY) msg.key = KEY;
 
-      helixLastUpdateAt = now;
-      helixLastSig = sig;
-
-      setHelixStatus(`Título OK: “${title.slice(0, 46)}${title.length > 46 ? "…" : ""}”`, true);
-    } catch (e) {
-      const msg = String(e?.message || e || "Error").slice(0, 120);
-      setHelixStatus(`Helix error: ${msg}`, false);
-
-      // Si falla por credenciales, “reseteamos” id por si cambió canal/token
-      helixBroadcasterId = "";
-    }
+    busPost(msg);
+    return c;
   }
 
   // ───────────────────────── BOT IRC (AUTH) ─────────────────────────
@@ -961,7 +907,6 @@
         token: String(o.token || ""),
         sayOnAd: (typeof o.sayOnAd === "boolean") ? o.sayOnAd : true
       };
-      // migra si venía de legacy y estamos en keyed
       try {
         if (KEY && !lsGet(BOT_STORE_KEY) && lsGet(BOT_STORE_KEY_BASE)) {
           lsSet(BOT_STORE_KEY, JSON.stringify(cfg));
@@ -977,7 +922,7 @@
     try {
       const raw = JSON.stringify(cfg || {});
       lsSet(BOT_STORE_KEY, raw);
-      lsSet(BOT_STORE_KEY_BASE, raw); // compat
+      lsSet(BOT_STORE_KEY_BASE, raw);
     } catch (_) {}
   }
 
@@ -1024,7 +969,6 @@
 
     const now = Date.now();
     const s = sigOf(msg);
-    // anti spam: 1.2s + no repetir la misma línea
     if ((now - lastBotSayAt) < 1200) return false;
     if (s && s === lastBotSaySig && (now - lastBotSayAt) < 12000) return false;
 
@@ -1120,13 +1064,19 @@
 
     if (tc.timespan) u.searchParams.set("tickerSpan", String(tc.timespan));
 
-    // ───────────── COUNTDOWN params (NEW)
-    const cc = readCountdownUI();
-    if (cc.enabled) u.searchParams.set("countdown", "1");
-    else u.searchParams.set("countdown", "0");
-
-    if (cc.targetMs) u.searchParams.set("countdownTo", String(cc.targetMs | 0));
-    if (cc.label) u.searchParams.set("countdownLabel", cc.label);
+    // ───────────── COUNTDOWN params (para que funcione también solo con URL)
+    const cd = readCountdownUI();
+    if (cd.enabled) {
+      u.searchParams.set("countdown", "1");
+      if (cd.label) u.searchParams.set("countLabel", cd.label);
+      if (cd.targetIso) u.searchParams.set("countTo", cd.targetIso);
+      if (cd.position) u.searchParams.set("countPos", cd.position);
+    } else {
+      u.searchParams.delete("countdown");
+      u.searchParams.delete("countLabel");
+      u.searchParams.delete("countTo");
+      u.searchParams.delete("countPos");
+    }
 
     // key
     if (KEY) u.searchParams.set("key", KEY);
@@ -1138,8 +1088,9 @@
   function applyState(st) {
     lastState = st;
     lastSeenAt = Date.now();
-
     setStatus("Conectado", true);
+
+    if (ctlBusName) ctlBusName.textContent = `Canal: ${BUS}`;
 
     if (ctlNowTitle) ctlNowTitle.textContent = st?.cam?.title || "—";
     if (ctlNowPlace) ctlNowPlace.textContent = st?.cam?.place || "—";
@@ -1223,13 +1174,13 @@
       }
     } catch (_) {}
 
-    // ✅ NEW: Auto update Twitch title (Helix) cuando cambia cam
+    // ✅ NEW: Auto title update al cambiar cam
     try {
       const camId = String(st?.cam?.id || "");
-      if (camId) {
-        helixCfg = readHelixUI();
-        saveHelixCfg(helixCfg);
-        maybeAutoUpdateTwitchTitleFromState(st, false);
+      if (camId && camId === lastAnnouncedCamId) {
+        // en el mismo tick en el que detectamos cambio (arriba), lastAnnouncedCamId ya está actualizado
+        // lanzamos el update del título (throttled)
+        autoUpdateTitleIfNeeded(st?.cam, false);
       }
     } catch (_) {}
   }
@@ -1324,14 +1275,14 @@
 
   // Storage events (por si BC falla)
   window.addEventListener("storage", (e) => {
-    if (!e || !e.key || !e.newValue) return;
+    if (!e || !e.key) return;
 
-    if (e.key === EVT_KEY || e.key === EVT_KEY_LEGACY) {
+    if ((e.key === EVT_KEY || e.key === EVT_KEY_LEGACY) && e.newValue) {
       try { handleEvent(JSON.parse(e.newValue), e.key === EVT_KEY); } catch (_) {}
       return;
     }
 
-    if (e.key === STATE_KEY || e.key === STATE_KEY_LEGACY) {
+    if ((e.key === STATE_KEY || e.key === STATE_KEY_LEGACY) && e.newValue) {
       try {
         const st = JSON.parse(e.newValue);
         if (st && st.type === "state" && keyOk(st, e.key === STATE_KEY)) applyState(st);
@@ -1345,15 +1296,15 @@
       return;
     }
 
-    // Countdown cfg cambiada en otra pestaña
-    if (e.key === COUNTDOWN_CFG_KEY || e.key === COUNTDOWN_CFG_KEY_BASE || e.key === COUNTDOWN_CFG_KEY_LEGACY) {
-      try { syncCountdownUIFromStore(); } catch (_) {}
+    // Title cfg changed
+    if (e.key === TITLE_CFG_KEY || e.key === TITLE_CFG_KEY_BASE || e.key === TITLE_CFG_KEY_LEGACY) {
+      try { syncTitleUIFromStore(); } catch (_) {}
       return;
     }
 
-    // Helix cfg cambiada en otra pestaña
-    if (e.key === HELIX_CFG_KEY || e.key === HELIX_CFG_KEY_BASE || e.key === HELIX_CFG_KEY_LEGACY) {
-      try { syncHelixUIFromStore(); } catch (_) {}
+    // Countdown cfg changed
+    if (e.key === COUNTDOWN_CFG_KEY || e.key === COUNTDOWN_CFG_KEY_BASE || e.key === COUNTDOWN_CFG_KEY_LEGACY) {
+      try { syncCountdownUIFromStore(); } catch (_) {}
       return;
     }
   });
@@ -1372,19 +1323,16 @@
     syncBgmTracks();
     syncBotUIFromStore();
 
-    // footer bus name
-    if (ctlBusName) ctlBusName.textContent = `Canal: ${BUS}`;
-
-    // Ticker: cargar UI desde storage y mandar cfg (por si el player ya está abierto)
+    // Ticker
     syncTickerUIFromStore();
-    try { tickerCfg = sendTickerCfg(loadTickerCfg(), false); } catch (_) {}
+    try { sendTickerCfg(loadTickerCfg(), false); } catch (_) {}
 
-    // Countdown: cargar UI y mandar cfg
+    // Title
+    syncTitleUIFromStore();
+
+    // Countdown
     syncCountdownUIFromStore();
-    try { countdownCfg = sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
-
-    // Helix: cargar UI
-    syncHelixUIFromStore();
+    try { sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
 
     // defaults seguros
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
@@ -1458,12 +1406,9 @@
       ctlTickerApply.addEventListener("click", () => {
         const cfg = readTickerUI();
         tickerCfg = sendTickerCfg(cfg, true);
-        setTickerStatusFromCfg(tickerCfg);
 
-        // refresca preview si está ON
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+        setPill(ctlTickerStatus, tickerCfg.enabled ? "Ticker: ON" : "Ticker: OFF", tickerCfg.enabled);
 
         try {
           const old = ctlTickerApply.textContent || "Aplicar";
@@ -1475,90 +1420,10 @@
 
     if (ctlTickerReset) {
       ctlTickerReset.addEventListener("click", () => {
-        try {
-          lsDel(TICKER_CFG_KEY);
-          lsDel(TICKER_CFG_KEY_BASE);
-          lsDel(TICKER_CFG_KEY_LEGACY);
-        } catch (_) {}
-        tickerCfg = sendTickerCfg(TICKER_DEFAULTS, true);
+        tickerCfg = saveTickerCfg(TICKER_DEFAULTS);
+        sendTickerCfg(tickerCfg, false);
         syncTickerUIFromStore();
-
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
-      });
-    }
-
-    if (ctlTickerCopyUrl) {
-      ctlTickerCopyUrl.addEventListener("click", async () => {
-        const url = streamUrlFromHere();
-        const ok = await copyToClipboard(url);
-        ctlTickerCopyUrl.textContent = ok ? "✅ Copiado" : "❌";
-        setTimeout(() => (ctlTickerCopyUrl.textContent = "Copiar URL Stream (con ticker)"), 900);
-      });
-    }
-
-    // COUNTDOWN buttons (NEW)
-    if (ctlCountdownApply) {
-      ctlCountdownApply.addEventListener("click", () => {
-        const cfg = readCountdownUI();
-        countdownCfg = sendCountdownCfg(cfg, true);
-        setCountdownStatusFromCfg(countdownCfg);
-
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
-      });
-    }
-
-    if (ctlCountdownReset) {
-      ctlCountdownReset.addEventListener("click", () => {
-        try {
-          lsDel(COUNTDOWN_CFG_KEY);
-          lsDel(COUNTDOWN_CFG_KEY_BASE);
-          lsDel(COUNTDOWN_CFG_KEY_LEGACY);
-        } catch (_) {}
-        countdownCfg = sendCountdownCfg(COUNTDOWN_DEFAULTS, true);
-        syncCountdownUIFromStore();
-
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
-      });
-    }
-
-    // HELIX buttons (NEW)
-    function helixApplyAndPersist() {
-      helixCfg = readHelixUI();
-      saveHelixCfg(helixCfg);
-      setHelixStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
-
-      // reset cache al cambiar credenciales/canal
-      helixBroadcasterId = "";
-      helixLastSig = "";
-      helixLastUpdateAt = 0;
-    }
-
-    if (ctlHelixApply) {
-      ctlHelixApply.addEventListener("click", () => {
-        helixApplyAndPersist();
-        if (lastState) maybeAutoUpdateTwitchTitleFromState(lastState, true);
-      });
-    }
-
-    if (ctlHelixTest) {
-      ctlHelixTest.addEventListener("click", () => {
-        helixApplyAndPersist();
-        if (lastState) maybeAutoUpdateTwitchTitleFromState(lastState, true);
-        else setHelixStatus("Abre el player para tener state", false);
-      });
-    }
-
-    // Auto persist Helix en cambios
-    const helixLive = [ctlHelixOn, ctlHelixClientId, ctlHelixToken, ctlHelixTpl, ctlHelixCooldown].filter(Boolean);
-    for (const el of helixLive) {
-      el.addEventListener("change", () => {
-        helixApplyAndPersist();
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
       });
     }
 
@@ -1568,7 +1433,7 @@
     if (ctlBgmTrack) ctlBgmTrack.addEventListener("change", () => sendCmd("BGM_TRACK", { index: parseInt(ctlBgmTrack.value || "0", 10) || 0 }));
     if (ctlBgmPrev) ctlBgmPrev.addEventListener("click", () => sendCmd("BGM_PREV"));
     if (ctlBgmPlay) ctlBgmPlay.addEventListener("click", () => sendCmd("BGM_PLAYPAUSE"));
-    if (ctlBgmNext) ctlBgmNext.addEventListener("click", () => sendCmd("BGM_NEXT"));
+    if (ctlBgmNext) ctlBgmNext.addEvent RancherListener("click", () => sendCmd("BGM_NEXT"));
     if (ctlBgmShuffle) ctlBgmShuffle.addEventListener("click", () => sendCmd("BGM_SHUFFLE"));
 
     // Vote controls
@@ -1598,13 +1463,6 @@
         adShowDuring: (ctlAdShowDuring?.value !== "off"),
         adChatText: (ctlAdChatText?.value || "").trim(),
       });
-
-      // Countdown cfg también la mandamos (por si el player la consume al vuelo)
-      countdownCfg = sendCountdownCfg(readCountdownUI(), true);
-      setCountdownStatusFromCfg(countdownCfg);
-
-      // Helix persist por si han tocado algo
-      helixApplyAndPersist();
     }
 
     if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
@@ -1614,7 +1472,7 @@
       sendCmd("VOTE_START", { windowSec, leadSec, uiSec });
     });
 
-    // ADS buttons + bot say opcional
+    // ADS buttons
     if (ctlAdNoticeBtn) ctlAdNoticeBtn.addEventListener("click", () => {
       const lead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
       sendCmd("AD_NOTICE", { leadSec: lead });
@@ -1660,6 +1518,63 @@
       setBotStatus(ok ? "Enviado" : "No enviado", ok);
       setTimeout(() => setBotStatus(bot.connected ? "Conectado (auth)" : "Bot listo", !!bot.connected), 900);
     });
+
+    // ✅ AUTO TITLE buttons
+    if (ctlTitleApply) {
+      ctlTitleApply.addEventListener("click", () => {
+        titleCfg = saveTitleCfg(readTitleUI());
+        syncTitleUIFromStore();
+        try {
+          const old = ctlTitleApply.textContent || "Aplicar";
+          ctlTitleApply.textContent = "✅ Aplicado";
+          setTimeout(() => { ctlTitleApply.textContent = old; }, 850);
+        } catch (_) {}
+      });
+    }
+
+    if (ctlTitleReset) {
+      ctlTitleReset.addEventListener("click", () => {
+        lsDel(TITLE_CFG_KEY);
+        lsDel(TITLE_CFG_KEY_BASE);
+        lsDel(TITLE_CFG_KEY_LEGACY);
+        titleCfg = saveTitleCfg(TITLE_DEFAULTS);
+        syncTitleUIFromStore();
+      });
+    }
+
+    if (ctlTitleTest) {
+      ctlTitleTest.addEventListener("click", () => {
+        titleCfg = saveTitleCfg(readTitleUI());
+        const cam = lastState?.cam || null;
+        if (cam) autoUpdateTitleIfNeeded(cam, true);
+        else setPill(ctlTitleStatus, "Título: sin cam", false);
+      });
+    }
+
+    // ✅ COUNTDOWN buttons
+    if (ctlCdApply) {
+      ctlCdApply.addEventListener("click", () => {
+        countdownCfg = sendCountdownCfg(readCountdownUI(), true);
+        syncCountdownUIFromStore();
+
+        // refresca preview si está ON
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+
+        try {
+          const old = ctlCdApply.textContent || "Aplicar";
+          ctlCdApply.textContent = "✅ Aplicado";
+          setTimeout(() => { ctlCdApply.textContent = old; }, 850);
+        } catch (_) {}
+      });
+    }
+
+    if (ctlCdReset) {
+      ctlCdReset.addEventListener("click", () => {
+        countdownCfg = sendCountdownCfg(COUNTDOWN_DEFAULTS, true);
+        syncCountdownUIFromStore();
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+      });
+    }
 
     // Teclas pro
     window.addEventListener("keydown", (e) => {
