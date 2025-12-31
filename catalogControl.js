@@ -1,8 +1,9 @@
-/* catalogControl.js — RLC Catalog Control v1.0.0
+/* catalogControl.js — RLC Catalog Control v1.0.1
    ✅ Solo para control.html
    ✅ Guarda config en localStorage (keyed + legacy)
    ✅ Emite config por BroadcastChannel (keyed + legacy)
    ✅ No toca control.js / app.js
+   ✅ Boot sync: emite config al arrancar (para que el player se entere aunque no toques nada)
 */
 
 (() => {
@@ -10,7 +11,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_CONTROL_LOADED_V100";
+  const LOAD_GUARD = "__RLC_CATALOG_CONTROL_LOADED_V101";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -172,7 +173,8 @@
       if (!el) continue;
       el.addEventListener("change", doApply);
       el.addEventListener("input", () => {
-        if (el.tagName === "INPUT") doApply();
+        // range/text inputs
+        doApply();
       });
     }
 
@@ -184,6 +186,9 @@
         applyUIFromCfg(c);
       }
     });
+
+    // Boot sync (muy importante si el player ya está abierto)
+    try { setTimeout(() => sendCfg(saved), 120); } catch (_) { try { sendCfg(saved); } catch (_) {} }
   }
 
   if (document.readyState === "loading") {

@@ -1,9 +1,10 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.2 (PATCH)
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.2.1 (PATCH + WX CHIP FIX)
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
    🎯 Patch:
    - --ui-top-offset ahora NO deja “gap fantasma” cuando --rlcTickerH = 0px (sin depender de :has)
    - line-clamp estándar añadido (evita warning) + mantiene -webkit-line-clamp
+   - ✅ FIX WX CHIP: evita “solo emojis / se va a otra fila” en .hudLeft grid
 */
 
 /* ───────────────────────── Theme Tokens ───────────────────────── */
@@ -406,17 +407,49 @@ input[type="range"]{ accent-color: var(--accent); }
 
   font-variant-numeric: tabular-nums;
   min-width: 132px;
+
+  /* ✅ FIX: que nunca se aplaste/colapse en layouts estrechos */
+  flex: 0 0 auto;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ✅ FIX: si el script lo añade como 4º hijo de .hudLeft, lo forzamos a 3ª columna */
+.hudLeft > #rlcHudWx{
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+}
+
+#rlcHudWxIcon{
+  font-size: 13px;
+  line-height: 1;
 }
 
 #rlcHudWx .wxDot{ opacity:.72; }
-#rlcHudWx .wxTemp{ opacity:.88; font-weight: 950; }
+
+#rlcHudWx .wxTemp,
+#rlcHudWx .wxTime{
+  display:inline-block; /* ✅ evita casos raros de colapso */
+}
+
+#rlcHudWx .wxTemp{
+  opacity:.88;
+  font-weight: 950;
+  min-width: 3.2em;     /* ✅ evita “solo emojis” */
+  text-align: right;
+}
+
 #rlcHudWx .wxTime{
   font-family: var(--mono);
   letter-spacing: .02em;
   width: 5ch;
+  min-width: 3.6em;
   text-align: right;
 }
 
+/* ✅ NO display:none (si no, hay salto/flicker) */
 #rlcHudWx.wxOff{
   opacity: 0;
   visibility: hidden;

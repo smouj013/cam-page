@@ -1,4 +1,4 @@
-/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY 500) v2.3.0
+/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY 500 + CATALOG 4-UP) v2.3.1
    ✅ Mantiene tus cams existentes (mismos ids) como "seed"
    ✅ VIDEO ONLY: NO exporta cams "image" (solo "youtube" y "hls")
    ✅ Sanitizador:
@@ -6,15 +6,20 @@
       - completa originUrl si falta (YouTube/HLS)
       - infiere youtubeId desde originUrl si falta (watch?v= / live/ / embed/)
       - descarta entradas rotas (sin id/kind o sin youtubeId/url)
+      - añade thumb para YouTube (para catálogo)
    ✅ OBJETIVO: 500 cams REALES
       - Carga cache (si existe) y la usa inmediatamente
       - Auto-discovery: busca LIVE webcams en Invidious (/api/v1/search?features=live)
       - Filtra “no-webcam” (música/lofi/radio/juegos/noticias)
-      - Valida embed (intenta detectar “Playback disabled / Video unavailable”)
-      - Se queda solo con las que funcionan
+      - Validación embed (best-effort; no invalida por fallos de CORS)
+      - Se queda solo con las que funcionan (cuando se puede validar)
    ✅ Failsafe (solo si tu player necesita SI o SI 500):
       - si no llega a 500 tras discovery, rellena con ALT duplicando válidas
         (NO inventa fuentes nuevas). Puedes desactivar esto con HARD_FAILSAFE_ALT_FILL=false.
+
+   🧩 CATALOGO (4 a la vez):
+      - window.CAM_CATALOG_LIST (sin alts)
+      - window.RLCCams.getCatalogPage(pageIndex) => {pageIndex,pageSize,totalPages,totalItems,items}
 
    kind:
    - "youtube"  -> usa youtubeId (11 chars)
@@ -31,13 +36,16 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V230_VIDEOONLY_AUTODISCOVERY500";
+  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V231_VIDEOONLY_AUTODISCOVERY500_CATALOG4";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ─────────────────────────────────────────────────────────────
   // CONFIG
   // ─────────────────────────────────────────────────────────────
   const TARGET_CAMS = 500;
+
+  // CATALOGO
+  const CATALOG_PAGE_SIZE = 4;
 
   // Cache: si existe y es “reciente”, se usa inmediatamente (mejor UX)
   const CACHE_KEY = "rlc_cam_cache_v1_500";
@@ -93,8 +101,65 @@
     "webcam","live cam","livecam","traffic","airport","harbor","harbour","beach",
     "pier","port","downtown","street","avenue","plaza","square",
     "camara","cámara","en vivo","directo",
-    "railcam","train","station","ski","snow","mountain","volcano"
+    "railcam","train","station","ski","snow","mountain","volcano",
+    "earthcam","skylinewebcams","webcams"
   ];
+
+  // ─────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────
+  const ALLOWED_KINDS = new Set(["youtube", "hls"]);
+  const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
+
+  function toId(v, i) {
+    const s = safeStr(v);
+    return s ? s : `cam_${String(i).padStart(4, "0")}`;
+  }
+
+  function isValidYouTubeId(id) {
+    const s = safeStr(id);
+    return /^[a-zA-Z0-9_-]{11}$/.test(s);
+  }
+
+  function extractYouTubeIdFromUrl(url) {
+    const u = safeStr(url);
+    if (!u) return "";
+    let m = u.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) return m[1];
+    m = u.match(/\/live\/([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) return m[1];
+    m = u.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) return m[1];
+    return "";
+  }
+
+  function looksLikeM3U8(url) {
+    const u = safeStr(url).toLowerCase();
+    return !!u && (u.includes(".m3u8") || u.includes("m3u8"));
+  }
+
+  function youtubeThumb(yid) {
+    const id = safeStr(yid);
+    if (!isValidYouTubeId(id)) return "";
+    // hqdefault suele ir bien para catálogo
+    return `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg`;
+  }
+
+  function camTitleOk(title) {
+    const t = safeStr(title).toLowerCase();
+    if (!t) return false;
+    for (const w of BLOCK_WORDS) {
+      if (t.includes(w)) return false;
+    }
+    for (const h of ALLOW_HINTS) {
+      if (t.includes(h)) return true;
+    }
+    // fallback: “live/directo” suele ser cámara si el título parece de lugar
+    if (t.includes("live") || t.includes("en vivo") || t.includes("directo")) return true;
+    return false;
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   // ─────────────────────────────────────────────────────────────
   // 1) LISTA BRUTA (tus existentes + ampliación)
@@ -396,11 +461,7 @@
     { id:"mix_50_greece_webcams", title:"50 TOP LIVE CAMS (Greece mix)", place:"Grecia (mix)", source:"YouTube", kind:"youtube", youtubeId:"QswsqbCmkjE", originUrl:"https://www.youtube.com/watch?v=QswsqbCmkjE", tags:["mix","greece"] },
     { id:"mix_us_webcams_oct", title:"LIVE WEBCAMS around the USA (mix)", place:"USA (mix)", source:"YouTube", kind:"youtube", youtubeId:"59D6sy6wjdI", originUrl:"https://www.youtube.com/watch?v=59D6sy6wjdI", tags:["mix","usa"] },
 
-    // ─────────────────────────────────────────────────────────
-    // ──────────────── NUEVAS (MUCHAS MÁS) ────────────────────
-    // ─────────────────────────────────────────────────────────
-    // OJO: algunas de estas de tu lista eran “placeholders” (IDs inventados).
-    // Este script ya NO inventa nuevas: las reemplaza via auto-discovery real.
+    // placeholders/ejemplos -> si son inválidos, tu player ya autoskip; discovery los reemplaza en la práctica
     { id:"es_madrid_puerta_sol", title:"Puerta del Sol Live", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"k7m5Jc2QYqA", originUrl:"https://www.youtube.com/watch?v=k7m5Jc2QYqA", tags:["spain","madrid","city"] },
     { id:"es_madrid_gran_via", title:"Gran Vía Live", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"xjG8h3u4b8o", originUrl:"https://www.youtube.com/watch?v=xjG8h3u4b8o", tags:["spain","madrid","street"] },
     { id:"es_valencia_city", title:"Valencia City Live", place:"Valencia, España", source:"YouTube", kind:"youtube", youtubeId:"wXxQm2n3p1s", originUrl:"https://www.youtube.com/watch?v=wXxQm2n3p1s", tags:["spain","valencia"] },
@@ -414,63 +475,20 @@
   ];
 
   // ─────────────────────────────────────────────────────────────
-  // 2) SANITIZAR + EXPORTAR (VIDEO ONLY, para que NO se rompa nada)
+  // 2) SANITIZAR + EXPORTAR (VIDEO ONLY)
   // ─────────────────────────────────────────────────────────────
-  const ALLOWED_KINDS = new Set(["youtube", "hls"]);
-
-  function safeStr(v) { return (typeof v === "string") ? v.trim() : ""; }
-  function toId(v, i) {
-    const s = safeStr(v);
-    if (s) return s;
-    return `cam_${String(i).padStart(4, "0")}`;
-  }
-
-  function isValidYouTubeId(id) {
-    const s = safeStr(id);
-    return /^[a-zA-Z0-9_-]{11}$/.test(s);
-  }
-
-  function extractYouTubeIdFromUrl(url) {
-    const u = safeStr(url);
-    if (!u) return "";
-    let m = u.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-    if (m && m[1]) return m[1];
-    m = u.match(/\/live\/([a-zA-Z0-9_-]{11})/);
-    if (m && m[1]) return m[1];
-    m = u.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
-    if (m && m[1]) return m[1];
-    return "";
-  }
-
-  function looksLikeM3U8(url) {
-    const u = safeStr(url).toLowerCase();
-    return !!u && (u.includes(".m3u8") || u.includes("m3u8"));
-  }
-
-  function camTitleOk(title) {
-    const t = safeStr(title).toLowerCase();
-    if (!t) return false;
-    for (const w of BLOCK_WORDS) {
-      if (t.includes(w)) return false;
-    }
-    // debe tener al menos un “hint” de cámara, si no, lo tratamos como no-cam
-    for (const h of ALLOW_HINTS) {
-      if (t.includes(h)) return true;
-    }
-    // si no tiene hints, aún puede ser cam (EarthCam etc). Aceptamos si tiene “live” + algo de lugar.
-    if (t.includes("live") || t.includes("en vivo") || t.includes("directo")) return true;
-    return false;
-  }
-
   const seenIds = new Set();
   const seenYouTube = new Set(); // youtubeId
-  const OUT = [];
+  const OUT = [];               // lista para player (puede contener alts)
+  const OUT_CATALOG = [];       // lista para catálogo (sin alts)
 
   function pushCam(cam) {
-    if (!cam || !cam.id || seenIds.has(cam.id)) return;
+    if (!cam || !cam.id || seenIds.has(cam.id)) return false;
     seenIds.add(cam.id);
     if (cam.kind === "youtube" && cam.youtubeId) seenYouTube.add(cam.youtubeId);
     OUT.push(cam);
+    if (!cam.isAlt) OUT_CATALOG.push(cam);
+    return true;
   }
 
   // Build base list from RAW
@@ -503,7 +521,8 @@
       place: safeStr(cam.place) || "",
       source: safeStr(cam.source) || "",
       kind,
-      tags: Array.isArray(cam.tags) ? cam.tags.slice(0, 12) : undefined
+      tags: Array.isArray(cam.tags) ? cam.tags.slice(0, 12) : undefined,
+      isAlt: false
     };
 
     if (kind === "youtube") {
@@ -518,7 +537,9 @@
 
       base.youtubeId = youtubeId;
       base.originUrl = safeStr(cam.originUrl) || `https://www.youtube.com/watch?v=${encodeURIComponent(youtubeId)}`;
+      base.thumb = safeStr(cam.thumb) || youtubeThumb(youtubeId);
       if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
+
       pushCam(base);
       continue;
     }
@@ -530,6 +551,7 @@
       base.url = url;
       base.originUrl = safeStr(cam.originUrl) || url;
       if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
+
       pushCam(base);
       continue;
     }
@@ -556,6 +578,7 @@
         if (!c || typeof c !== "object") continue;
         const kind = safeStr(c.kind).toLowerCase();
         if (!ALLOWED_KINDS.has(kind)) continue;
+
         const id = safeStr(c.id);
         if (!id || ids.has(id)) continue;
 
@@ -563,7 +586,9 @@
           const yid = safeStr(c.youtubeId);
           if (!isValidYouTubeId(yid) || yts.has(yid)) continue;
           yts.add(yid);
+          if (!c.thumb) c.thumb = youtubeThumb(yid);
         }
+        c.isAlt = false; // cache solo guarda “reales”
         ids.add(id);
         list.push(c);
       }
@@ -573,25 +598,24 @@
     }
   }
 
-  function saveCache(list) {
+  function saveCache(listNonAlt) {
     try {
-      const payload = { ts: Date.now(), list: list.slice(0, TARGET_CAMS) };
+      const payload = { ts: Date.now(), list: listNonAlt.slice(0, TARGET_CAMS) };
       localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
     } catch (_) {}
   }
 
   const cached = loadCache();
   if (cached && cached.length >= Math.min(80, TARGET_CAMS)) {
-    // Mezcla: prioriza tus seeds (primero), luego cache (sin duplicar IDs ni youtubeId)
     for (let i = 0; i < cached.length; i++) {
       const c = cached[i];
       if (!c || typeof c !== "object") continue;
       const kind = safeStr(c.kind).toLowerCase();
       if (!ALLOWED_KINDS.has(kind)) continue;
 
-      // Dedupe por id + youtubeId
       const id = safeStr(c.id);
       if (!id || seenIds.has(id)) continue;
+
       if (kind === "youtube") {
         const yid = safeStr(c.youtubeId);
         if (!isValidYouTubeId(yid) || seenYouTube.has(yid)) continue;
@@ -603,23 +627,116 @@
 
   // Export inmediato (para no romper tu player)
   g.CAM_LIST = OUT;
+  g.CAM_CATALOG_LIST = OUT_CATALOG;
 
   // Promise opcional (por si tu app quiere esperar a las 500)
   let __resolveReady = null;
   g.CAM_LIST_READY = new Promise((res) => { __resolveReady = res; });
 
   // ─────────────────────────────────────────────────────────────
+  // CATALOGO API (4 a la vez)
+  // ─────────────────────────────────────────────────────────────
+  function getCatalogList() {
+    // siempre devuelve lista sin alts
+    return Array.isArray(g.CAM_CATALOG_LIST) ? g.CAM_CATALOG_LIST : [];
+  }
+
+  function clampInt(v, a, b) {
+    v = (v | 0);
+    return Math.max(a, Math.min(b, v));
+  }
+
+  function getCatalogTotalPages(pageSize = CATALOG_PAGE_SIZE) {
+    const list = getCatalogList();
+    const ps = Math.max(1, (pageSize | 0));
+    return Math.max(1, Math.ceil(list.length / ps));
+  }
+
+  function getCatalogPage(pageIndex, pageSize = CATALOG_PAGE_SIZE) {
+    const list = getCatalogList();
+    const ps = Math.max(1, (pageSize | 0));
+    const totalPages = Math.max(1, Math.ceil(list.length / ps));
+    const pi = clampInt(pageIndex || 0, 0, totalPages - 1);
+    const start = pi * ps;
+    const items = list.slice(start, start + ps);
+    return {
+      pageIndex: pi,
+      pageSize: ps,
+      totalPages,
+      totalItems: list.length,
+      items
+    };
+  }
+
+  function pickRandomUnique(list, n) {
+    const out = [];
+    const used = new Set();
+    if (!Array.isArray(list) || list.length === 0) return out;
+    const maxTries = Math.max(40, n * 20);
+    let tries = 0;
+    while (out.length < n && tries++ < maxTries) {
+      const c = list[(Math.random() * list.length) | 0];
+      if (!c || !c.id || used.has(c.id)) continue;
+      used.add(c.id);
+      out.push(c);
+    }
+    // fallback: rellena secuencial si falta
+    for (let i = 0; out.length < n && i < list.length; i++) {
+      const c = list[i];
+      if (c && c.id && !used.has(c.id)) { used.add(c.id); out.push(c); }
+    }
+    return out.slice(0, n);
+  }
+
+  function getCatalogFeatured(count = CATALOG_PAGE_SIZE) {
+    const list = getCatalogList();
+    const n = Math.max(1, (count | 0));
+    return pickRandomUnique(list, n);
+  }
+
+  function emitUpdate() {
+    const detail = {
+      list: g.CAM_LIST,
+      catalog: g.CAM_CATALOG_LIST,
+      total: Array.isArray(g.CAM_LIST) ? g.CAM_LIST.length : 0,
+      catalogTotal: Array.isArray(g.CAM_CATALOG_LIST) ? g.CAM_CATALOG_LIST.length : 0
+    };
+    try { g.dispatchEvent(new CustomEvent("rlc_cam_list_updated", { detail })); } catch (_) {}
+  }
+
+  function onUpdate(cb) {
+    if (typeof cb !== "function") return () => {};
+    const h = (ev) => {
+      try {
+        const d = ev && ev.detail;
+        cb(d || null);
+      } catch (_) {}
+    };
+    try { g.addEventListener("rlc_cam_list_updated", h); } catch (_) {}
+    return () => { try { g.removeEventListener("rlc_cam_list_updated", h); } catch (_) {} };
+  }
+
+  g.RLCCams = g.RLCCams || {};
+  g.RLCCams.pageSize = CATALOG_PAGE_SIZE;
+  g.RLCCams.getCatalogList = getCatalogList;
+  g.RLCCams.getCatalogTotalPages = getCatalogTotalPages;
+  g.RLCCams.getCatalogPage = getCatalogPage;
+  g.RLCCams.getCatalogFeatured = getCatalogFeatured;
+  g.RLCCams.onUpdate = onUpdate;
+
+  // también expongo por compat si lo quieres leer en catalogView.js
+  g.RLC_CATALOG_PAGE_SIZE = CATALOG_PAGE_SIZE;
+
+  emitUpdate();
+
+  // ─────────────────────────────────────────────────────────────
   // 3) AUTO-DISCOVERY — completar a 500 con cams REALES
   // ─────────────────────────────────────────────────────────────
-  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
   function textLikelyBlockedEmbed(t) {
     const s = (t || "").toLowerCase();
-    // frases típicas de YouTube embed bloqueado/no disponible
     if (s.includes("playback on other websites has been disabled")) return true;
     if (s.includes("video unavailable")) return true;
     if (s.includes("this video is unavailable")) return true;
-    if (s.includes("unavailable")) return true;
     if (s.includes("has been removed")) return true;
     return false;
   }
@@ -637,15 +754,17 @@
   function normalizeUrl(u) {
     const s = safeStr(u);
     if (!s) return "";
+    // fuerza https si viene http
     if (s.startsWith("http://")) return "https://" + s.slice(7);
     return s;
   }
 
-  // Proxies/fallbacks (para entornos con CORS duro)
+  // Proxies/fallbacks para CORS duro
   const PROXIES = [
     (u) => normalizeUrl(u),
-    // Jina “reader” proxy (suele devolver texto accesible)
-    (u) => "https://r.jina.ai/http://" + normalizeUrl(u)
+    // Jina proxy: probamos 2 formatos para maximizar compat
+    (u) => "https://r.jina.ai/http://" + normalizeUrl(u).replace(/^https?:\/\//, ""),
+    (u) => "https://r.jina.ai/https://" + normalizeUrl(u).replace(/^https?:\/\//, "")
   ];
 
   async function fetchTextSmart(url, timeoutMs) {
@@ -654,6 +773,7 @@
       const u = PROXIES[i](url);
       try {
         const r = await fetchWithTimeout(u, { method: "GET", cache: "no-store" }, timeoutMs || 9000);
+        if (!r || !r.ok) throw new Error(`HTTP ${r ? r.status : "?"}`);
         const tx = await r.text();
         if (tx && tx.length > 0) return tx;
       } catch (e) {
@@ -665,9 +785,7 @@
 
   async function fetchJsonSmart(url, timeoutMs) {
     const tx = await fetchTextSmart(url, timeoutMs || 9000);
-    // Intento parse directo
     try { return JSON.parse(tx); } catch (_) {}
-    // Limpieza best-effort: recorta desde primer { o [ hasta último } o ]
     const a = Math.min(
       tx.indexOf("{") >= 0 ? tx.indexOf("{") : tx.length,
       tx.indexOf("[") >= 0 ? tx.indexOf("[") : tx.length
@@ -683,24 +801,24 @@
   async function isEmbeddableYouTube(videoId) {
     if (!VALIDATE_EMBED) return true;
 
-    // 1) oEmbed (rápido si está disponible)
+    // 1) oEmbed (rápido). Si falla por CORS/red -> no lo tomamos como negativo.
     try {
       const o = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent("https://www.youtube.com/watch?v=" + videoId)}`;
       const r = await fetchWithTimeout(o, { method: "GET", cache: "no-store" }, 7000);
-      if (!r || !r.ok) return false;
-      // no hace falta leer body
-    } catch (_) {
-      // si falla por CORS/red, no lo usamos como negativo
-    }
+      if (r && r.ok) {
+        // válido (pero NO garantiza embed permitido)
+      } else if (r && (r.status === 401 || r.status === 403 || r.status === 404)) {
+        return false;
+      }
+    } catch (_) {}
 
-    // 2) embed page via proxy (detecta “playback disabled”)
+    // 2) embed HTML via proxy (best-effort)
     try {
       const html = await fetchTextSmart(`https://www.youtube.com/embed/${videoId}`, 9000);
       if (!html) return true;
       return !textLikelyBlockedEmbed(html);
     } catch (_) {
-      // si no podemos comprobar, no lo invalidamos (tu player ya autoskip)
-      return true;
+      return true; // si no podemos comprobar, no lo invalidamos (tu player ya autoskip)
     }
   }
 
@@ -709,7 +827,6 @@
     if (!isValidYouTubeId(vid)) return null;
 
     const title = safeStr(entry.title) || "Live Cam";
-    // filtro fuerte: evitar streams que NO son cámaras
     if (!camTitleOk(title)) return null;
 
     const author = safeStr(entry.author);
@@ -722,7 +839,9 @@
       kind: "youtube",
       youtubeId: vid,
       originUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`,
-      tags: ["auto","live","discovery"]
+      thumb: youtubeThumb(vid),
+      tags: ["auto","live","discovery"],
+      isAlt: false
     };
   }
 
@@ -736,10 +855,8 @@
       "https://inv.perditum.com"
     ];
 
-    // API oficial de instancias (puede fallar a veces)
     try {
-      const data = await fetchJsonSmart("https://api.invidious.io/instances.json", 9000);
-      // Formato típico: [[domain, info], ...]
+      const data = await fetchJsonSmart("https://api.invidious.io/instances.json", 12000);
       const out = [];
       if (Array.isArray(data)) {
         for (let i = 0; i < data.length; i++) {
@@ -747,14 +864,11 @@
           if (!Array.isArray(row) || row.length < 2) continue;
           const info = row[1] || {};
           const uri = safeStr(info.uri);
-          if (!uri) continue;
-          if (!uri.startsWith("http")) continue;
-          // intenta quedarte con https
+          if (!uri || !uri.startsWith("http")) continue;
           const u = uri.startsWith("http://") ? "https://" + uri.slice(7) : uri;
           out.push(u.replace(/\/+$/, ""));
         }
       }
-      // dedupe
       const uniq = [];
       const s = new Set();
       for (let i = 0; i < out.length; i++) {
@@ -763,7 +877,6 @@
         s.add(u);
         uniq.push(u);
       }
-      // mezcla con fallback por si se queda corto
       for (let i = 0; i < fallback.length; i++) {
         const u = fallback[i];
         if (!s.has(u)) { s.add(u); uniq.push(u); }
@@ -776,7 +889,6 @@
 
   async function invidiousSearch(instance, q, page) {
     const base = instance.replace(/\/+$/, "");
-    // docs: /api/v1/search?q=...&page=...&type=video&features=live&sort=relevance
     const url =
       `${base}/api/v1/search` +
       `?q=${encodeURIComponent(q)}` +
@@ -793,11 +905,15 @@
 
   async function discoverMore() {
     if (!AUTO_DISCOVERY) {
+      saveCache(OUT_CATALOG);
+      emitUpdate();
       if (__resolveReady) __resolveReady(g.CAM_LIST);
       return;
     }
+
     if (OUT.length >= TARGET_CAMS) {
-      saveCache(OUT);
+      saveCache(OUT_CATALOG);
+      emitUpdate();
       if (__resolveReady) __resolveReady(g.CAM_LIST);
       return;
     }
@@ -806,7 +922,7 @@
     const candidates = [];
     const addedNow = new Set(); // videoId in this run
 
-    // pequeña cola de tareas (query x page x instance)
+    // cola de tareas (query x page x instance)
     const tasks = [];
     for (let qi = 0; qi < DISCOVERY_QUERIES.length; qi++) {
       const q = DISCOVERY_QUERIES[qi];
@@ -818,19 +934,17 @@
     }
 
     let cursor = 0;
-    let active = 0;
-    let foundForQuery = Object.create(null);
+    const foundForQuery = Object.create(null);
 
     async function worker() {
-      while (cursor < tasks.length && OUT.length + candidates.length < TARGET_CAMS) {
+      while (cursor < tasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
         const t = tasks[cursor++];
-        active++;
 
         try {
           const key = t.q;
           foundForQuery[key] = foundForQuery[key] || 0;
           if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) {
-            active--;
+            await sleep(60);
             continue;
           }
 
@@ -848,20 +962,17 @@
             if (seenYouTube.has(vid) || addedNow.has(vid)) continue;
             addedNow.add(vid);
 
-            // valida embed (opcional)
             const ok = await isEmbeddableYouTube(vid);
             if (!ok) continue;
 
             candidates.push(cam);
             foundForQuery[key]++;
 
-            if (OUT.length + candidates.length >= TARGET_CAMS) break;
+            if ((OUT_CATALOG.length + candidates.length) >= TARGET_CAMS) break;
           }
         } catch (_) {
-          // silencio: rotan instancias, no queremos spam
+          // silencio
         } finally {
-          active--;
-          // micro-pausa para no ir como una ametralladora
           await sleep(120);
         }
       }
@@ -872,8 +983,8 @@
     for (let i = 0; i < n; i++) workers.push(worker());
     await Promise.all(workers);
 
-    // Añadir candidatos (dedupe por id+youtubeId ya controlado)
-    for (let i = 0; i < candidates.length && OUT.length < TARGET_CAMS; i++) {
+    // Añadir candidatos
+    for (let i = 0; i < candidates.length && OUT_CATALOG.length < TARGET_CAMS; i++) {
       const c = candidates[i];
       if (!c) continue;
       if (seenIds.has(c.id)) continue;
@@ -881,7 +992,7 @@
       pushCam(c);
     }
 
-    // Failsafe ALT fill (si no llegamos)
+    // Failsafe ALT fill (solo para player; catálogo se queda limpio)
     if (HARD_FAILSAFE_ALT_FILL && OUT.length > 0 && OUT.length < TARGET_CAMS) {
       const baseLen = OUT.length;
       let k = 0;
@@ -894,7 +1005,9 @@
           const clone = Object.assign({}, src, {
             id: altId,
             title: `${src.title} (Alt ${altN})`,
-            tags: Array.isArray(src.tags) ? src.tags.slice(0, 11).concat(["alt"]) : ["alt"]
+            tags: Array.isArray(src.tags) ? src.tags.slice(0, 11).concat(["alt"]) : ["alt"],
+            isAlt: true,
+            altOf: src.id
           });
           OUT.push(clone);
         }
@@ -904,15 +1017,12 @@
 
     // Export final
     g.CAM_LIST = OUT;
+    g.CAM_CATALOG_LIST = OUT_CATALOG;
 
-    // Guarda cache (solo “reales” primero: prioriza no-alt si quieres)
-    saveCache(OUT);
+    // Guarda cache SOLO sin alts
+    saveCache(OUT_CATALOG);
 
-    // Señal para tu UI (si quieres escuchar)
-    try {
-      g.dispatchEvent(new CustomEvent("rlc_cam_list_updated", { detail: OUT }));
-    } catch (_) {}
-
+    emitUpdate();
     if (__resolveReady) __resolveReady(g.CAM_LIST);
   }
 
@@ -920,7 +1030,6 @@
   try {
     setTimeout(() => { discoverMore(); }, 0);
   } catch (_) {
-    // fallback inmediato
     discoverMore();
   }
 })();
