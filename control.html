@@ -11,7 +11,7 @@
   <title>Random Live Cams — Control</title>
 
   <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.2.0";</script>
+  <script>window.APP_VERSION = "2.2.1";</script>
 </head>
 
 <body class="mode-control">
@@ -213,7 +213,42 @@
         </div>
 
         <div class="hint">
-          ✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>. Gratis (GDELT).
+          ✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>.
+        </div>
+      </div>
+
+      <!-- ✅ COUNTDOWN (NEW) -->
+      <div class="card">
+        <div class="cardTitle">Cuenta atrás (overlay)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCountdownOn">
+            <span>Cuenta atrás</span>
+            <select id="ctlCountdownOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Cuenta atrás: —</div>
+        </div>
+
+        <label class="row" for="ctlCountdownLabel">
+          <span>Texto</span>
+          <input id="ctlCountdownLabel" class="input" type="text" value="Fin de año" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlCountdownTarget">
+          <span>Objetivo (hora local)</span>
+          <input id="ctlCountdownTarget" class="input" type="datetime-local" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar cuenta atrás</button>
+          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset cuenta atrás</button>
+        </div>
+
+        <div class="hint">
+          ✅ Se envía al player por <b>BroadcastChannel</b> y también va en la URL (<span class="mono">countdown*</span>).
         </div>
       </div>
 
@@ -377,6 +412,56 @@
         </div>
       </div>
 
+      <!-- ✅ NEW: TWITCH AUTO TITLE (HELIX) -->
+      <div class="card">
+        <div class="cardTitle">Twitch — Auto título (Helix)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlHelixOn">
+            <span>Auto título</span>
+            <select id="ctlHelixOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlHelixStatus" aria-live="polite">Auto título: —</div>
+        </div>
+
+        <label class="row" for="ctlHelixTpl">
+          <span>Plantilla</span>
+          <input id="ctlHelixTpl" class="input" type="text" value="🌍 {place} — {title}" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlHelixCooldown">
+            <span>Cooldown (s)</span>
+            <input id="ctlHelixCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
+          </label>
+          <div class="hint" style="margin:0">
+            Usa: <span class="mono">{place}</span> <span class="mono">{title}</span> <span class="mono">{source}</span> <span class="mono">{label}</span>
+          </div>
+        </div>
+
+        <label class="row" for="ctlHelixClientId">
+          <span>Client ID</span>
+          <input id="ctlHelixClientId" class="input" type="text" placeholder="Twitch App Client ID" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlHelixToken">
+          <span>User Token (scope: channel:manage:broadcast)</span>
+          <input id="ctlHelixToken" class="input" type="password" placeholder="Bearer token (sin 'Bearer ')" autocomplete="current-password" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlHelixApply" class="btn full" type="button">Aplicar</button>
+          <button id="ctlHelixTest" class="btn ghost full" type="button">Probar ahora</button>
+        </div>
+
+        <div class="hint">
+          ⚠️ El token debe ser del <b>mismo broadcaster</b>. Se guarda solo en tu navegador (localStorage). No va en la URL.
+        </div>
+      </div>
+
       <!-- ADS OVERLAY -->
       <div class="card">
         <div class="cardTitle">Anuncios (overlay en stream)</div>
@@ -488,7 +573,7 @@
   <script defer src="./music.js"></script>
   <script defer src="./control.js"></script>
 
-  <!-- ✅ Ticker control (namespaced + legacy compatible) -->
+  <!-- Si los tienes en tu proyecto, se quedan tal cual -->
   <script defer src="./newsTickerControl.js"></script>
   <script defer src="./catalogControl.js"></script>
 </body>
