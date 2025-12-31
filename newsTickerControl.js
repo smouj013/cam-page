@@ -1,7 +1,7 @@
-/* newsTickerControl.js — RLC Ticker Control v1.2.0 (KEY-NAMESPACE + LEGACY COMPAT)
+/* newsTickerControl.js — RLC Ticker Control v1.2.0 (KEY-NAMESPACE + COMPAT)
    ✅ Solo para control.html
-   ✅ Guarda config en localStorage (namespaced si ?key=)
-   ✅ Emite config por BroadcastChannel (namespaced si ?key=) + legacy
+   ✅ Guarda config en localStorage (rlc_ticker_cfg_v1[:key])
+   ✅ Emite config por BroadcastChannel (rlc_bus_v1[:key]) + compat legacy
    ✅ No toca control.js / app.js
 */
 
@@ -26,12 +26,11 @@
 
   function parseParams() {
     const u = new URL(location.href);
-    return { key: safeStr(u.searchParams.get("key") || "") };
+    return { key: (u.searchParams.get("key") || "").trim() };
   }
   const P = parseParams();
   const KEY = String(P.key || "").trim();
 
-  // Namespaced (si hay key) + legacy (compat)
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const BUS_LEGACY = BUS_BASE;
 
@@ -47,34 +46,26 @@
     speedPxPerSec: 55,
     refreshMins: 12,
     topPx: 10,
-    hideOnVote: true,
-    timespan: "12h" // más “última hora” por defecto
+    hideOnVote: true
   };
 
   function readCfgAny() {
-    // prioridad: namespaced -> legacy
+    // Prioridad: keyed -> legacy
     try {
-      const rawA = localStorage.getItem(CFG_KEY);
-      if (rawA) {
-        const objA = JSON.parse(rawA);
-        if (objA && typeof objA === "object") return objA;
-      }
+      const rawK = localStorage.getItem(CFG_KEY);
+      if (rawK) return JSON.parse(rawK);
     } catch (_) {}
-
     try {
-      const rawB = localStorage.getItem(CFG_KEY_LEGACY);
-      if (rawB) {
-        const objB = JSON.parse(rawB);
-        if (objB && typeof objB === "object") return objB;
-      }
+      const rawL = localStorage.getItem(CFG_KEY_LEGACY);
+      if (rawL) return JSON.parse(rawL);
     } catch (_) {}
-
     return null;
   }
 
   function writeCfg(cfg) {
     try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (_) {}
-    try { localStorage.setItem(CFG_KEY_LEGACY, JSON.stringify(cfg)); } catch (_) {} // compat
+    // compat
+    try { localStorage.setItem(CFG_KEY_LEGACY, JSON.stringify(cfg)); } catch (_) {}
   }
 
   function clearCfg() {
@@ -82,14 +73,17 @@
     try { localStorage.removeItem(CFG_KEY_LEGACY); } catch (_) {}
   }
 
+  function busPost(msg) {
+    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
+  }
+
   function sendCfg(cfg) {
     const msg = { type: "TICKER_CFG", cfg, ts: Date.now() };
     if (KEY) msg.key = KEY;
+    busPost(msg);
 
-    try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
-    try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
-
-    // fallback storage ping cross-tab
+    // storage ping cross-tab
     try { localStorage.setItem("__rlc_ticker_ping", String(Date.now())); } catch (_) {}
   }
 
@@ -99,13 +93,6 @@
     el.textContent = text;
     el.classList.toggle("pill--ok", !!ok);
     el.classList.toggle("pill--bad", !ok);
-  }
-
-  function normalizeTimespan(s) {
-    const t = safeStr(s).toLowerCase();
-    if (!t) return DEFAULTS.timespan;
-    if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
-    return DEFAULTS.timespan;
   }
 
   function normalizeCfg(inCfg) {
@@ -119,8 +106,6 @@
     c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
     c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
     c.hideOnVote = (c.hideOnVote !== false);
-    c.timespan = normalizeTimespan(c.timespan);
-
     return c;
   }
 
@@ -152,30 +137,22 @@
     const topPx = num(qs("#ctlTickerTop")?.value, DEFAULTS.topPx);
     const hideOnVote = (qs("#ctlTickerHideOnVote")?.value || "on") !== "off";
 
-    const cfg = normalizeCfg({
+    return normalizeCfg({
       enabled: (on !== "off"),
-      lang: (lang === "es" || lang === "en" || lang === "auto") ? lang : "auto",
+      lang,
       speedPxPerSec: speed,
       refreshMins: refresh,
       topPx,
       hideOnVote
-      // timespan no está en UI aquí: queda por defecto (12h) o del storage previo
     });
-
-    // mantiene timespan si existía guardado
-    const saved = readCfgAny();
-    if (saved && saved.timespan) cfg.timespan = normalizeTimespan(saved.timespan);
-
-    return cfg;
   }
 
   function boot() {
     if (!qs("#ctlTickerApply") || !qs("#ctlTickerOn")) return;
 
-    // Migración suave: si hay key y no hay cfg namespaced pero sí legacy, se replica al namespaced
-    const savedAny = normalizeCfg(readCfgAny() || DEFAULTS);
-    writeCfg(savedAny);
-    applyUIFromCfg(savedAny);
+    const saved = normalizeCfg(readCfgAny() || DEFAULTS);
+    writeCfg(saved);
+    applyUIFromCfg(saved);
 
     const doApply = (persist = true) => {
       const cfg = collectCfgFromUI();
@@ -194,7 +171,7 @@
       applyUIFromCfg(cfg);
     });
 
-    // Apply en vivo (suave)
+    // Live apply
     const liveEls = [
       "#ctlTickerOn",
       "#ctlTickerLang",
@@ -213,7 +190,6 @@
       });
     }
 
-    // Si otra pestaña cambia config
     window.addEventListener("storage", (e) => {
       if (!e) return;
       if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
