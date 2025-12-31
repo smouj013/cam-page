@@ -104,6 +104,60 @@
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
+      <!-- ✅ CATALOG MODE (4 cams) -->
+      <div class="card">
+        <div class="cardTitle">Modo catálogo (CCTV)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogOn">
+            <span>Catálogo</span>
+            <select id="ctlCatalogOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlCatalogStatus" aria-live="polite">Catálogo: —</div>
+        </div>
+
+        <label class="row" for="ctlCatalogLayout">
+          <span>Layout</span>
+          <select id="ctlCatalogLayout" class="select">
+            <option value="quad">2×2 (4 cams)</option>
+          </select>
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogGap">
+            <span>Separación (px)</span>
+            <input id="ctlCatalogGap" class="input" type="number" min="0" max="24" step="1" value="8" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogLabels">
+            <span>Labels</span>
+            <select id="ctlCatalogLabels" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="row" for="ctlCatalogMuted">
+          <span>Mutear vídeos</span>
+          <select id="ctlCatalogMuted" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <div class="row2">
+          <button id="ctlCatalogApply" class="btn full" type="button">Aplicar catálogo</button>
+          <button id="ctlCatalogReset" class="btn ghost full" type="button">Reset catálogo</button>
+        </div>
+
+        <div class="hint">
+          ✅ Muestra 4 cams (la actual + 3 siguientes). Ideal estilo CCTV.
+        </div>
+      </div>
+
       <!-- ✅ NEWS TICKER (CONFIG) -->
       <div class="card card--ticker">
         <div class="cardTitle">Noticias (ticker)</div>
@@ -436,5 +490,6 @@
 
   <!-- ✅ Ticker control (namespaced + legacy compatible) -->
   <script defer src="./newsTickerControl.js"></script>
+  <script defer src="./catalogControl.js"></script>
 </body>
 </html>
