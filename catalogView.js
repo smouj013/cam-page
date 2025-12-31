@@ -1,8 +1,11 @@
-/* catalogView.js — RLC Catalog View v1.0.2 (CCTV 2x2 + WX chip + HIDE SINGLE HUD)
+/* catalogView.js — RLC Catalog View v1.0.2 (CCTV 2x2 + WX chip + CAM_CATALOG_LIST aware)
    ✅ Modo catálogo 4 cams (2x2)
-   ✅ Oculta HUD single cuando catálogo está ON
-   ✅ Señaliza modo catálogo: dataset + CustomEvent ("rlc_catalog_mode")
+   ✅ Compatible con cams.js moderno:
+      - kind: "youtube" | "hls"
+      - youtubeId / originUrl / url
+      - CAM_CATALOG_LIST (preferente) y/o RLCCams.getCatalogList()
    ✅ Si existe window.RLCWx (weatherClock.js), muestra temp+hora en cada tile
+   ✅ Escucha rlc_cam_list_updated (auto-discovery refresh)
 */
 
 (() => {
@@ -232,35 +235,16 @@
     if (img) img.style.display = on ? "" : "none";
   }
 
-  // ✅ NUEVO: ocultar/mostrar HUD single (el panel “normal”)
-  let _hudEl = null;
-  let _hudPrevDisplay = "";
-  function findHudEl() {
-    return qs(".hud") || qs("#hud") || qs("#rlcHud") || null;
-  }
-  function setSingleHudVisible(on) {
-    if (!_hudEl || !_hudEl.isConnected) _hudEl = findHudEl();
-    if (!_hudEl) return;
-
-    if (on) {
-      _hudEl.style.display = _hudPrevDisplay || "";
-    } else {
-      if (_hudPrevDisplay === "") _hudPrevDisplay = _hudEl.style.display || "";
-      _hudEl.style.display = "none";
-    }
-  }
-
-  // ✅ NUEVO: señal global para otros módulos (weatherClock)
-  function signalCatalogMode(on) {
-    try {
-      document.documentElement.dataset.rlcCatalog = on ? "1" : "0";
-    } catch (_) {}
-    try {
-      g.dispatchEvent(new CustomEvent("rlc_catalog_mode", { detail: { on: !!on, ts: Date.now() } }));
-    } catch (_) {}
-  }
-
+  // Preferente: catálogo limpio (sin ALT). Fallback: CAM_LIST.
   function getCamList() {
+    try {
+      if (g.RLCCams && typeof g.RLCCams.getCatalogList === "function") {
+        const l = g.RLCCams.getCatalogList();
+        if (Array.isArray(l) && l.length) return l;
+      }
+    } catch (_) {}
+
+    if (Array.isArray(g.CAM_CATALOG_LIST) && g.CAM_CATALOG_LIST.length) return g.CAM_CATALOG_LIST;
     return Array.isArray(g.CAM_LIST) ? g.CAM_LIST : [];
   }
 
@@ -282,42 +266,55 @@
     return out;
   }
 
-  function detectKind(url) {
+  function detectKindByUrl(url) {
     const u = String(url || "").toLowerCase();
     if (!u) return "iframe";
     if (u.includes("youtube.com") || u.includes("youtu.be") || u.includes("youtube-nocookie.com")) return "yt";
-    if (u.endsWith(".m3u8") || u.includes(".m3u8?")) return "hls";
+    if (u.endsWith(".m3u8") || u.includes(".m3u8?") || u.includes("m3u8")) return "hls";
     if (/\.(png|jpg|jpeg|gif|webp)(\?|#|$)/i.test(u)) return "img";
     return "iframe";
   }
 
-  function extractUrl(cam) {
-    // soporte para tu catálogo (youtubeId/url/originUrl)
-    if (!cam) return "";
-    if (cam.kind === "youtube" && cam.youtubeId) {
-      return `https://www.youtube.com/watch?v=${encodeURIComponent(cam.youtubeId)}`;
+  function getPlayableUrlFromCam(cam) {
+    if (!cam || typeof cam !== "object") return "";
+
+    const kind = safeStr(cam.kind).toLowerCase();
+    const youtubeId = safeStr(cam.youtubeId);
+
+    if (kind === "youtube" && youtubeId) {
+      return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtubeId)}`;
     }
+    if (kind === "hls") {
+      const u = safeStr(cam.url);
+      return u;
+    }
+
+    // fallback: campos habituales
     return (
-      cam?.embedUrl ||
-      cam?.url ||
-      cam?.originUrl ||
-      cam?.src ||
-      cam?.streamUrl ||
-      cam?.stream ||
-      cam?.link ||
+      safeStr(cam.embedUrl) ||
+      safeStr(cam.url) ||
+      safeStr(cam.src) ||
+      safeStr(cam.streamUrl) ||
+      safeStr(cam.stream) ||
+      safeStr(cam.link) ||
+      safeStr(cam.originUrl) ||
       ""
     );
   }
 
-  function ytEmbed(url) {
+  function ytEmbed(url, muted) {
     const u = String(url || "");
+    const m = muted ? "1" : "0";
+
     if (/\/embed\//i.test(u)) {
       const o = new URL(u, location.href);
       o.searchParams.set("autoplay", "1");
-      o.searchParams.set("mute", "1");
+      o.searchParams.set("mute", m);
       o.searchParams.set("controls", "0");
       o.searchParams.set("playsinline", "1");
       o.searchParams.set("rel", "0");
+      o.searchParams.set("modestbranding", "1");
+      o.searchParams.set("iv_load_policy", "3");
       return o.toString();
     }
 
@@ -328,10 +325,12 @@
 
     const o = new URL(`https://www.youtube-nocookie.com/embed/${id}`);
     o.searchParams.set("autoplay", "1");
-    o.searchParams.set("mute", "1");
+    o.searchParams.set("mute", m);
     o.searchParams.set("controls", "0");
     o.searchParams.set("playsinline", "1");
     o.searchParams.set("rel", "0");
+    o.searchParams.set("modestbranding", "1");
+    o.searchParams.set("iv_load_policy", "3");
     return o.toString();
   }
 
@@ -395,17 +394,21 @@
   }
 
   function renderCamIntoSlot(slot, cam, n) {
+    if (!slot || !slot.el) return;
+
     const slotEl = slot.el;
     slotEl.classList.remove("offline");
-
-    const urlRaw = extractUrl(cam);
-    const kind = detectKind(urlRaw);
 
     setLabel(slotEl, cam, n);
     setWxChip(slotEl, cam);
 
-    if (slot.iframe) slot.iframe.src = "about:blank";
-    if (slot.img) slot.img.src = "";
+    // reset media
+    if (slot.iframe) {
+      try { slot.iframe.src = "about:blank"; } catch (_) {}
+    }
+    if (slot.img) {
+      try { slot.img.src = ""; } catch (_) {}
+    }
     if (slot.video) {
       try { slot.video.pause(); } catch (_) {}
       slot.video.removeAttribute("src");
@@ -413,17 +416,20 @@
     }
     stopHls(slot);
 
+    const urlRaw = getPlayableUrlFromCam(cam);
     if (!urlRaw) {
       showOnly(slot, "iframe");
       slotEl.classList.add("offline");
       return;
     }
 
+    const kind = detectKindByUrl(urlRaw);
+
     if (slot.video) slot.video.muted = !!CFG.muted;
 
     if (kind === "img") {
       showOnly(slot, "img");
-      slot.img.src = urlRaw;
+      if (slot.img) slot.img.src = urlRaw;
       return;
     }
 
@@ -454,11 +460,17 @@
       return;
     }
 
+    // iframe / youtube
     showOnly(slot, "iframe");
-    const src = (kind === "yt") ? ytEmbed(urlRaw) : urlRaw;
+    const src = (kind === "yt") ? ytEmbed(urlRaw, !!CFG.muted) : urlRaw;
 
     try {
-      slot.iframe.src = src;
+      if (slot.iframe) {
+        slot.iframe.loading = "eager";
+        slot.iframe.src = src;
+      } else {
+        slotEl.classList.add("offline");
+      }
     } catch (_) {
       slotEl.classList.add("offline");
     }
@@ -491,13 +503,6 @@
 
   function setCatalogEnabled(on) {
     root.classList.toggle("on", !!on);
-
-    // ✅ clave: esconder/mostrar HUD single
-    setSingleHudVisible(!on);
-
-    // ✅ avisar a otros módulos (weatherClock)
-    signalCatalogMode(!!on);
-
     if (on) {
       applyCfgToUI();
       setSingleMediaVisible(false);
@@ -516,7 +521,7 @@
     }
   }
 
-  function updateCatalogFromState() {
+  function updateCatalogFromState(force = false) {
     if (!CFG.enabled) return;
 
     const list = getCamList();
@@ -529,8 +534,11 @@
     if (idx < 0) idx = findIndexById(list, camId);
 
     const picked = pick4(list, idx);
-    const sig = picked.map(x => String(x?.id || "")).join("|") + `|m=${CFG.muted?1:0}|l=${CFG.labels?1:0}|g=${CFG.gapPx|0}`;
-    if (sig === lastSig) return;
+    const sig =
+      picked.map(x => String(x?.id || "")).join("|") +
+      `|m=${CFG.muted?1:0}|l=${CFG.labels?1:0}|g=${CFG.gapPx|0}`;
+
+    if (!force && sig === lastSig) return;
     lastSig = sig;
 
     applyCfgToUI();
@@ -547,14 +555,14 @@
       if (!keyOk(msg, isMain)) return;
       CFG = normalizeCfg(msg.cfg);
       setCatalogEnabled(CFG.enabled);
-      updateCatalogFromState();
+      updateCatalogFromState(true);
       return;
     }
 
     if (msg.type === "state") {
       if (!keyOk(msg, isMain)) return;
       lastState = msg;
-      if (CFG.enabled) updateCatalogFromState();
+      if (CFG.enabled) updateCatalogFromState(false);
       return;
     }
   }
@@ -562,11 +570,20 @@
   if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
   if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
 
+  // auto refresh cuando el cams.js termina discovery/cache update
+  function onCamListUpdated() {
+    if (!CFG.enabled) return;
+    // fuerza recálculo por si cambió lista
+    updateCatalogFromState(true);
+  }
+  try { g.addEventListener("rlc_cam_list_updated", onCamListUpdated); } catch (_) {}
+
+  // polling fallback (por si no hay BC o algo falla)
   setInterval(() => {
     const st = readStateFromLS();
     if (st) {
       lastState = st;
-      if (CFG.enabled) updateCatalogFromState();
+      if (CFG.enabled) updateCatalogFromState(false);
     }
   }, 550);
 
@@ -575,7 +592,7 @@
     if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
       CFG = normalizeCfg(loadCfg());
       setCatalogEnabled(CFG.enabled);
-      updateCatalogFromState();
+      updateCatalogFromState(true);
     }
   });
 
@@ -583,7 +600,7 @@
     CFG = normalizeCfg(loadCfg());
     setCatalogEnabled(CFG.enabled);
     lastState = readStateFromLS() || lastState;
-    if (CFG.enabled) updateCatalogFromState();
+    if (CFG.enabled) updateCatalogFromState(true);
   }
 
   if (document.readyState === "loading") {

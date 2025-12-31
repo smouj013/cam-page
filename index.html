@@ -15,68 +15,7 @@
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <script>window.APP_VERSION = "2.1.1";</script>
-
-  <!-- ✅ Extra CSS mínimo (solo WX chip + countdown, no rompe tu styles.css) -->
-  <style>
-    #rlcHudWx{
-      display:inline-flex;
-      align-items:center;
-      gap:6px;
-      margin-left:10px;
-      padding:4px 10px;
-      border-radius:999px;
-      background:rgba(0,0,0,.38);
-      border:1px solid rgba(255,255,255,.12);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      color: rgba(255,255,255,.92);
-      font: 900 12px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      text-shadow: 0 10px 20px rgba(0,0,0,.8);
-      transform: translateZ(0);
-    }
-    #rlcHudWx.wxOff{ opacity:0; pointer-events:none; }
-    #rlcHudWx .wxDot{ opacity:.7; }
-    #rlcHudWx .wxTemp{ font-variant-numeric: tabular-nums; }
-    #rlcHudWx .wxTime{ font-variant-numeric: tabular-nums; opacity:.95; }
-
-    #rlcCountdown{
-      position:absolute;
-      z-index: 50;
-      top: 78px;
-      right: 14px;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      padding:10px 12px;
-      border-radius:14px;
-      background: rgba(0,0,0,.46);
-      border: 1px solid rgba(255,255,255,.14);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      box-shadow: 0 18px 55px rgba(0,0,0,.55);
-      color: rgba(255,255,255,.94);
-      max-width: min(340px, calc(100vw - 24px));
-    }
-    #rlcCountdown.hidden{ display:none; }
-    #rlcCountdown .lbl{
-      font: 950 12px/1 ui-sans-serif, system-ui;
-      letter-spacing:.14em;
-      opacity: .92;
-      text-transform: uppercase;
-      white-space: nowrap;
-      overflow:hidden;
-      text-overflow: ellipsis;
-    }
-    #rlcCountdown .time{
-      font: 950 20px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      letter-spacing:.02em;
-    }
-    #rlcCountdown.tr{ top:78px; right:14px; left:auto; bottom:auto; }
-    #rlcCountdown.tl{ top:78px; left:14px; right:auto; bottom:auto; }
-    #rlcCountdown.br{ bottom:14px; right:14px; top:auto; left:auto; }
-    #rlcCountdown.bl{ bottom:14px; left:14px; top:auto; right:auto; }
-  </style>
+  <script>window.APP_VERSION = "2.0.8";</script>
 </head>
 
 <body class="mode-player">
@@ -124,17 +63,10 @@
         <!-- HUD -->
         <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
           <div class="hudBar">
-            <div class="hudLeft" id="hudLeft">
+            <div class="hudLeft">
               <div class="badge" id="badgeLive">LIVE</div>
               <div class="hudTitle" id="hudTitle">Cargando…</div>
-
-              <!-- ✅ WX fijo (evita “no aparece” si falla la inyección) -->
-              <div id="rlcHudWx" class="wxOff" aria-live="polite">
-                <span id="rlcHudWxIcon" aria-hidden="true">🌡️</span>
-                <span id="rlcHudWxTemp" class="wxTemp">—°C</span>
-                <span class="wxDot" aria-hidden="true">·</span>
-                <span id="rlcHudWxTime" class="wxTime">--:--</span>
-              </div>
+              <!-- ✅ Weather/time se inyecta por JS aquí (no tocamos app.js) -->
             </div>
 
             <div class="hudRight">
@@ -176,12 +108,6 @@
               </span>
             </div>
           </div>
-        </div>
-
-        <!-- ✅ COUNTDOWN overlay (fin de año, etc.) -->
-        <div id="rlcCountdown" class="hidden tr" aria-live="polite">
-          <div class="lbl" id="rlcCountdownLabel">FIN DE AÑO</div>
-          <div class="time mono" id="rlcCountdownTime">--:--:--</div>
         </div>
 
         <!-- VOTE overlay -->
@@ -238,216 +164,5 @@
 
   <!-- Main player logic -->
   <script defer src="./app.js"></script>
-
-  <!-- ✅ Countdown bootstrap (BC + localStorage + URL params) + hide HUD when catalog ON -->
-  <script>
-    (() => {
-      "use strict";
-
-      const g = (typeof globalThis !== "undefined") ? globalThis : window;
-      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V101";
-      try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
-
-      const BUS_BASE = "rlc_bus_v1";
-      const CD_KEY_BASE = "rlc_countdown_cfg_v1";
-
-      const qs = (s, r=document) => r.querySelector(s);
-      const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
-      const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-
-      function parseParams() {
-        const u = new URL(location.href);
-        return {
-          key: safeStr(u.searchParams.get("key") || ""),
-          countdown: safeStr(u.searchParams.get("countdown") || ""),
-          countTo: safeStr(u.searchParams.get("countTo") || ""),
-          countLabel: safeStr(u.searchParams.get("countLabel") || ""),
-          countPos: safeStr(u.searchParams.get("countPos") || "")
-        };
-      }
-
-      const P = parseParams();
-      const KEY = P.key;
-
-      const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-      const BUS_LEGACY = BUS_BASE;
-
-      const CD_KEY = KEY ? `${CD_KEY_BASE}:${KEY}` : CD_KEY_BASE;
-      const CD_KEY_LEGACY = CD_KEY_BASE;
-
-      const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-      const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-
-      function keyOk(msg, isMainChannel) {
-        if (!KEY) return true;
-        if (isMainChannel) return true;
-        return (msg && msg.key === KEY);
-      }
-
-      const DEFAULTS = {
-        enabled: false,
-        label: "FIN DE AÑO",
-        targetIso: "",
-        position: "tr",
-        hideHudWhenCatalog: true
-      };
-
-      function readJson(key) {
-        try {
-          const raw = localStorage.getItem(key);
-          if (!raw) return null;
-          const obj = JSON.parse(raw);
-          return (obj && typeof obj === "object") ? obj : null;
-        } catch (_) { return null; }
-      }
-
-      function normalizeCfg(inCfg) {
-        const c = Object.assign({}, DEFAULTS, inCfg || {});
-        c.enabled = (c.enabled === true);
-        c.label = safeStr(c.label || DEFAULTS.label).slice(0, 48);
-        c.targetIso = safeStr(c.targetIso || "");
-        c.position = (c.position === "tl" || c.position === "tr" || c.position === "bl" || c.position === "br") ? c.position : "tr";
-        c.hideHudWhenCatalog = (c.hideHudWhenCatalog !== false);
-        return c;
-      }
-
-      function cfgFromUrlParams() {
-        const on = (P.countdown === "1" || P.countdown === "true");
-        if (!on && !P.countTo && !P.countLabel) return null;
-        return normalizeCfg({
-          enabled: on || !!P.countTo,
-          label: P.countLabel || DEFAULTS.label,
-          targetIso: P.countTo || "",
-          position: P.countPos || "tr"
-        });
-      }
-
-      function loadCfg() {
-        const stored = readJson(CD_KEY) || readJson(CD_KEY_LEGACY);
-        const urlCfg = cfgFromUrlParams();
-        return normalizeCfg(stored || urlCfg || DEFAULTS);
-      }
-
-      let CFG = loadCfg();
-
-      const root = qs("#rlcCountdown");
-      const elLbl = qs("#rlcCountdownLabel");
-      const elTime = qs("#rlcCountdownTime");
-      const hud = qs("#hud");
-
-      function setPos(pos) {
-        if (!root) return;
-        root.classList.remove("tr","tl","br","bl");
-        root.classList.add(pos || "tr");
-      }
-
-      function show(on) {
-        if (!root) return;
-        root.classList.toggle("hidden", !on);
-      }
-
-      function parseTarget(iso) {
-        const s = safeStr(iso);
-        if (!s) return null;
-        const d = new Date(s);
-        if (!Number.isFinite(d.getTime())) return null;
-        return d;
-      }
-
-      function nextNewYearLocal() {
-        const now = new Date();
-        const y = now.getFullYear();
-        const target = new Date(y + 1, 0, 1, 0, 0, 0, 0);
-        return target;
-      }
-
-      let targetDate = null;
-
-      function applyCfg(cfg) {
-        CFG = normalizeCfg(cfg);
-        if (elLbl) elLbl.textContent = CFG.label || DEFAULTS.label;
-        setPos(CFG.position || "tr");
-
-        targetDate = parseTarget(CFG.targetIso);
-        if (!targetDate && CFG.enabled) {
-          // fallback: próximo año nuevo local
-          targetDate = nextNewYearLocal();
-        }
-
-        show(!!(CFG.enabled && targetDate));
-      }
-
-      function fmtRemain(ms) {
-        ms = Math.max(0, ms|0);
-        const sec = (ms / 1000) | 0;
-        const d = (sec / 86400) | 0;
-        const h = ((sec % 86400) / 3600) | 0;
-        const m = ((sec % 3600) / 60) | 0;
-        const s = sec % 60;
-
-        const pad = (n) => String(n).padStart(2,"0");
-        if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
-        return `${pad(h)}:${pad(m)}:${pad(s)}`;
-      }
-
-      function isCatalogOn() {
-        const c = qs("#rlcCatalog");
-        return !!(c && c.classList.contains("on"));
-      }
-
-      function tick() {
-        // hide HUD en catálogo si procede
-        try {
-          if (hud && CFG.hideHudWhenCatalog) {
-            hud.style.display = isCatalogOn() ? "none" : "";
-          }
-        } catch (_) {}
-
-        if (!root || root.classList.contains("hidden")) return;
-        if (!targetDate) return;
-
-        const now = Date.now();
-        const ms = targetDate.getTime() - now;
-
-        if (ms <= 0) {
-          if (elTime) elTime.textContent = "🎉 00:00:00";
-          if (elLbl) elLbl.textContent = "FELIZ AÑO NUEVO";
-          return;
-        }
-
-        if (elTime) elTime.textContent = fmtRemain(ms);
-      }
-
-      function onBusMessage(msg, isMain) {
-        if (!msg || typeof msg !== "object") return;
-        if (msg.type === "COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg === "object") {
-          if (!keyOk(msg, isMain)) return;
-          applyCfg(msg.cfg);
-        }
-      }
-
-      if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
-      if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
-
-      window.addEventListener("storage", (e) => {
-        if (!e || !e.key) return;
-        if (e.key === CD_KEY || e.key === CD_KEY_LEGACY) {
-          applyCfg(loadCfg());
-        }
-      });
-
-      function boot() {
-        applyCfg(loadCfg());
-        tick();
-        setInterval(tick, 250);
-      }
-
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", boot, { once: true });
-      } else {
-        boot();
-      }
-    })();
-  </script>
 </body>
 </html>

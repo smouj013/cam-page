@@ -154,7 +154,7 @@
         </div>
 
         <div class="hint">
-          ✅ Muestra 4 cams (CCTV). En player, el HUD de single-cam se oculta cuando catálogo está ON.
+          ✅ Muestra 4 cams (la actual + 3 siguientes). Ideal estilo CCTV.
         </div>
       </div>
 
@@ -207,11 +207,6 @@
           </label>
         </div>
 
-        <label class="row" for="ctlTickerSpan">
-          <span>Timespan</span>
-          <input id="ctlTickerSpan" class="input" type="text" value="1d" autocomplete="off" />
-        </label>
-
         <div class="row2">
           <button id="ctlTickerApply" class="btn full" type="button">Aplicar ticker</button>
           <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
@@ -222,86 +217,38 @@
         </div>
       </div>
 
-      <!-- ✅ AUTO TITLE (STREAM) -->
+      <!-- ✅ COUNTDOWN (NEW) -->
       <div class="card">
-        <div class="cardTitle">Twitch: Título automático</div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlTitleOn">
-            <span>Auto-título</span>
-            <select id="ctlTitleOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
-          </label>
-          <div class="pill mono" id="ctlTitleStatus" aria-live="polite">Título: —</div>
-        </div>
-
-        <label class="row" for="ctlTitleClientId">
-          <span>Client ID</span>
-          <input id="ctlTitleClientId" class="input" type="text" placeholder="Twitch App Client ID" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleBroadcasterId">
-          <span>Broadcaster ID</span>
-          <input id="ctlTitleBroadcasterId" class="input" type="text" placeholder="ID numérico del canal" inputmode="numeric" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleToken">
-          <span>User Token (scope)</span>
-          <input id="ctlTitleToken" class="input" type="password" placeholder="Bearer token con channel:manage:broadcast" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleTemplate">
-          <span>Plantilla</span>
-          <input id="ctlTitleTemplate" class="input" type="text"
-                 value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
-        </label>
-
-        <div class="row2">
-          <button id="ctlTitleApply" class="btn full" type="button">Aplicar</button>
-          <button id="ctlTitleTest" class="btn ghost full" type="button">Test ahora</button>
-        </div>
-
-        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">Reset auto-título</button>
-
-        <div class="hint">
-          Necesita token de usuario con scope <b>channel:manage:broadcast</b> y el broadcaster_id debe coincidir. 
-        </div>
-      </div>
-
-      <!-- ✅ COUNTDOWN OVERLAY -->
-      <div class="card">
-        <div class="cardTitle">Countdown (overlay en stream)</div>
+        <div class="cardTitle">Cuenta atrás (overlay)</div>
 
         <div class="row2">
           <label class="row" style="margin:0" for="ctlCountdownOn">
-            <span>Countdown</span>
+            <span>Cuenta atrás</span>
             <select id="ctlCountdownOn" class="select">
               <option value="off">OFF</option>
               <option value="on">ON</option>
             </select>
           </label>
-          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Countdown: —</div>
+          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Cuenta atrás: —</div>
         </div>
 
         <label class="row" for="ctlCountdownLabel">
           <span>Texto</span>
-          <input id="ctlCountdownLabel" class="input" type="text" value="FIN DE AÑO" autocomplete="off" />
+          <input id="ctlCountdownLabel" class="input" type="text" value="Fin de año" autocomplete="off" />
         </label>
 
         <label class="row" for="ctlCountdownTarget">
-          <span>Objetivo</span>
+          <span>Objetivo (hora local)</span>
           <input id="ctlCountdownTarget" class="input" type="datetime-local" />
         </label>
 
         <div class="row2">
-          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar countdown</button>
-          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset countdown</button>
+          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar cuenta atrás</button>
+          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset cuenta atrás</button>
         </div>
 
         <div class="hint">
-          ✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).
+          ✅ Se envía al player por <b>BroadcastChannel</b> y también va en la URL (<span class="mono">countdown*</span>).
         </div>
       </div>
 
@@ -465,6 +412,56 @@
         </div>
       </div>
 
+      <!-- ✅ NEW: TWITCH AUTO TITLE (HELIX) -->
+      <div class="card">
+        <div class="cardTitle">Twitch — Auto título (Helix)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlHelixOn">
+            <span>Auto título</span>
+            <select id="ctlHelixOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlHelixStatus" aria-live="polite">Auto título: —</div>
+        </div>
+
+        <label class="row" for="ctlHelixTpl">
+          <span>Plantilla</span>
+          <input id="ctlHelixTpl" class="input" type="text" value="🌍 {place} — {title}" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlHelixCooldown">
+            <span>Cooldown (s)</span>
+            <input id="ctlHelixCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
+          </label>
+          <div class="hint" style="margin:0">
+            Usa: <span class="mono">{place}</span> <span class="mono">{title}</span> <span class="mono">{source}</span> <span class="mono">{label}</span>
+          </div>
+        </div>
+
+        <label class="row" for="ctlHelixClientId">
+          <span>Client ID</span>
+          <input id="ctlHelixClientId" class="input" type="text" placeholder="Twitch App Client ID" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlHelixToken">
+          <span>User Token (scope: channel:manage:broadcast)</span>
+          <input id="ctlHelixToken" class="input" type="password" placeholder="Bearer token (sin 'Bearer ')" autocomplete="current-password" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlHelixApply" class="btn full" type="button">Aplicar</button>
+          <button id="ctlHelixTest" class="btn ghost full" type="button">Probar ahora</button>
+        </div>
+
+        <div class="hint">
+          ⚠️ El token debe ser del <b>mismo broadcaster</b>. Se guarda solo en tu navegador (localStorage). No va en la URL.
+        </div>
+      </div>
+
       <!-- ADS OVERLAY -->
       <div class="card">
         <div class="cardTitle">Anuncios (overlay en stream)</div>
@@ -575,6 +572,9 @@
   <script defer src="./cams.js"></script>
   <script defer src="./music.js"></script>
   <script defer src="./control.js"></script>
+
+  <!-- Si los tienes en tu proyecto, se quedan tal cual -->
+  <script defer src="./newsTickerControl.js"></script>
   <script defer src="./catalogControl.js"></script>
 </body>
 </html>
