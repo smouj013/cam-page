@@ -1,16 +1,20 @@
-/* app.js — RLC Player v2.2.4 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE)
-   ✅ FIX CLAVE:
+/* app.js — RLC Player v2.2.5 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST)
+   ✅ FIX CLAVE (mantenido):
       - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
       - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
       - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead)
       - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
       - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
+   ✅ Mejora v2.2.5:
+      - parseParams más robusto (bools tipo "true/false/1/0")
+      - setShown añade aria-hidden y refuerzo de display:none
+      - guardas extra en filtros / listas vacías
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V224_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V225_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -25,15 +29,23 @@
   };
   const setShown = (el, show) => {
     if (!el) return;
-    try { el.style.display = show ? "" : "none"; } catch (_) {}
-    try { el.classList.toggle("hidden", !show); } catch (_) {}
+    const on = !!show;
+    try { el.style.display = on ? "" : "none"; } catch (_) {}
+    try { el.classList.toggle("hidden", !on); } catch (_) {}
+    try { el.setAttribute("aria-hidden", on ? "false" : "true"); } catch (_) {}
+    // Refuerzo: si algo externo “revive” el display, lo volvemos a apagar al instante
+    if (!on) {
+      try {
+        const cs = window.getComputedStyle(el);
+        if (cs && cs.display !== "none") el.style.display = "none";
+      } catch (_) {}
+    }
+  };
+  const safeJson = (raw, fallback = null) => {
+    try { return JSON.parse(raw); } catch (_) { return fallback; }
   };
 
   // ───────────────────────── News Ticker bridge (SAFE) ─────────────────────────
-  // ✅ Compatible con newsTicker.js sin acoplarse:
-  // - Dispara CustomEvent("RLC_PLAYER_EVENT") con { kind, data }
-  // - Si existe window.RLCNewsTicker / window.NewsTicker / window.newsTicker, llama hooks opcionales
-  // - STATE va throttled (~1s) para no spamear el ticker
   const TICKER_EVT = "RLC_PLAYER_EVENT";
   let lastTickerStateAt = 0;
 
@@ -105,9 +117,9 @@
     return {
       mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
       fit: (u.searchParams.get("fit") || "cover"),
-      hud: (u.searchParams.get("hud") ?? "1") !== "0",
+      hud: parseBoolParam(u.searchParams.get("hud") ?? "1", true),
       seed: u.searchParams.get("seed") || "",
-      autoskip: (u.searchParams.get("autoskip") ?? "1") !== "0",
+      autoskip: parseBoolParam(u.searchParams.get("autoskip") ?? "1", true),
       mode: (u.searchParams.get("mode") || "").toLowerCase(),
       debug: (u.searchParams.get("debug") === "1"),
       key,
@@ -119,7 +131,7 @@
       bgm: parseBoolParam(u.searchParams.get("bgm") ?? "1", true),
       bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.22") || 0.22, 0, 1),
 
-      vote: voteExplicit ? (voteParam === "1") : ((u.searchParams.get("vote") ?? "0") === "1"),
+      vote: voteExplicit ? parseBoolParam(voteParam, true) : parseBoolParam(u.searchParams.get("vote") ?? "0", false),
       voteExplicit,
       twitch: twitchRaw,
       twitchExplicit,
@@ -134,7 +146,7 @@
       stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
 
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
-      voteOverlay: (u.searchParams.get("voteOverlay") ?? "1") !== "0",
+      voteOverlay: parseBoolParam(u.searchParams.get("voteOverlay") ?? "1", true),
 
       chat,
       chatExplicit,
@@ -145,15 +157,15 @@
       chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
       chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
 
-      alerts: alertsExplicit ? ((alertsParam ?? "1") !== "0") : ((u.searchParams.get("alerts") ?? "1") !== "0"),
+      alerts: alertsExplicit ? parseBoolParam(alertsParam ?? "1", true) : parseBoolParam(u.searchParams.get("alerts") ?? "1", true),
       alertsExplicit,
       alertsMax: clamp(parseInt(u.searchParams.get("alertsMax") || "3", 10) || 3, 1, 6),
       alertsTtl: clamp(parseInt(u.searchParams.get("alertsTtl") || "8", 10) || 8, 3, 20),
 
-      ads: adsExplicit ? ((adsParam ?? "1") !== "0") : ((u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1") !== "0"),
+      ads: adsExplicit ? parseBoolParam(adsParam ?? "1", true) : parseBoolParam((u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1"), true),
       adsExplicit,
       adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
-      adShowDuring: (u.searchParams.get("adShowDuring") ?? "1") !== "0",
+      adShowDuring: parseBoolParam(u.searchParams.get("adShowDuring") ?? "1", true),
       adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
 
       startTimeoutMs,
@@ -295,19 +307,20 @@
 
   function loadJsonFirst(keys, fallbackVal = null) {
     for (const k of keys) {
-      try { const raw = lsGet(k); if (!raw) continue; return JSON.parse(raw); } catch (_) {}
+      const raw = lsGet(k);
+      if (!raw) continue;
+      const j = safeJson(raw, null);
+      if (j != null) return j;
     }
     return fallbackVal;
   }
   function loadSetMerged(keys) {
     const out = new Set();
     for (const k of keys) {
-      try {
-        const raw = lsGet(k);
-        if (!raw) continue;
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) for (const x of arr) out.add(String(x));
-      } catch (_) {}
+      const raw = lsGet(k);
+      if (!raw) continue;
+      const arr = safeJson(raw, null);
+      if (Array.isArray(arr)) for (const x of arr) out.add(String(x));
     }
     return out;
   }
@@ -324,6 +337,7 @@
     lastEvtAt = Math.max(lastEvtAt + 1, now);
     const evt = { type: "event", ts: lastEvtAt, name: String(name || ""), payload: payload || {} };
     if (KEY) evt.key = KEY;
+
     const raw = JSON.stringify(evt);
     lsSet(EVT_KEY, raw);
     lsSet(EVT_KEY_LEGACY, raw);
@@ -375,13 +389,14 @@
   let cams = [];
   function applyFilters() {
     purgeBad();
-    let list = allCams.filter(c => c && !banned.has(c.id) && !isBad(c.id));
+    const base = Array.isArray(allCams) ? allCams : [];
+    let list = base.filter(c => c && c.id != null && !banned.has(String(c.id)) && !isBad(String(c.id)));
     if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
     if (!list.length) {
-      list = allCams.filter(c => c && !banned.has(c.id));
+      list = base.filter(c => c && c.id != null && !banned.has(String(c.id)));
       if (modeAdfree) list = list.filter(c => c.kind !== "youtube");
     }
-    cams = list.length ? list : allCams.slice();
+    cams = list.length ? list : base.slice();
   }
 
   loadBad();
@@ -611,13 +626,13 @@
     if (!playing) return;
     if (switching) return;
 
-    const id = cam?.id;
+    const id = cam?.id != null ? String(cam.id) : "";
     if (id) markBad(id, reason);
 
     emitEvent("HEALTH_FAIL", { id: id || "", kind: cam?.kind || "", reason: String(reason || "") });
 
     applyFilters();
-    idx = idx % Math.max(1, cams.length);
+    idx = idx % Math.max(1, cams.length || 1);
 
     showFallback(cam, "Stream/imagen no disponible. Saltando…");
     setTimeout(() => {
@@ -668,7 +683,7 @@
       hudOrigin.style.pointerEvents = cam?.originUrl ? "auto" : "none";
       hudOrigin.style.opacity = cam?.originUrl ? "1" : ".6";
     }
-    if (hudIndex) hudIndex.textContent = `${idx + 1}/${Math.max(1, cams.length)}`;
+    if (hudIndex) hudIndex.textContent = `${idx + 1}/${Math.max(1, cams.length || 1)}`;
   }
 
   function showFallback(cam, msg) {
@@ -842,7 +857,7 @@
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
     adActive = true; adPhase = "lead"; adShow();
-    if (!adTotalLead) adTotalLead = Math.max(1, left);
+    adTotalLead = Math.max(1, left);
     adLeadEndsAt = Date.now() + left * 1000;
     if (adTitleEl) adTitleEl.textContent = "Anuncio en…";
     if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
@@ -1772,7 +1787,7 @@
         ts: Date.now(),
         key: KEY || "",
         idx: idx,
-        total: Math.max(1, cams.length),
+        total: Math.max(1, cams.length || 1),
         cam: {
           id: cam.id || "",
           kind: cam.kind || "",
@@ -1932,16 +1947,16 @@
   }
 
   function goToId(id) {
-    const n = cams.findIndex(c => c && c.id === id);
+    const n = cams.findIndex(c => c && String(c.id) === String(id));
     if (n >= 0) { idx = n; playCam(cams[idx]); }
   }
 
   function banId(id) {
     if (!id) return;
-    banned.add(id);
+    banned.add(String(id));
     saveSetBoth([BAN_KEY, BAN_KEY_LEGACY], banned);
     applyFilters();
-    idx = idx % Math.max(1, cams.length);
+    idx = idx % Math.max(1, cams.length || 1);
     playCam(cams[idx]);
   }
 
@@ -1979,7 +1994,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.4",
+      version: "2.2.5",
       playing,
       idx,
       total: cams.length,
@@ -2114,7 +2129,7 @@
           const curId = String((cams[idx] || {}).id || "");
           applyFilters();
           const n = curId ? cams.findIndex(c => c && String(c.id) === curId) : -1;
-          idx = (n >= 0) ? n : (idx % Math.max(1, cams.length));
+          idx = (n >= 0) ? n : (idx % Math.max(1, cams.length || 1));
           playCam(cams[idx]);
         }
         postState({ reason: "mode" });
@@ -2314,12 +2329,11 @@
   }
 
   function readCmdFromStorage(keyName, isMainChannel) {
-    try {
-      const raw = lsGet(keyName);
-      if (!raw) return;
-      const msg = JSON.parse(raw);
-      handleCmdMsg(msg, isMainChannel);
-    } catch (_) {}
+    const raw = lsGet(keyName);
+    if (!raw) return;
+    const msg = safeJson(raw, null);
+    if (!msg) return;
+    handleCmdMsg(msg, isMainChannel);
   }
 
   try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true); } catch (_) {}
@@ -2553,6 +2567,11 @@
     if (!saved || !saved.bgm) bgmEnabled = true;
 
     applyFilters();
+    if (!cams.length) {
+      showFallback({ originUrl: "#" }, "No hay CAM_LIST cargada. Revisa cams.js / CAM_LIST.");
+      postState({ error: "no_cam_list" }, true);
+      return;
+    }
 
     if (saved?.curId) {
       const n = cams.findIndex(c => c && String(c.id) === String(saved.curId));
