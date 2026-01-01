@@ -1,4 +1,4 @@
-/* control.js — RLC Control v2.3.4 (VERSION SYNC + TICKER DEDUPE SAFE + ADS DUR CFG + HOTKEYS SAFE + HELIX TIMEOUT FIX)
+/* control.js — RLC Control v2.3.4 (VERSION SYNC + TICKER DEDUPE SAFE + ADS DUR CFG + HOTKEYS SAFE + HELIX TIMEOUT FIX + HELIX 429 BACKOFF NO-SPAM)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
@@ -16,6 +16,7 @@
    ✅ NEW: Hotkeys no disparan escribiendo en inputs/selects/textarea
    ✅ NEW: Version unificada con APP_VERSION (2.3.4)
    ✅ NEW: Robustez extra (null-safe / guards)
+   ✅ PATCH: Helix 429 -> backoff real + anti-spam (no reintenta cada tick)
 */
 
 (() => {
@@ -615,6 +616,12 @@
   let helixLastSig = "";
   let helixResolvedBroadcasterId = "";
 
+  // ✅ NEW (anti-spam 429 / retries)
+  let helixLastAttemptAt = 0;
+  let helixLastAttemptSig = "";
+  let helixRetryAfterAt = 0;
+  let helixResolvedForLogin = ""; // para no mezclar broadcaster_id si cambias canal
+
   function syncHelixUIFromStore() {
     helixCfg = loadHelixCfg();
     if (ctlTitleOn) ctlTitleOn.value = helixCfg.enabled ? "on" : "off";
@@ -673,7 +680,22 @@
     return out;
   }
 
-  // ✅ FIX: Helix abort/timeout -> mensaje claro
+  function _parseHelixRetryMs(headers) {
+    // Twitch suele mandar Retry-After (seg) y/o Ratelimit-Reset (unix sec)
+    try {
+      const ra = parseInt(headers?.get?.("Retry-After") || "", 10);
+      if (Number.isFinite(ra) && ra > 0) return clamp(ra * 1000, 1000, 180000);
+
+      const resetSec = parseInt(headers?.get?.("Ratelimit-Reset") || "", 10);
+      if (Number.isFinite(resetSec) && resetSec > 0) {
+        const ms = (resetSec * 1000) - Date.now();
+        return clamp(ms, 1000, 180000);
+      }
+    } catch (_) {}
+    return 15000; // fallback defensivo
+  }
+
+  // ✅ FIX: Helix abort/timeout -> mensaje claro + 429 backoff info
   async function helixFetch(path, { method = "GET", clientId, token, body = null, timeoutMs = 20000 } = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -689,10 +711,22 @@
         body: body ? JSON.stringify(body) : null
       });
 
+      // ✅ 429: adjunta retryMs para que el caller no spamee
+      if (r.status === 429) {
+        let extra = "";
+        try { extra = await r.text(); } catch (_) {}
+        const e = new Error(`Helix HTTP 429${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+        e.status = 429;
+        e.retryMs = _parseHelixRetryMs(r.headers);
+        throw e;
+      }
+
       if (!r.ok) {
         let extra = "";
         try { extra = await r.text(); } catch (_) {}
-        throw new Error(`Helix HTTP ${r.status}${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+        const e = new Error(`Helix HTTP ${r.status}${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+        e.status = r.status;
+        throw e;
       }
 
       if (r.status === 204) return { ok: true, data: null };
@@ -701,7 +735,9 @@
     } catch (e) {
       const msg = String(e?.message || "");
       if (e?.name === "AbortError" || /aborted/i.test(msg)) {
-        throw new Error(`Helix timeout (${timeoutMs}ms)`);
+        const err = new Error(`Helix timeout (${timeoutMs}ms)`);
+        err.status = 0;
+        throw err;
       }
       throw e;
     } finally {
@@ -746,21 +782,48 @@
     if (!title) return;
 
     const now = Date.now();
+
+    // ✅ Bloqueo activo por 429 (backoff real)
+    if (!force && helixRetryAfterAt && now < helixRetryAfterAt) {
+      const s = Math.max(1, Math.ceil((helixRetryAfterAt - now) / 1000));
+      setTitleStatus(`Helix: rate limit (reintento en ${s}s)`, false);
+      return;
+    }
+
     const cool = (cfg.cooldownSec | 0) * 1000;
     const sig = `${channel}|${title}`;
 
     if (!force) {
+      // si ya actualizaste con éxito este mismo título -> nada
       if (sig === helixLastSig) return;
+
+      // cooldown normal tras éxito
       if ((now - helixLastUpdateAt) < cool) return;
+
+      // ✅ anti-spam: si el último intento fue este mismo sig hace nada, no reintentes a saco
+      const attemptGuardMs = clamp(Math.min(Math.max(1800, cool), 6000), 1800, 6000);
+      if (sig === helixLastAttemptSig && (now - helixLastAttemptAt) < attemptGuardMs) return;
     }
+
+    // marca intento (aunque falle) para no spamear
+    helixLastAttemptAt = now;
+    helixLastAttemptSig = sig;
 
     try {
       setTitleStatus("Actualizando título…", true);
 
       let broadcasterId = String(cfg.broadcasterId || "").trim();
+
+      // ✅ si cambia canal, invalida cache resuelta
+      if (helixResolvedForLogin && helixResolvedForLogin !== channel) {
+        helixResolvedBroadcasterId = "";
+        helixResolvedForLogin = "";
+      }
+
       if (!broadcasterId) {
         if (!helixResolvedBroadcasterId) {
           helixResolvedBroadcasterId = await helixGetBroadcasterId(channel, clientId, token);
+          helixResolvedForLogin = channel;
         }
         broadcasterId = helixResolvedBroadcasterId;
       }
@@ -774,12 +837,30 @@
 
       helixLastUpdateAt = now;
       helixLastSig = sig;
+      helixRetryAfterAt = 0; // ✅ si ya pasó, limpia bloqueo
 
       setTitleStatus(`Título OK: “${title.slice(0, 46)}${title.length > 46 ? "…" : ""}”`, true);
     } catch (e) {
-      const msg = String(e?.message || e || "Error").slice(0, 120);
+      const status = (typeof e?.status === "number") ? e.status : 0;
+      const rawMsg = String(e?.message || e || "Error");
+      const msg = rawMsg.slice(0, 120);
+
+      // ✅ 429: aplica backoff y NO spamees ni borres broadcaster cache
+      if (status === 429 || /HTTP 429/i.test(rawMsg)) {
+        const retryMs = clamp(parseInt(String(e?.retryMs || 0), 10) || 15000, 1000, 180000);
+        helixRetryAfterAt = Math.max(helixRetryAfterAt || 0, Date.now() + retryMs);
+        const s = Math.max(1, Math.ceil(retryMs / 1000));
+        setTitleStatus(`Helix 429: esperando ${s}s…`, false);
+        return;
+      }
+
       setTitleStatus(`Helix error: ${msg}`, false);
-      helixResolvedBroadcasterId = "";
+
+      // solo resetea “resolved” en errores duros típicos (token/permisos), no en timeouts/random
+      if (status === 401 || status === 403) {
+        helixResolvedBroadcasterId = "";
+        helixResolvedForLogin = "";
+      }
     }
   }
 
@@ -861,9 +942,15 @@
       });
       helixCfg = saveHelixCfg(normalizeHelixCfg(merged));
       setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
+
+      // ✅ reset estado helix
       helixResolvedBroadcasterId = "";
+      helixResolvedForLogin = "";
       helixLastSig = "";
       helixLastUpdateAt = 0;
+      helixLastAttemptAt = 0;
+      helixLastAttemptSig = "";
+      helixRetryAfterAt = 0;
     } catch (_) {}
   }
 
@@ -1635,9 +1722,16 @@
     function titleApplyAndPersist() {
       helixCfg = readHelixUI();
       saveHelixCfg(helixCfg);
+
+      // ✅ reset estado helix
       helixResolvedBroadcasterId = "";
+      helixResolvedForLogin = "";
       helixLastSig = "";
       helixLastUpdateAt = 0;
+      helixLastAttemptAt = 0;
+      helixLastAttemptSig = "";
+      helixRetryAfterAt = 0;
+
       setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
     }
 
