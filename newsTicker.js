@@ -1,10 +1,16 @@
-/* newsTicker.js — RLC Global News Ticker v1.4.0 (BILINGUAL EN+ES + TRANSLATE CACHE)
-   ✅ Titulares: GDELT con sourcelang:eng (evita árabe/chino/coreano/etc)
-   ✅ Bilingüe: muestra MISMA noticia con título EN + traducción ES
-   ✅ Traducción gratuita (MyMemory) + cache local + limit por refresh
-   ✅ Toggle: ?tickerBilingual=0 (OFF) / 1 (ON)
-   ✅ timespan configurable (por defecto 1d)
-   ✅ HideOnVote robusto + Debug opcional: ?tickerDebug=1
+/* newsTicker.js — RLC Global News Ticker v1.5.0 (KEY NAMESPACE + MULTI-SOURCE + BILINGUAL EN+ES)
+   ✅ KEY namespace (bus + storage + cache + translations): rlc_bus_v1:{key}, rlc_ticker_cfg_v1:{key}...
+   ✅ Fuentes:
+      - GDELT (sourcelang:eng) ✅
+      - RSS libres: Google News (World), BBC World, DW World, The Guardian World ✅
+   ✅ Bilingüe: muestra EN + ES (MyMemory) + cache local + translateMax por refresh
+   ✅ Toggle:
+      - ?ticker=0 (OFF)
+      - ?tickerBilingual=0/1
+      - ?tickerSources=gdelt,googlenews,bbc,dw,guardian
+      - ?tickerTranslateMax=10
+      - ?tickerSpan=1d / 12h / 30min / 1w ...
+      - ?tickerDebug=1
 */
 
 (() => {
@@ -12,13 +18,13 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V140";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V150";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  const BUS = "rlc_bus_v1";
-  const CFG_KEY = "rlc_ticker_cfg_v1";
-  const CACHE_KEY = "rlc_ticker_cache_v1";     // { ts, key, items }
-  const TRANS_KEY = "rlc_ticker_trans_v1";     // { ts, map: { hash: { ts, es } }, order: [hash...] }
+  const BUS_BASE = "rlc_bus_v1";
+  const CFG_KEY_BASE = "rlc_ticker_cfg_v1";
+  const CACHE_KEY_BASE = "rlc_ticker_cache_v1";
+  const TRANS_KEY_BASE = "rlc_ticker_trans_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -27,8 +33,6 @@
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : fb;
   };
-
-  const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
 
   function readJson(key) {
     try {
@@ -45,14 +49,20 @@
   function parseParams() {
     const u = new URL(location.href);
     return {
+      key: safeStr(u.searchParams.get("key") || ""),
       ticker: u.searchParams.get("ticker") ?? "",
+
       lang: safeStr(u.searchParams.get("tickerLang") || ""),
       speed: safeStr(u.searchParams.get("tickerSpeed") || ""),
       refresh: safeStr(u.searchParams.get("tickerRefresh") || ""),
       top: safeStr(u.searchParams.get("tickerTop") || ""),
       hideOnVote: safeStr(u.searchParams.get("tickerHideOnVote") || ""),
       span: safeStr(u.searchParams.get("tickerSpan") || ""),
+
       bilingual: safeStr(u.searchParams.get("tickerBilingual") || ""),
+      translateMax: safeStr(u.searchParams.get("tickerTranslateMax") || ""),
+
+      sources: safeStr(u.searchParams.get("tickerSources") || ""),
       debug: safeStr(u.searchParams.get("tickerDebug") || "")
     };
   }
@@ -60,24 +70,53 @@
   const P = parseParams();
   if (P.ticker === "0") return;
 
+  const KEY = P.key;
+
+  const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  const BUS_LEGACY = BUS_BASE;
+
+  const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
+  const CFG_KEY_LEGACY = CFG_KEY_BASE;
+
+  const CACHE_KEY_NS = KEY ? `${CACHE_KEY_BASE}:${KEY}` : CACHE_KEY_BASE;
+  const CACHE_KEY_LEGACY = CACHE_KEY_BASE;
+
+  const TRANS_KEY_NS = KEY ? `${TRANS_KEY_BASE}:${KEY}` : TRANS_KEY_BASE;
+  const TRANS_KEY_LEGACY = TRANS_KEY_BASE;
+
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
   const DEBUG = (P.debug === "1" || P.debug === "true");
   const log = (...a) => { if (DEBUG) console.log("[RLC:TICKER]", ...a); };
+
+  function keyOk(msg, isMainChannel) {
+    // si no hay KEY, aceptar todo
+    if (!KEY) return true;
+    // si viene del canal main (namespaced), aceptar
+    if (isMainChannel) return true;
+    // si viene legacy/base, exigir msg.key === KEY para evitar cross-stream
+    return !!(msg && msg.key === KEY);
+  }
 
   // UI auto (solo etiqueta)
   const uiLangAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
 
   const DEFAULTS = {
     enabled: true,
-    lang: "auto",           // auto|es|en (UI/intención)
+    lang: "auto",           // auto|es|en
     speedPxPerSec: 55,      // 20..140
     refreshMins: 12,        // 3..60
     topPx: 10,              // 0..120
     hideOnVote: true,
     timespan: "1d",
 
-    // ✅ Bilingüe (misma noticia EN + ES)
-    bilingual: true,        // ON por defecto
-    translateMax: 10        // máximo titulares a traducir por refresh
+    bilingual: true,
+    translateMax: 10,
+
+    // ✅ fuentes (mix)
+    // ids: gdelt, googlenews, bbc, dw, guardian
+    sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
   };
 
   function cfgFromUrl() {
@@ -92,6 +131,13 @@
     if (P.bilingual === "0") out.bilingual = false;
     if (P.bilingual === "1") out.bilingual = true;
 
+    if (P.translateMax) out.translateMax = clamp(num(P.translateMax, DEFAULTS.translateMax), 0, 22);
+
+    if (P.sources) {
+      const arr = P.sources.split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
+      if (arr.length) out.sources = arr;
+    }
+
     return out;
   }
 
@@ -100,6 +146,18 @@
     if (!t) return DEFAULTS.timespan;
     if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
     return DEFAULTS.timespan;
+  }
+
+  function normalizeSources(list) {
+    const allowed = new Set(["gdelt","googlenews","bbc","dw","guardian"]);
+    const arr = Array.isArray(list) ? list : [];
+    const out = [];
+    for (const s of arr) {
+      const id = safeStr(s).toLowerCase();
+      if (!id || !allowed.has(id)) continue;
+      if (!out.includes(id)) out.push(id);
+    }
+    return out.length ? out : DEFAULTS.sources.slice();
   }
 
   function normalizeCfg(inCfg) {
@@ -115,17 +173,37 @@
     c.bilingual = (c.bilingual !== false);
     c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
 
+    c.sources = normalizeSources(c.sources);
+
     return c;
   }
 
-  let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readJson(CFG_KEY) || {}, cfgFromUrl()));
+  function readCfgMerged() {
+    // ✅ Prioridad: NS -> Legacy
+    return readJson(CFG_KEY_NS) || readJson(CFG_KEY_LEGACY) || null;
+  }
 
+  function writeCfgCompat(cfg) {
+    // ✅ Persistimos en NS y también en legacy/base para compat con players viejos (sin KEY)
+    try { writeJson(CFG_KEY_NS, cfg); } catch (_) {}
+    try { writeJson(CFG_KEY_LEGACY, cfg); } catch (_) {}
+  }
+
+  let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
+
+  // ───────────────────────────────────────── Fuentes
   const API = {
+    maxItems: 22,
     gdelt: {
       endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
       query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
     },
-    maxItems: 22
+    rss: {
+      googlenews: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+      bbc: "https://feeds.bbci.co.uk/news/world/rss.xml",
+      dw: "https://rss.dw.com/rdf/rss-en-world",
+      guardian: "https://www.theguardian.com/world/rss"
+    }
   };
 
   // ───────────────────────────────────────── UI / CSS
@@ -153,6 +231,7 @@
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   overflow: hidden;
+  pointer-events: auto;
 }
 #rlcNewsTicker.hidden{ display:none !important; }
 
@@ -265,10 +344,10 @@
   }
 
   function pickHost() {
+    // ✅ preferimos stage (evita parent con pointer-events:none)
     return (
-      qs("#stage .layer.layer-ui") ||
-      qs("#stage .layer-ui") ||
       qs("#stage") ||
+      qs("#app") ||
       document.body
     );
   }
@@ -318,7 +397,7 @@
     }
   }
 
-  // ───────────────────────────────────────── Fetch robusto
+  // ───────────────────────────────────────── Fetch robusto (text)
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -337,6 +416,24 @@
     if (u.startsWith("https://")) return `https://r.jina.ai/https://${u.slice("https://".length)}`;
     if (u.startsWith("http://"))  return `https://r.jina.ai/http://${u.slice("http://".length)}`;
     return `https://r.jina.ai/https://${u}`;
+  }
+
+  async function fetchTextRobust(url) {
+    const tries = [
+      () => fetchText(url),
+      () => fetchText(allOrigins(url)),
+      () => fetchText(jina(url))
+    ];
+    let lastErr = null;
+    for (const fn of tries) {
+      try {
+        const txt = await fn();
+        const s = safeStr(txt);
+        if (s) return txt;
+        throw new Error("Empty response");
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("fetchTextRobust failed");
   }
 
   function tryParseJson(txt) {
@@ -400,7 +497,20 @@
     let t = safeStr(s).replace(/\s+/g, " ").trim();
     if (t.length < 14) return "";
     if (t.length > 140) t = t.slice(0, 137).trim() + "…";
+    // filtra scripts raros (si se cuela algo)
+    if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
     return t;
+  }
+
+  function normalizeSourceFromUrl(u) {
+    const s = safeStr(u);
+    if (!s) return "NEWS";
+    try {
+      const url = new URL(s);
+      return url.hostname.replace(/^www\./i, "").toUpperCase().slice(0, 22);
+    } catch (_) {
+      return s.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toUpperCase().slice(0, 22) || "NEWS";
+    }
   }
 
   function normalizeSource(a) {
@@ -412,9 +522,8 @@
     return cleaned.toUpperCase().slice(0, 22);
   }
 
-  // ───────────────────────────────────────── Traducción (gratis) + cache
+  // ───────────────────────────────────────── Traducción + cache
   function simpleHash(str) {
-    // hash barato pero estable
     const s = String(str || "");
     let h = 2166136261;
     for (let i = 0; i < s.length; i++) {
@@ -425,7 +534,7 @@
   }
 
   function readTransStore() {
-    const o = readJson(TRANS_KEY);
+    const o = readJson(TRANS_KEY_NS) || readJson(TRANS_KEY_LEGACY);
     if (!o || typeof o !== "object") return { ts: Date.now(), map: {}, order: [] };
     if (!o.map || typeof o.map !== "object") o.map = {};
     if (!Array.isArray(o.order)) o.order = [];
@@ -433,7 +542,9 @@
   }
 
   function writeTransStore(store) {
-    try { writeJson(TRANS_KEY, store); } catch (_) {}
+    try { writeJson(TRANS_KEY_NS, store); } catch (_) {}
+    // compat legacy (solo si no hay KEY, o si quieres compartir cache)
+    try { if (!KEY) writeJson(TRANS_KEY_LEGACY, store); } catch (_) {}
   }
 
   function getCachedEs(titleEn) {
@@ -441,7 +552,6 @@
     const k = simpleHash(titleEn);
     const it = store.map[k];
     if (!it || !it.es) return "";
-    // TTL “suave” 7 días
     const age = Date.now() - (it.ts || 0);
     if (age > 7 * 24 * 60 * 60 * 1000) return "";
     return String(it.es || "");
@@ -451,11 +561,9 @@
     const store = readTransStore();
     const k = simpleHash(titleEn);
     store.map[k] = { ts: Date.now(), es: String(es || "") };
-    // orden LRU simple
     store.order = store.order.filter(x => x !== k);
     store.order.push(k);
 
-    // cap 500 entradas
     while (store.order.length > 500) {
       const old = store.order.shift();
       if (old) delete store.map[old];
@@ -466,7 +574,6 @@
   }
 
   function decodeEntities(s) {
-    // decodificación básica (MyMemory a veces devuelve entidades)
     return String(s || "")
       .replace(/&quot;/g, '"')
       .replace(/&#39;|&apos;/g, "'")
@@ -480,15 +587,11 @@
     if (cached) return cached;
 
     const q = encodeURIComponent(titleEn);
-    // MyMemory (gratis)
     const url = `https://api.mymemory.translated.net/get?q=${q}&langpair=en|es`;
 
     try {
       const data = await fetchJsonRobust(url);
-      const t = decodeEntities(
-        safeStr(data?.responseData?.translatedText || "")
-      );
-
+      const t = decodeEntities(safeStr(data?.responseData?.translatedText || ""));
       const out = clampLen(t, 140);
       if (out && out.length >= 6) {
         putCachedEs(titleEn, out);
@@ -500,11 +603,9 @@
     return "";
   }
 
-  // ───────────────────────────────────────── Headlines (GDELT)
-  async function getHeadlinesEn() {
+  // ───────────────────────────────────────── Headlines: GDELT
+  async function getHeadlinesFromGdelt() {
     const q = API.gdelt.query_en;
-
-    // ✅ clave: sourcelang:eng (filtra idiomas raros)
     const finalQ = `(${q}) sourcelang:eng`;
 
     const url =
@@ -531,10 +632,108 @@
       const title = cleanTitle(a?.title || a?.name || "");
       const link  = safeStr(a?.url || a?.link || a?.url_mobile || "");
       if (!title || !link) return null;
-      return { titleEn: title, url: link, source: normalizeSource(a) };
+      return { titleEn: title, url: link, source: normalizeSource(a) || "GDELT" };
     }).filter(Boolean);
 
     return uniqBy(mapped, x => (x.titleEn + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
+  }
+
+  // ───────────────────────────────────────── Headlines: RSS (libres)
+  function parseRssOrAtom(xmlText, fallbackSource) {
+    const txt = String(xmlText || "");
+    const doc = new DOMParser().parseFromString(txt, "text/xml");
+
+    // errores de parseo XML
+    const pe = doc.querySelector("parsererror");
+    if (pe) return [];
+
+    const out = [];
+
+    // RSS <item>
+    const items = Array.from(doc.querySelectorAll("item"));
+    for (const it of items) {
+      const t = cleanTitle(it.querySelector("title")?.textContent || "");
+      let link = safeStr(it.querySelector("link")?.textContent || "");
+      if (!link) link = safeStr(it.querySelector("guid")?.textContent || "");
+      if (!t || !link) continue;
+
+      const srcNode = it.querySelector("source");
+      const srcText = safeStr(srcNode?.textContent || "");
+      const srcUrl = safeStr(srcNode?.getAttribute("url") || "");
+      const source = (srcText || (srcUrl ? normalizeSourceFromUrl(srcUrl) : "")) || fallbackSource || "RSS";
+
+      out.push({ titleEn: t, url: link, source });
+      if (out.length >= API.maxItems) break;
+    }
+
+    // Atom <entry>
+    if (!out.length) {
+      const entries = Array.from(doc.querySelectorAll("entry"));
+      for (const e of entries) {
+        const t = cleanTitle(e.querySelector("title")?.textContent || "");
+        const linkEl = e.querySelector('link[rel="alternate"]') || e.querySelector("link");
+        const link = safeStr(linkEl?.getAttribute("href") || linkEl?.textContent || "");
+        if (!t || !link) continue;
+        out.push({ titleEn: t, url: link, source: fallbackSource || "ATOM" });
+        if (out.length >= API.maxItems) break;
+      }
+    }
+
+    return out;
+  }
+
+  async function getHeadlinesFromRss(id, url) {
+    const xml = await fetchTextRobust(url);
+    const source = ({
+      googlenews: "GNEWS",
+      bbc: "BBC",
+      dw: "DW",
+      guardian: "GUARDIAN"
+    }[id] || normalizeSourceFromUrl(url));
+
+    const items = parseRssOrAtom(xml, source);
+    // dedupe por link
+    return uniqBy(items, x => safeStr(x.url).toLowerCase()).slice(0, API.maxItems);
+  }
+
+  async function getHeadlinesEnMixed() {
+    const srcs = CFG.sources || DEFAULTS.sources;
+
+    const tasks = [];
+    for (const id of srcs) {
+      if (id === "gdelt") {
+        tasks.push((async () => ({ id, items: await getHeadlinesFromGdelt() }))());
+      } else if (API.rss[id]) {
+        tasks.push((async () => ({ id, items: await getHeadlinesFromRss(id, API.rss[id]) }))());
+      }
+    }
+
+    const res = await Promise.allSettled(tasks);
+    const chunks = [];
+
+    for (const r of res) {
+      if (r.status !== "fulfilled") continue;
+      const got = r.value?.items;
+      if (Array.isArray(got) && got.length) chunks.push(got);
+    }
+
+    // interleave para mezclar fuentes (y que no sea todo GDELT)
+    const merged = [];
+    let guard = 0;
+    while (merged.length < API.maxItems && guard < 500) {
+      guard++;
+      let pushed = false;
+      for (const arr of chunks) {
+        if (!arr.length) continue;
+        merged.push(arr.shift());
+        pushed = true;
+        if (merged.length >= API.maxItems) break;
+      }
+      if (!pushed) break;
+    }
+
+    return uniqBy(merged.filter(Boolean), x => (safeStr(x.titleEn) + "|" + safeStr(x.url)).toLowerCase())
+      .slice(0, API.maxItems);
   }
 
   async function makeBilingual(items) {
@@ -548,7 +747,6 @@
       const it = items[i];
       if (!it || !it.titleEn) { out.push(it); continue; }
 
-      // traducimos solo primeros N por refresh (el resto va con cache si existe)
       let es = "";
       if (i < maxN) es = await translateEnToEs(it.titleEn);
       else es = getCachedEs(it.titleEn) || "";
@@ -605,12 +803,8 @@
       if (CFG.bilingual) {
         const en = clampLen(it.titleEn || "", 110);
         const es = clampLen(it.titleEs || "", 110);
-
-        // EN / ES en una línea (misma noticia)
-        title.textContent = es
-          ? `${en} — ${es}`
-          : en;
-        if (es) title.classList.add("b2"); // look sutil (opcional)
+        title.textContent = es ? `${en} — ${es}` : en;
+        if (es) title.classList.add("b2");
       } else {
         title.textContent = it.titleEn || "";
       }
@@ -712,20 +906,23 @@
     domObs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // ───────────────────────────────────────── Cache headlines
+  // ───────────────────────────────────────── Cache headlines (namespaced)
   function cacheKey() {
-    return `${CFG.timespan}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
+    const srcKey = (CFG.sources || []).join(",");
+    return `${CFG.timespan}|src=${srcKey}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
   }
 
   function readCache() {
-    const c = readJson(CACHE_KEY);
+    const c = readJson(CACHE_KEY_NS) || readJson(CACHE_KEY_LEGACY);
     if (!c || typeof c !== "object") return null;
     if (!Array.isArray(c.items)) return null;
     return c;
   }
 
   function writeCache(key, items) {
-    writeJson(CACHE_KEY, { ts: Date.now(), key, items });
+    writeJson(CACHE_KEY_NS, { ts: Date.now(), key, items });
+    // legacy solo si no hay KEY (evita pisar multi-stream)
+    if (!KEY) writeJson(CACHE_KEY_LEGACY, { ts: Date.now(), key, items });
   }
 
   // ───────────────────────────────────────── Refresh loop
@@ -742,7 +939,7 @@
       const cache = readCache();
       const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
       if (cache && cache.key === key && (Date.now() - (cache.ts || 0) <= maxAge)) {
-        log("cache hit");
+        log("cache hit", { key, KEY });
         setTickerItems(cache.items);
         return;
       }
@@ -752,7 +949,7 @@
     refreshInFlight = true;
 
     try {
-      const en = await getHeadlinesEn();
+      const en = await getHeadlinesEnMixed();
       const bi = await makeBilingual(en);
 
       setTickerItems(bi);
@@ -775,7 +972,7 @@
 
   function applyCfg(nextCfg, persist = false) {
     CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
-    if (persist) writeJson(CFG_KEY, CFG);
+    if (persist) writeCfgCompat(CFG);
 
     if (!CFG.enabled) setVisible(false);
     else setVisible(true);
@@ -785,28 +982,39 @@
     refresh(true);
   }
 
+  function onBusMessage(msg, isMain) {
+    if (!msg || typeof msg !== "object") return;
+
+    if (msg.type === "TICKER_CFG" && msg.cfg && typeof msg.cfg === "object") {
+      if (!keyOk(msg, isMain)) return;
+      applyCfg(msg.cfg, true);
+    }
+  }
+
   function boot() {
     ensureUI();
     applyCfg(CFG, false);
 
-    // Config desde Control Room
+    // BroadcastChannel (main + legacy)
     try {
-      if (bc) {
-        bc.addEventListener("message", (ev) => {
-          const msg = ev?.data;
-          if (!msg || typeof msg !== "object") return;
-          if (msg.type === "TICKER_CFG" && msg.cfg && typeof msg.cfg === "object") {
-            applyCfg(msg.cfg, true);
-          }
-        });
-      }
+      if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
+      if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
     } catch (_) {}
+
+    // postMessage fallback (si control lo manda)
+    window.addEventListener("message", (ev) => {
+      const msg = ev?.data;
+      if (!msg || typeof msg !== "object") return;
+      onBusMessage(msg, false);
+    });
 
     // storage event (otra pestaña)
     window.addEventListener("storage", (e) => {
-      if (!e) return;
-      if (e.key === CFG_KEY) {
-        const stored = readJson(CFG_KEY);
+      if (!e || !e.key) return;
+
+      // si hay KEY, reaccionar a ns y a legacy
+      if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
+        const stored = readCfgMerged();
         if (stored) applyCfg(stored, false);
       }
     });
@@ -819,7 +1027,7 @@
     if (cache?.items?.length) setTickerItems(cache.items);
 
     refresh(false);
-    log("boot cfg:", CFG);
+    log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
   }
 
   if (document.readyState === "loading") {
