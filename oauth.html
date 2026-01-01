@@ -151,8 +151,8 @@
     <div class="card">
       <div class="topbar">
         <div class="title">
-          <div class="kicker">OAUTH CALLBACK</div>
-          <h1>✅ Twitch OAuth recibido</h1>
+          <div class="kicker" id="kicker">OAUTH CALLBACK</div>
+          <h1 id="headline">✅ Twitch OAuth recibido</h1>
         </div>
         <div id="pill" class="pill">Leyendo respuesta…</div>
       </div>
@@ -160,8 +160,8 @@
       <div class="body">
         <p class="muted small" style="margin:0">
           Esta página captura el token devuelto por Twitch (fragmento <code>#</code>) y además intenta
-          <b>validarlo</b> para obtener automáticamente tu <b>Broadcaster ID (user_id)</b>.
-          Si abriste esto desde tu panel, también lo devuelve al <code>window.opener</code>.
+          <b>validarlo</b> para obtener automáticamente tu <b>user_id</b> y <b>login</b>.
+          Si abriste esto desde tu panel, lo devuelve al <code>window.opener</code>.
         </p>
 
         <div class="grid">
@@ -195,10 +195,10 @@
             </div>
 
             <div class="field" style="margin-top:14px">
-              <label>Datos del canal (auto por validate)</label>
+              <label>Datos (validate)</label>
               <div class="box">
                 <div class="kv">
-                  <div class="k">Broadcaster ID</div><div class="v" id="broadcasterId">(—)</div>
+                  <div class="k">User ID</div><div class="v" id="broadcasterId">(—)</div>
                   <div class="k">Login</div><div class="v" id="loginName">(—)</div>
                   <div class="k">Client ID</div><div class="v" id="clientIdOut">(—)</div>
                   <div class="k">Expira en</div><div class="v" id="expiresOut">(—)</div>
@@ -207,7 +207,7 @@
             </div>
 
             <div class="row">
-              <button id="copyBroadcasterBtn" class="btn full" type="button">Copiar Broadcaster ID</button>
+              <button id="copyBroadcasterBtn" class="btn full" type="button">Copiar User ID</button>
               <button id="copyLoginBtn" class="btn ghost full" type="button">Copiar login</button>
             </div>
 
@@ -220,14 +220,14 @@
             <div class="field">
               <label>Generador de URL OAuth (para obtener token)</label>
               <div class="muted small">
-                Para auto-título necesitas el scope <code>channel:manage:broadcast</code>.
+                Puedes pasar <code>?scopes=...</code> y <code>?target=bot|title</code>. (El panel lo hace solo.)
               </div>
             </div>
 
             <div class="field">
               <label>Client ID (de tu app de Twitch)</label>
               <input id="clientId" type="text" placeholder="Pega tu Client ID aquí" autocomplete="off"/>
-              <div class="muted small">Solo se usa para construir el link de login. (Luego, validate te lo muestra también.)</div>
+              <div class="muted small">Solo se usa para construir el link de login.</div>
             </div>
 
             <div class="field">
@@ -287,6 +287,9 @@
   const copyBroadcasterBtn = document.getElementById("copyBroadcasterBtn");
   const copyLoginBtn = document.getElementById("copyLoginBtn");
 
+  const kickerEl = document.getElementById("kicker");
+  const headlineEl = document.getElementById("headline");
+
   const okPill = (t) => { pill.className = "pill ok"; pill.textContent = t; };
   const badPill = (t) => { pill.className = "pill bad"; pill.textContent = t; };
 
@@ -294,11 +297,29 @@
   const showGood = (html) => { msgBox.className = "good small"; msgBox.innerHTML = html; };
   const clearMsg = () => { msgBox.className = ""; msgBox.innerHTML = ""; };
 
+  const qp = new URLSearchParams(location.search);
+  const target = (qp.get("target") || qp.get("for") || "title").toLowerCase();
+  const preScopes = (qp.get("scopes") || "").trim();
+  const preClientId = (qp.get("client_id") || "").trim();
+  const autoClose = (qp.get("autoclose") === "1");
+
+  // UI label según target
+  if (target === "bot") {
+    kickerEl.textContent = "OAUTH (BOT)";
+    headlineEl.textContent = "✅ OAuth del BOT recibido";
+    if (!preScopes) scopesEl.value = "chat:edit chat:read";
+  } else {
+    kickerEl.textContent = "OAUTH (TITLE)";
+    headlineEl.textContent = "✅ OAuth (auto-título) recibido";
+    if (!preScopes) scopesEl.value = "channel:manage:broadcast";
+  }
+  if (preScopes) scopesEl.value = preScopes;
+  if (preClientId) clientIdEl.value = preClientId;
+
   function cleanRedirectUri() {
     // redirect_uri estable: sin query, sin hash
     return location.origin + location.pathname;
   }
-
   redirectBox.value = cleanRedirectUri();
 
   // Twitch devuelve token en fragment (#access_token=...)
@@ -311,7 +332,6 @@
   const tokenType = hp.get("token_type") || "bearer";
 
   // Errores pueden venir en query (?error=...)
-  const qp = new URLSearchParams(location.search);
   const err = qp.get("error") || "";
   const errDesc = qp.get("error_description") || "";
 
@@ -373,7 +393,6 @@
       expiresOutEl.textContent = "(—)";
     }
 
-    // Si validate trae scopes como array, mostramos esos
     if (Array.isArray(scopes) && scopes.length) {
       scopeBox.textContent = scopes.join(" ");
     }
@@ -383,7 +402,6 @@
     const t = String(token || "").trim();
     if (!t) throw new Error("token vacío");
 
-    // Intenta Bearer primero, y si falla, OAuth (por compat)
     const tryFetch = async (authValue) => {
       const r = await fetch("https://id.twitch.tv/oauth2/validate", {
         method: "GET",
@@ -400,8 +418,7 @@
 
     try {
       return await tryFetch(`Bearer ${t}`);
-    } catch (e) {
-      // 401 suele ser auth header incorrecta o token inválido
+    } catch (_) {
       return await tryFetch(`OAuth ${t}`);
     }
   }
@@ -427,7 +444,7 @@
 
   copyBroadcasterBtn.addEventListener("click", async () => {
     const ok = await copyText(broadcasterIdEl.textContent);
-    if (ok) showGood("✅ Broadcaster ID copiado.");
+    if (ok) showGood("✅ User ID copiado.");
     else showWarn("❌ No se pudo copiar. Copia manualmente.");
   });
 
@@ -488,34 +505,14 @@
     clearMsg();
     showGood(`Token recibido (<code>${tokenType || "bearer"}</code>)${state ? ` · state=<code>${state}</code>` : ""}.<br/>Validando…`);
 
-    // Guardado local básico
-    try {
-      localStorage.setItem("twitch_oauth_access_token", accessToken);
-      localStorage.setItem("twitch_oauth_scope_raw", scope || "");
-      localStorage.setItem("twitch_oauth_token_type", tokenType || "bearer");
-      localStorage.setItem("twitch_oauth_saved_at", String(Date.now()));
-    } catch (_) {}
-
-    // VALIDATE -> saca broadcaster id + login + client_id
     let validated = null;
     try {
       validated = await validateToken(accessToken);
       setValidatedInfo(validated);
 
-      // Guardado local enriquecido
-      try {
-        if (validated && typeof validated === "object") {
-          localStorage.setItem("twitch_oauth_user_id", String(validated.user_id || ""));
-          localStorage.setItem("twitch_oauth_login", String(validated.login || ""));
-          localStorage.setItem("twitch_oauth_client_id", String(validated.client_id || ""));
-          localStorage.setItem("twitch_oauth_scope", Array.isArray(validated.scopes) ? validated.scopes.join(" ") : "");
-          localStorage.setItem("twitch_oauth_expires_in", String(validated.expires_in || ""));
-        }
-      } catch (_) {}
-
       showGood(
         `✅ Token validado.<br/>
-         Broadcaster ID: <code>${String(validated.user_id || "")}</code><br/>
+         User ID: <code>${String(validated.user_id || "")}</code><br/>
          Login: <code>${String(validated.login || "")}</code>`
       );
     } catch (e) {
@@ -529,12 +526,11 @@
       if (window.opener && window.opener !== window) {
         window.opener.postMessage({
           type: "TWITCH_OAUTH_TOKEN",
+          target,
           access_token: accessToken,
           token_type: tokenType || "bearer",
           scope: (validated && Array.isArray(validated.scopes)) ? validated.scopes.join(" ") : safeDecode(scope || ""),
           state: state || "",
-          // extras automáticos:
-          broadcaster_id: validated?.user_id ? String(validated.user_id) : "",
           user_id: validated?.user_id ? String(validated.user_id) : "",
           login: validated?.login ? String(validated.login) : "",
           client_id: validated?.client_id ? String(validated.client_id) : ""
@@ -544,6 +540,10 @@
 
     // Limpia la URL para no dejar el token en el address bar
     clearTokenFromAddressBar();
+
+    if (autoClose) {
+      setTimeout(() => { try { window.close(); } catch(_){} }, 600);
+    }
   })();
 })();
 </script>
