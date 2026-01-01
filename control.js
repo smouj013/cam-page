@@ -1,16 +1,16 @@
-/* control.js — RLC Control v2.3.1 (NEWSROOM + OAUTH BUTTON + COMPAT FIX)
+/* control.js — RLC Control v2.3.1 (NEWSROOM + COMPAT FIX + APPLY BTN)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
    ✅ Bot NO se incluye en URL (seguridad)
    ✅ Events bridge Player -> Control (ads auto detectados => bot escribe)
-   ✅ KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy
-   ✅ BOT_SAY desde Player (cmd) => Control lo envía al chat (con anti-spam)
+   ✅ KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy (incluye fallback keyless)
+   ✅ BOT_SAY desde Player (cmd) => Control lo envía al chat (anti-spam)
    ✅ Anuncio automático al chat cuando cambia la cámara (anti-spam)
    ✅ News Ticker cfg (storage + BC)
    ✅ Countdown cfg + BC/LS + URL params
    ✅ Auto Twitch Title (Helix) — COMPAT con IDs ctlTitle* del HTML (y soporta legacy ctlHelix* si existieran)
-   ✅ NUEVO: Botón “🔑 Obtener token (OAuth)” (abre Twitch OAuth y rellena ctlTitleToken automáticamente)
+   ✅ Botón “Aplicar ajustes” (si existe #ctlApplySettings)
 */
 
 (() => {
@@ -31,10 +31,6 @@
   const TICKER_CFG_KEY_BASE = "rlc_ticker_cfg_v1";        // player + control
   const HELIX_CFG_KEY_BASE  = "rlc_helix_cfg_v1";         // solo control.html (auto title)
   const COUNTDOWN_CFG_KEY_BASE = "rlc_countdown_cfg_v1";  // player + control
-
-  // OAuth helper storage (shared origin)
-  const OAUTH_EXPECT_STATE_KEY_BASE = "rlc_oauth_state_v1";
-  const OAUTH_LAST_APPLY_AT_KEY_BASE = "rlc_oauth_last_apply_at_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -67,9 +63,6 @@
   const HELIX_CFG_KEY  = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
 
-  const OAUTH_EXPECT_STATE_KEY = KEY ? `${OAUTH_EXPECT_STATE_KEY_BASE}:${KEY}` : OAUTH_EXPECT_STATE_KEY_BASE;
-  const OAUTH_LAST_APPLY_AT_KEY = KEY ? `${OAUTH_LAST_APPLY_AT_KEY_BASE}:${KEY}` : OAUTH_LAST_APPLY_AT_KEY_BASE;
-
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
@@ -87,6 +80,7 @@
 
   const ctlMins = qs("#ctlMins");
   const ctlApplyMins = qs("#ctlApplyMins");
+  const ctlApplySettings = qs("#ctlApplySettings"); // ✅ nuevo (si existe)
   const ctlFit = qs("#ctlFit");
   const ctlHud = qs("#ctlHud");
   const ctlHudDetails = qs("#ctlHudDetails");
@@ -209,8 +203,14 @@
   let lastAnnouncedCamId = "";
   let lastAnnounceAt = 0;
 
-  // OAuth popup ref (para poder cerrarlo cuando llega el token)
-  let oauthPopup = null;
+  // Message activity / compat
+  let lastAnyMsgAt = 0;
+  let lastMainMsgAt = 0;
+
+  // ✅ Compat clave: si KEY está puesto pero el Player legacy NO manda msg.key,
+  // permitimos “keyless legacy” unos segundos hasta que llegue algo por el canal namespaced.
+  let allowLegacyNoKey = true;
+  const allowLegacyNoKeyUntil = Date.now() + 6500;
 
   // ───────────────────────── helpers
   function fmtMMSS(sec) {
@@ -222,8 +222,21 @@
 
   function keyOk(msg, isMainChannel) {
     if (!KEY) return true;
-    if (isMainChannel) return true;     // namespaced
-    return (msg && msg.key === KEY);    // legacy exige key
+
+    if (isMainChannel) {
+      // si recibimos por el bus namespaced, ya no necesitamos keyless legacy
+      allowLegacyNoKey = false;
+      return true;
+    }
+
+    // legacy channel
+    const mk = msg && typeof msg.key === "string" ? String(msg.key).trim() : "";
+    if (mk) return mk === KEY;
+
+    // si el Player es legacy y no manda key, aceptamos solo al arrancar (fallback)
+    if (!allowLegacyNoKey) return false;
+    if (Date.now() > allowLegacyNoKeyUntil) return false;
+    return true;
   }
 
   function busPost(msg) {
@@ -252,13 +265,8 @@
     el.classList.toggle("pill--bad", !ok);
   }
 
-  function setStatus(text, ok = true) {
-    setPill(ctlStatus, text, ok);
-  }
-
-  function setBotStatus(text, ok = true) {
-    setPill(ctlBotStatus, text, ok);
-  }
+  function setStatus(text, ok = true) { setPill(ctlStatus, text, ok); }
+  function setBotStatus(text, ok = true) { setPill(ctlBotStatus, text, ok); }
 
   function setTickerStatusFromCfg(cfg) {
     if (!ctlTickerStatus) return;
@@ -272,9 +280,7 @@
     setPill(ctlCountdownStatus, on ? "Cuenta atrás: ON" : "Cuenta atrás: OFF", on);
   }
 
-  function setTitleStatus(text, ok = true) {
-    setPill(ctlTitleStatus, text, ok);
-  }
+  function setTitleStatus(text, ok = true) { setPill(ctlTitleStatus, text, ok); }
 
   function label(cam) {
     const t = cam?.title || "Live Cam";
@@ -545,7 +551,7 @@
     return normalizeCountdownCfg({ enabled, label, targetMs });
   }
 
-  // ───────────────────────── Helix Auto Title cfg (usa IDs ctlTitle*))
+  // ───────────────────────── Helix Auto Title cfg
   const HELIX_DEFAULTS = {
     enabled: false,
     clientId: "",
@@ -623,7 +629,7 @@
   }
 
   function buildTitleFromState(st, template) {
-    const cam = st?.cam || {};
+    const cam = st?.cam || st?.currentCam || {};
     const t = String(cam?.title || "Live Cam").trim();
     const p = String(cam?.place || "").trim();
     const s = String(cam?.source || "").trim();
@@ -750,205 +756,6 @@
       const msg = String(e?.message || e || "Error").slice(0, 120);
       setTitleStatus(`Helix error: ${msg}`, false);
       helixResolvedBroadcasterId = "";
-    }
-  }
-
-  // ───────────────────────── ✅ OAuth bridge (botón + postMessage + fallback LS)
-  const OAUTH_SCOPES = "channel:manage:broadcast chat:read chat:edit";
-
-  function oauthRedirectUri() {
-    // IMPORTANTE: redirect_uri NO lleva query ni hash (evita redirect_mismatch)
-    try {
-      const u = new URL(location.href);
-      let path = u.pathname || "/";
-      if (/control\.html$/i.test(path)) path = path.replace(/control\.html$/i, "oauth.html");
-      else path = path.replace(/\/[^\/]*$/, "/oauth.html");
-      return `${u.origin}${path}`;
-    } catch (_) {
-      // fallback bruto
-      return `${location.origin}${(location.pathname || "/").replace(/control\.html$/i, "oauth.html")}`;
-    }
-  }
-
-  function randomState() {
-    try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch (_) {}
-    return `st_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-  }
-
-  function buildAuthorizeUrl(clientId, scopes, redirectUri, state) {
-    const u = new URL("https://id.twitch.tv/oauth2/authorize");
-    u.searchParams.set("response_type", "token"); // implicit
-    u.searchParams.set("client_id", String(clientId || "").trim());
-    u.searchParams.set("redirect_uri", String(redirectUri || "").trim());
-    u.searchParams.set("scope", String(scopes || "").trim());
-    u.searchParams.set("state", String(state || "").trim());
-    u.searchParams.set("force_verify", "true");
-    return u.toString();
-  }
-
-  function applyOAuthTokenToUI(accessToken, scopeStr = "", tokenType = "bearer", state = "") {
-    const tok = String(accessToken || "").trim();
-    if (!tok) return false;
-
-    // Seguridad mínima: valida state si lo esperamos
-    const expected = String(lsGet(OAUTH_EXPECT_STATE_KEY) || "").trim();
-    if (expected && state && state !== expected) {
-      setTitleStatus("OAuth state mismatch (¿popup antiguo?)", false);
-      return false;
-    }
-
-    // Rellena token helix
-    if (ctlTitleToken) ctlTitleToken.value = tok;
-
-    // Si el bot token está vacío, también lo rellenamos (muy útil)
-    try {
-      const botTokNow = String(ctlBotToken?.value || "").trim();
-      if (ctlBotToken && !botTokNow) ctlBotToken.value = tok;
-    } catch (_) {}
-
-    // Persist Helix
-    try {
-      helixCfg = readHelixUI();
-      saveHelixCfg(helixCfg);
-      // resetea caches para que pueda resolver broadcaster_id si hace falta
-      helixResolvedBroadcasterId = "";
-      helixLastSig = "";
-      helixLastUpdateAt = 0;
-    } catch (_) {}
-
-    // Persist Bot (si lo hemos rellenado / cambiado)
-    try {
-      persistBotUIToStore();
-    } catch (_) {}
-
-    // Marca que aplicamos (para fallback LS)
-    try { lsSet(OAUTH_LAST_APPLY_AT_KEY, String(Date.now())); } catch (_) {}
-
-    const scopeShort = String(scopeStr || "").trim();
-    setTitleStatus(scopeShort ? `OAuth OK ✅ (${scopeShort.slice(0, 40)}${scopeShort.length > 40 ? "…" : ""})` : "OAuth OK ✅", true);
-
-    // Si el bot está ON, intenta reconectar para usar token nuevo
-    try {
-      if (ctlBotOn?.value === "on") {
-        // si no está conectado, esto lo levantará; si está, no pasa nada
-        bot.connect();
-      }
-    } catch (_) {}
-
-    // Cierra popup si lo tenemos
-    try { if (oauthPopup && !oauthPopup.closed) oauthPopup.close(); } catch (_) {}
-    oauthPopup = null;
-
-    return true;
-  }
-
-  function ensureOAuthButtonsInjected() {
-    if (!ctlTitleToken) return;
-    if (qs("#ctlTitleOAuthBtn")) return; // ya existe
-
-    // Insertamos justo después del input del token
-    const parent = ctlTitleToken.parentElement || ctlTitleToken.closest(".row") || ctlTitleToken.closest(".card") || ctlTitleToken.parentNode;
-    if (!parent || !parent.appendChild) return;
-
-    const wrap = document.createElement("div");
-    wrap.style.display = "flex";
-    wrap.style.gap = "10px";
-    wrap.style.flexWrap = "wrap";
-    wrap.style.marginTop = "10px";
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.id = "ctlTitleOAuthBtn";
-    btn.textContent = "🔑 Obtener token (OAuth)";
-    // intenta heredar clases del Apply/Test si existen
-    btn.className = (ctlTitleApply && ctlTitleApply.className) ? ctlTitleApply.className : "";
-
-    const btn2 = document.createElement("button");
-    btn2.type = "button";
-    btn2.id = "ctlTitleOAuthCopyRedirectBtn";
-    btn2.textContent = "📋 Copiar redirect_uri";
-    btn2.className = (ctlTitleReset && ctlTitleReset.className) ? ctlTitleReset.className : "";
-
-    wrap.appendChild(btn);
-    wrap.appendChild(btn2);
-
-    // Insertarlo “debajo” del token input sin romper layout
-    try {
-      // si el parent es un label/field, append suele quedar bien
-      parent.appendChild(wrap);
-    } catch (_) {}
-
-    btn2.addEventListener("click", async () => {
-      const ok = await copyToClipboard(oauthRedirectUri());
-      setTitleStatus(ok ? "redirect_uri copiado ✅" : "No se pudo copiar redirect_uri", ok);
-    });
-
-    btn.addEventListener("click", () => {
-      const clientId = String(ctlTitleClientId?.value || "").trim();
-      if (!clientId) {
-        setTitleStatus("OAuth: pega Client ID primero", false);
-        return;
-      }
-
-      const redir = oauthRedirectUri();
-      const st = randomState();
-      try { lsSet(OAUTH_EXPECT_STATE_KEY, st); } catch (_) {}
-
-      const url = buildAuthorizeUrl(clientId, OAUTH_SCOPES, redir, st);
-
-      setTitleStatus("Abriendo OAuth…", true);
-
-      // Popup (mejor UX). Si lo bloquea, abre en la misma pestaña.
-      try {
-        oauthPopup = window.open(url, "twitch_oauth", "width=520,height=720,noopener,noreferrer");
-      } catch (_) {
-        oauthPopup = null;
-      }
-      if (!oauthPopup) {
-        // fallback: navega aquí
-        location.href = url;
-      }
-    });
-  }
-
-  // Recibe token desde oauth.html (postMessage)
-  window.addEventListener("message", (ev) => {
-    try {
-      if (!ev || ev.origin !== location.origin) return;
-      const d = ev.data || {};
-      if (!d || d.type !== "TWITCH_OAUTH_TOKEN") return;
-
-      const tok = String(d.access_token || "").trim();
-      if (!tok) return;
-
-      const scopeStr = String(d.scope || "").trim();
-      const tokenType = String(d.token_type || "bearer").trim();
-      const state = String(d.state || "").trim();
-
-      // Si DOM no está aún, lo aplicará igualmente cuando existan inputs (pero aquí normalmente ya están)
-      applyOAuthTokenToUI(tok, scopeStr, tokenType, state);
-    } catch (_) {}
-  });
-
-  // Fallback: si por lo que sea postMessage falla, oauth.html guarda token en localStorage.
-  function tryConsumeOAuthTokenFromLocalStorage() {
-    try {
-      const tok = String(lsGet("twitch_oauth_access_token") || "").trim();
-      if (!tok) return false;
-
-      const savedAt = parseInt(String(lsGet("twitch_oauth_saved_at") || "0"), 10) || 0;
-      const lastApply = parseInt(String(lsGet(OAUTH_LAST_APPLY_AT_KEY) || "0"), 10) || 0;
-
-      // Solo aplicar si es “nuevo” y distinto al actual
-      const current = String(ctlTitleToken?.value || "").trim();
-      if (savedAt && savedAt <= lastApply && current === tok) return false;
-
-      const scopeStr = String(lsGet("twitch_oauth_scope") || "").trim();
-      const tokenType = String(lsGet("twitch_oauth_token_type") || "bearer").trim();
-
-      return applyOAuthTokenToUI(tok, scopeStr, tokenType, "");
-    } catch (_) {
-      return false;
     }
   }
 
@@ -1282,23 +1089,40 @@
     return u.toString();
   }
 
+  function getRemainingFromState(st) {
+    if (!st) return 0;
+    const r =
+      (typeof st.remaining === "number") ? st.remaining :
+      (typeof st.remainingSec === "number") ? st.remainingSec :
+      (typeof st.remain === "number") ? st.remain :
+      0;
+    return r | 0;
+  }
+
   // ───────────────────────── apply state
-  function applyState(st) {
+  function applyState(st, isMainChannel = true) {
     lastState = st;
     lastSeenAt = Date.now();
+    lastAnyMsgAt = lastSeenAt;
+    if (isMainChannel) lastMainMsgAt = lastSeenAt;
+
     setStatus("Conectado", true);
 
-    if (ctlNowTitle) ctlNowTitle.textContent = st?.cam?.title || "—";
-    if (ctlNowPlace) ctlNowPlace.textContent = st?.cam?.place || "—";
-    if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS(st?.remaining ?? 0);
+    const cam = st?.cam || st?.currentCam || {};
+    if (ctlNowTitle) ctlNowTitle.textContent = cam?.title || "—";
+    if (ctlNowPlace) ctlNowPlace.textContent = cam?.place || "—";
+    if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS(getRemainingFromState(st));
 
     if (ctlOrigin) {
-      ctlOrigin.href = st?.cam?.originUrl || "#";
-      ctlOrigin.style.pointerEvents = st?.cam?.originUrl ? "auto" : "none";
-      ctlOrigin.style.opacity = st?.cam?.originUrl ? "1" : ".65";
+      ctlOrigin.href = cam?.originUrl || "#";
+      ctlOrigin.style.pointerEvents = cam?.originUrl ? "auto" : "none";
+      ctlOrigin.style.opacity = cam?.originUrl ? "1" : ".65";
     }
 
-    if (ctlPlay) ctlPlay.textContent = st?.playing ? "⏸" : "▶";
+    if (ctlPlay) {
+      const playing = (typeof st?.playing === "boolean") ? st.playing : !(st?.paused === true);
+      ctlPlay.textContent = playing ? "⏸" : "▶";
+    }
 
     if (ctlMins && typeof st?.mins === "number") safeSetValue(ctlMins, st.mins);
     if (ctlFit && st?.fit && !isEditing(ctlFit)) ctlFit.value = st.fit;
@@ -1349,7 +1173,7 @@
 
     // ✅ Auto announce cam al chat
     try {
-      const camId = String(st?.cam?.id || "");
+      const camId = String(cam?.id || "");
       const chan = String(vote?.channel || ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
       const botOn = (ctlBotOn?.value === "on");
       if (camId && camId !== lastAnnouncedCamId && chan && botOn) {
@@ -1358,9 +1182,9 @@
           lastAnnounceAt = now;
           lastAnnouncedCamId = camId;
 
-          const t = String(st?.cam?.title || "Live Cam").trim();
-          const p = String(st?.cam?.place || "").trim();
-          const src = String(st?.cam?.source || "").trim();
+          const t = String(cam?.title || "Live Cam").trim();
+          const p = String(cam?.place || "").trim();
+          const src = String(cam?.source || "").trim();
           const line = `🌍 Ahora: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}  |  🆘 !help  🎲 !tagvote  🗳️ !callvote`;
           botSayIfEnabled(line);
         }
@@ -1369,7 +1193,7 @@
 
     // ✅ Auto title (Helix) cuando cambia la cam
     try {
-      const camId = String(st?.cam?.id || "");
+      const camId = String(cam?.id || "");
       if (camId) {
         helixCfg = readHelixUI();
         saveHelixCfg(helixCfg);
@@ -1422,7 +1246,10 @@
 
   function onBusMessage(msg, isMainChannel) {
     if (!msg) return;
-    if (msg.type === "state") { if (keyOk(msg, isMainChannel)) applyState(msg); return; }
+    lastAnyMsgAt = Date.now();
+    if (isMainChannel) lastMainMsgAt = lastAnyMsgAt;
+
+    if (msg.type === "state") { if (keyOk(msg, isMainChannel)) applyState(msg, isMainChannel); return; }
     if (msg.type === "event") { handleEvent(msg, isMainChannel); return; }
     if (msg.type === "cmd") { handleCmdFromPlayer(msg, isMainChannel); return; }
   }
@@ -1444,7 +1271,7 @@
       const isMain = !!rawMain;
       if (!keyOk(st, isMain)) return;
 
-      applyState(st);
+      applyState(st, isMain);
     } catch (_) {}
   }, 500);
 
@@ -1477,7 +1304,7 @@
       try {
         if (!e.newValue) return;
         const st = JSON.parse(e.newValue);
-        if (st && st.type === "state" && keyOk(st, e.key === STATE_KEY)) applyState(st);
+        if (st && st.type === "state" && keyOk(st, e.key === STATE_KEY)) applyState(st, e.key === STATE_KEY);
       } catch (_) {}
       return;
     }
@@ -1501,9 +1328,21 @@
   // Watchdog
   setInterval(() => {
     const now = Date.now();
-    if (!lastSeenAt) { setStatus("Esperando player…", false); return; }
+
+    if (!lastSeenAt) {
+      setStatus(KEY ? "Esperando player… (KEY)" : "Esperando player…", false);
+      return;
+    }
+
     const age = now - lastSeenAt;
-    if (age > 2500) setStatus("Sin señal (¿stream abierto?)", false);
+    if (age > 2500) {
+      // hint “key mismatch”
+      if (KEY && (now - lastMainMsgAt) > 2500 && (now - lastAnyMsgAt) > 2500) {
+        setStatus("Sin señal (¿player legacy sin KEY?)", false);
+      } else {
+        setStatus("Sin señal (¿stream abierto?)", false);
+      }
+    }
   }, 700);
 
   // ───────────────────────── UI wire
@@ -1522,10 +1361,6 @@
     try { sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
 
     syncHelixUIFromStore();
-
-    // ✅ Inyecta botón OAuth + aplica token guardado si existe
-    try { ensureOAuthButtonsInjected(); } catch (_) {}
-    try { tryConsumeOAuthTokenFromLocalStorage(); } catch (_) {}
 
     // defaults defensivos
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
@@ -1551,7 +1386,26 @@
     if (ctlPlay) ctlPlay.addEventListener("click", () => sendCmd("TOGGLE_PLAY"));
     if (ctlShuffle) ctlShuffle.addEventListener("click", () => sendCmd("SHUFFLE"));
 
-    if (ctlApplyMins) ctlApplyMins.addEventListener("click", () => sendCmd("SET_MINS", { mins: ctlMins.value }));
+    // duración: manda número (no string)
+    if (ctlApplyMins) ctlApplyMins.addEventListener("click", () => {
+      const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
+      sendCmd("SET_MINS", { mins });
+      try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+    });
+
+    // ✅ botón global: aplica Fit/HUD/etc de golpe (si existe en tu HTML)
+    if (ctlApplySettings) ctlApplySettings.addEventListener("click", () => {
+      const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
+      sendCmd("SET_MINS", { mins });
+      if (ctlFit) sendCmd("SET_FIT", { fit: ctlFit.value || "cover" });
+      if (ctlHud) sendCmd("SET_HUD", { on: ctlHud.value !== "off" });
+      if (ctlHudDetails) sendCmd("SET_HUD_DETAILS", { collapsed: ctlHudDetails.value === "collapsed" });
+      if (ctlAutoskip) sendCmd("SET_AUTOSKIP", { on: ctlAutoskip.value === "on" });
+      if (ctlAdfree) sendCmd("SET_ADFREE", { on: ctlAdfree.value === "on" });
+
+      try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+    });
+
     if (ctlFit) ctlFit.addEventListener("change", () => sendCmd("SET_FIT", { fit: ctlFit.value }));
     if (ctlHud) ctlHud.addEventListener("change", () => sendCmd("SET_HUD", { on: ctlHud.value !== "off" }));
     if (ctlHudDetails) ctlHudDetails.addEventListener("change", () => sendCmd("SET_HUD_DETAILS", { collapsed: ctlHudDetails.value === "collapsed" }));
@@ -1603,9 +1457,7 @@
         tickerCfg = sendTickerCfg(cfg, true);
         setTickerStatusFromCfg(tickerCfg);
 
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
       });
     }
 
@@ -1616,9 +1468,7 @@
         tickerCfg = sendTickerCfg(TICKER_DEFAULTS, true);
         syncTickerUIFromStore();
 
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
       });
     }
 
@@ -1637,9 +1487,7 @@
         const cfg = readCountdownUI();
         countdownCfg = sendCountdownCfg(cfg, true);
         setCountdownStatusFromCfg(countdownCfg);
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
       });
     }
 
@@ -1649,9 +1497,7 @@
         lsDel(COUNTDOWN_CFG_KEY_BASE);
         countdownCfg = sendCountdownCfg(COUNTDOWN_DEFAULTS, true);
         syncCountdownUIFromStore();
-        try {
-          if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        } catch (_) {}
+        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
       });
     }
 
@@ -1660,7 +1506,6 @@
       helixCfg = readHelixUI();
       saveHelixCfg(helixCfg);
 
-      // reset caches
       helixResolvedBroadcasterId = "";
       helixLastSig = "";
       helixLastUpdateAt = 0;
@@ -1693,7 +1538,6 @@
       });
     }
 
-    // Live persist (sin spamear Helix)
     const helixInputs = [ctlTitleOn, ctlTitleClientId, ctlTitleToken, ctlTitleTemplate, ctlTitleCooldown, ctlTitleBroadcasterId].filter(Boolean);
     const helixPersistDebounced = debounce(() => {
       helixCfg = readHelixUI();
@@ -1746,6 +1590,8 @@
       setCountdownStatusFromCfg(countdownCfg);
 
       titleApplyAndPersist();
+
+      try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
     }
 
     if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
