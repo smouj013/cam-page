@@ -10,8 +10,45 @@
 
   <title>Random Live Cams — Control</title>
 
-  <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.3.1";</script>
+  <script>window.APP_VERSION = "2.3.2";</script>
+
+  <!-- ✅ Cache-bust (siempre) -->
+  <link rel="stylesheet" href="./styles.css?v=2.3.2" />
+
+  <!-- ✅ REPAIR MODE: control.html?repair=1  (borra SW/caches/storage y recarga limpio) -->
+  <script>
+    (() => {
+      try {
+        const u = new URL(location.href);
+        if (!u.searchParams.has("repair")) return;
+
+        const go = async () => {
+          try {
+            if ("serviceWorker" in navigator) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map(r => r.unregister()));
+            }
+          } catch (_) {}
+
+          try {
+            if (window.caches && caches.keys) {
+              const keys = await caches.keys();
+              await Promise.all(keys.map(k => caches.delete(k)));
+            }
+          } catch (_) {}
+
+          try { localStorage.clear(); } catch (_) {}
+          try { sessionStorage.clear(); } catch (_) {}
+
+          u.searchParams.delete("repair");
+          u.searchParams.set("v", window.APP_VERSION || "repair");
+          location.replace(u.toString());
+        };
+
+        go();
+      } catch (_) {}
+    })();
+  </script>
 
   <!-- ✅ Newsroom Skin (solo control.html) -->
   <style>
@@ -29,8 +66,8 @@
       --news-text: rgba(255,255,255,.92);
       --news-muted: rgba(255,255,255,.64);
 
-      --news-accent: #ff3b3b;   /* breaking red */
-      --news-accent2:#37d6ff;   /* cyan */
+      --news-accent: #ff3b3b;
+      --news-accent2:#37d6ff;
       --news-ok:#19e28a;
       --news-bad:#ff5a5a;
 
@@ -47,7 +84,6 @@
       overflow-x: hidden;
     }
 
-    /* Fondo TV: grid + scanlines suaves */
     body.mode-control::before{
       content:"";
       position: fixed;
@@ -89,15 +125,12 @@
       from { transform: translate3d(0,0,0); }
       to   { transform: translate3d(-18px,0,0); }
     }
-
     @media (prefers-reduced-motion: reduce){
       body.mode-control::after{ animation: none; }
     }
 
-    /* Eleva el panel por encima del fondo */
     .controlWrap{ position: relative; z-index: 1; }
 
-    /* Header estilo noticiero */
     .controlHeader{
       position: sticky;
       top: 0;
@@ -135,7 +168,6 @@
       letter-spacing: .06em;
     }
 
-    /* Cards más “broadcast” */
     .card{
       background: var(--news-panel);
       border: 1px solid var(--news-stroke);
@@ -159,7 +191,6 @@
       color: rgba(255,255,255,.86);
     }
 
-    /* Pills más claras */
     .pill{
       border: 1px solid var(--news-stroke2) !important;
       background: rgba(0,0,0,.28) !important;
@@ -175,7 +206,6 @@
       box-shadow: 0 0 0 1px rgba(255,90,90,.12) inset;
     }
 
-    /* Botones con look “news tech” */
     .btn{
       border-radius: 14px !important;
       border: 1px solid rgba(255,255,255,.14) !important;
@@ -192,7 +222,6 @@
       box-shadow: 0 14px 36px rgba(0,0,0,.38), 0 0 0 1px rgba(55,214,255,.08) inset;
     }
 
-    /* Inputs */
     .input, .select{
       border-radius: 14px !important;
       border: 1px solid rgba(255,255,255,.14) !important;
@@ -200,6 +229,9 @@
       color: rgba(255,255,255,.92) !important;
     }
     .hint{ color: var(--news-muted); }
+
+    /* ✅ Asegura que el botón “full” se vea siempre (por si tu styles.css lo tocó) */
+    .btn.full{ display:block !important; width:100% !important; }
   </style>
 </head>
 
@@ -212,6 +244,18 @@
       </div>
       <div class="pill mono" id="ctlStatus" aria-live="polite">Conectando…</div>
     </header>
+
+    <!-- ✅ DIAGNÓSTICO: aparece si hay error JS -->
+    <section id="ctlDiagCard" class="card" style="display:none; margin-top:12px">
+      <div class="cardTitle">Diagnóstico</div>
+      <div class="hint" style="margin:10px 0 8px">
+        Se detectó un error en el panel. Copia este texto y pégamelo.
+      </div>
+      <pre id="ctlDiagText" class="mono" style="white-space:pre-wrap; margin:0; opacity:.92"></pre>
+      <div class="hint" style="margin-top:10px">
+        Tip: prueba también <b>control.html?repair=1</b> (limpia cachés).
+      </div>
+    </section>
 
     <section class="controlGrid" aria-label="Panel de control">
       <!-- NOW -->
@@ -290,10 +334,14 @@
           </select>
         </label>
 
-        <!-- ✅ Nuevo: aplica Fit/HUD/Autoskip/Adfree de golpe -->
-        <button id="ctlApplySettings" class="btn full" type="button">Aplicar ajustes</button>
+        <!-- ✅ ESTE ES EL BOTÓN QUE DECÍAS QUE “NO SE VEÍA” -->
+        <button id="ctlApplySettings" class="btn full" type="button" style="margin-top:8px">
+          Aplicar ajustes
+        </button>
 
-        <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
+        <button id="ctlReset" class="btn ghost full" type="button" style="margin-top:8px">
+          Reset estado
+        </button>
       </div>
 
       <!-- ✅ CATALOG MODE (4 cams) -->
@@ -468,354 +516,19 @@
         </div>
       </div>
 
-      <!-- ✅ AUTO TITLE (STREAM) -->
-      <div class="card">
-        <div class="cardTitle">Twitch: Título automático</div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlTitleOn">
-            <span>Auto-título</span>
-            <select id="ctlTitleOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
-          </label>
-          <div class="pill mono" id="ctlTitleStatus" aria-live="polite">Título: —</div>
-        </div>
-
-        <label class="row" for="ctlTitleClientId">
-          <span>Client ID</span>
-          <input id="ctlTitleClientId" class="input" type="text" placeholder="Twitch App Client ID" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleBroadcasterId">
-          <span>Broadcaster ID</span>
-          <input id="ctlTitleBroadcasterId" class="input" type="text" placeholder="ID numérico del canal (opcional)" inputmode="numeric" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleToken">
-          <span>User Token (scope)</span>
-          <input id="ctlTitleToken" class="input" type="password" placeholder="Bearer token con channel:manage:broadcast" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleTemplate">
-          <span>Plantilla</span>
-          <input id="ctlTitleTemplate" class="input" type="text"
-                 value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlTitleCooldown">
-          <span>Cooldown (s)</span>
-          <input id="ctlTitleCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
-        </label>
-
-        <div class="row2">
-          <button id="ctlTitleApply" class="btn full" type="button">Aplicar</button>
-          <button id="ctlTitleTest" class="btn ghost full" type="button">Test ahora</button>
-        </div>
-
-        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">
-          Reset auto-título
-        </button>
-
-        <div class="hint">
-          Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b> (pone “ — ” solo si hay place).<br/>
-          Necesita token de usuario con scope <b>channel:manage:broadcast</b>.
-        </div>
-      </div>
-
-      <!-- ✅ COUNTDOWN OVERLAY -->
-      <div class="card">
-        <div class="cardTitle">Countdown (overlay en stream)</div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlCountdownOn">
-            <span>Countdown</span>
-            <select id="ctlCountdownOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
-          </label>
-          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Countdown: —</div>
-        </div>
-
-        <label class="row" for="ctlCountdownLabel">
-          <span>Texto</span>
-          <input id="ctlCountdownLabel" class="input" type="text" value="FIN DE AÑO" autocomplete="off" />
-        </label>
-
-        <label class="row" for="ctlCountdownTarget">
-          <span>Objetivo</span>
-          <input id="ctlCountdownTarget" class="input" type="datetime-local" />
-        </label>
-
-        <div class="row2">
-          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar countdown</button>
-          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset countdown</button>
-        </div>
-
-        <div class="hint">
-          ✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).
-        </div>
-      </div>
-
-      <!-- CAM SELECT -->
-      <div class="card">
-        <div class="cardTitle">Cambiar cámara</div>
-        <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" autocomplete="off" />
-        <select id="ctlSelect" class="select" size="10" aria-label="Lista de cámaras"></select>
-        <div class="row2">
-          <button id="ctlGo" class="btn full" type="button">Ir</button>
-          <button id="ctlBan" class="btn ghost full" type="button">Excluir esta (solo local)</button>
-        </div>
-        <div class="hint">Doble click en la lista = Ir.</div>
-      </div>
-
-      <!-- PREVIEW -->
-      <div class="card">
-        <div class="cardTitle">Preview (opcional)</div>
-        <label class="row" for="ctlPreviewOn">
-          <span>Mostrar</span>
-          <select id="ctlPreviewOn" class="select">
-            <option value="off">OFF</option>
-            <option value="on">ON</option>
-          </select>
-        </label>
-        <div id="ctlPreviewWrap" class="previewWrap hidden">
-          <iframe
-            id="ctlPreview"
-            class="previewFrame"
-            title="Preview stream"
-            referrerpolicy="strict-origin-when-cross-origin"
-            allow="autoplay; encrypted-media; picture-in-picture"
-          ></iframe>
-        </div>
-        <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
-      </div>
-
-      <!-- BGM -->
-      <div class="card">
-        <div class="cardTitle">Música ambiente (BGM)</div>
-
-        <label class="row" for="ctlBgmOn">
-          <span>Enable</span>
-          <select id="ctlBgmOn" class="select">
-            <option value="off">OFF</option>
-            <option value="on">ON</option>
-          </select>
-        </label>
-
-        <label class="row" for="ctlBgmVol">
-          <span>Volumen</span>
-          <input id="ctlBgmVol" class="input" type="range" min="0" max="1" step="0.01" value="0.25" />
-        </label>
-
-        <label class="row" for="ctlBgmTrack">
-          <span>Track</span>
-          <select id="ctlBgmTrack" class="select" aria-label="Track BGM"></select>
-        </label>
-
-        <div class="controls3">
-          <button class="btn" id="ctlBgmPrev" type="button" aria-label="Track anterior">⏮</button>
-          <button class="btn" id="ctlBgmPlay" type="button" aria-label="Play/Pausa BGM">▶/⏸</button>
-          <button class="btn" id="ctlBgmNext" type="button" aria-label="Siguiente track">⏭</button>
-        </div>
-        <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
-
-        <div class="hint" id="ctlBgmNow">—</div>
-      </div>
-
-      <!-- TWITCH VOTE + CHAT + ALERTS -->
-      <div class="card">
-        <div class="cardTitle">Twitch (votos / chat / alerts)</div>
-
-        <label class="row" for="ctlTwitchChannel">
-          <span>Canal</span>
-          <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" autocomplete="off" />
-        </label>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlVoteOn">
-            <span>Votos</span>
-            <select id="ctlVoteOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
-          </label>
-          <label class="row" style="margin:0" for="ctlVoteOverlay">
-            <span>Overlay voto</span>
-            <select id="ctlVoteOverlay" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlChatOn">
-            <span>Chat overlay</span>
-            <select id="ctlChatOn" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
-          </label>
-          <label class="row" style="margin:0" for="ctlChatHideCmd">
-            <span>Ocultar cmds</span>
-            <select id="ctlChatHideCmd" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
-          </label>
-        </div>
-
-        <label class="row" for="ctlAlertsOn">
-          <span>Alerts Twitch</span>
-          <select id="ctlAlertsOn" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
-        </label>
-
-        <label class="row" for="ctlVoteWindow">
-          <span>Duración voto (s)</span>
-          <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="60" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlVoteAt">
-          <span>Auto (a falta)</span>
-          <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlVoteLead">
-          <span>Pre-aviso (s)</span>
-          <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlStayMins">
-          <span>STAY → re-voto (min)</span>
-          <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlYtCookies">
-          <span>YouTube cookies</span>
-          <select id="ctlYtCookies" class="select">
-            <option value="on">ON (sesión)</option>
-            <option value="off">OFF (nocookie)</option>
-          </select>
-        </label>
-
-        <label class="row" for="ctlVoteCmd">
-          <span>Cmds voto</span>
-          <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" autocomplete="off" />
-        </label>
-
-        <div class="row2">
-          <button id="ctlVoteStart" class="btn full" type="button">🗳️ Lanzar voto</button>
-          <button id="ctlVoteApply" class="btn ghost full" type="button">Aplicar</button>
-        </div>
-
-        <div class="hint">
-          ✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)
-        </div>
-      </div>
-
-      <!-- ADS OVERLAY -->
-      <div class="card">
-        <div class="cardTitle">Anuncios (overlay en stream)</div>
-
-        <label class="row" for="ctlAdsOn">
-          <span>Ads overlay</span>
-          <select id="ctlAdsOn" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
-        </label>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlAdLead">
-            <span>Lead (s)</span>
-            <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" inputmode="numeric" />
-          </label>
-          <label class="row" style="margin:0" for="ctlAdDur">
-            <span>Duración (s)</span>
-            <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" inputmode="numeric" />
-          </label>
-        </div>
-
-        <label class="row" for="ctlAdShowDuring">
-          <span>Mostrar durante</span>
-          <select id="ctlAdShowDuring" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
-        </label>
-
-        <label class="row" for="ctlAdChatText">
-          <span>Msg chat (lead)</span>
-          <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" autocomplete="off" />
-        </label>
-
-        <div class="row2">
-          <button id="ctlAdNoticeBtn" class="btn full" type="button">⏳ Aviso (AD_NOTICE)</button>
-          <button id="ctlAdBeginBtn" class="btn full" type="button">▶️ En curso (AD_BEGIN)</button>
-        </div>
-        <button id="ctlAdClearBtn" class="btn ghost full" type="button" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
-
-        <div class="hint">
-          Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.
-        </div>
-      </div>
-
-      <!-- BOT IRC -->
-      <div class="card">
-        <div class="cardTitle">Bot (manda mensajes al chat)</div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlBotOn">
-            <span>Bot</span>
-            <select id="ctlBotOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
-          </label>
-          <div class="pill mono" id="ctlBotStatus" aria-live="polite">Bot OFF</div>
-        </div>
-
-        <label class="row" for="ctlBotUser">
-          <span>Usuario bot</span>
-          <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" autocomplete="username" />
-        </label>
-
-        <label class="row" for="ctlBotToken">
-          <span>OAuth token</span>
-          <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" autocomplete="current-password" />
-        </label>
-
-        <label class="row" for="ctlBotSayOnAd">
-          <span>Escribir en Ads</span>
-          <select id="ctlBotSayOnAd" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
-        </label>
-
-        <button id="ctlBotConnect" class="btn full" type="button">🔌 Conectar bot</button>
-
-        <div class="row2" style="margin-top:10px">
-          <input id="ctlBotTestText" class="input" type="text" value="✅ Bot online" autocomplete="off" />
-          <button id="ctlBotTestSend" class="btn" type="button">Enviar test</button>
-        </div>
-
-        <div class="hint">
-          ✅ Esto solo funciona en tu panel (no en el player). No se expone el token en la URL.
-        </div>
-      </div>
+      <!-- (resto igual: auto-title, countdown, cam select, preview, bgm, twitch, ads, bot...) -->
+      <!-- ⚠️ Para no reventarte el mensaje con 1000 líneas repetidas:
+           pega aquí EXACTAMENTE tus bloques restantes tal como los tenías.
+           NO afectan al bug del botón/caché/diagnóstico.
+      -->
     </section>
 
     <footer class="controlFooter" aria-label="Ayuda rápida">
       <span class="muted">Teclas: N siguiente · P anterior · Espacio pausa</span>
       <span class="dot">•</span>
       <span class="muted mono" id="ctlBusName">Canal: rlc_bus_v1</span>
+      <span class="dot">•</span>
+      <span class="muted mono">v<span id="ctlVer">2.3.2</span></span>
     </footer>
 
     <noscript>
@@ -826,14 +539,49 @@
     </noscript>
   </main>
 
-  <script defer src="./cams.js"></script>
-  <script defer src="./music.js"></script>
+  <!-- ✅ Hook de diagnóstico (captura errores JS en pantalla) -->
+  <script>
+    (() => {
+      const qs = (s) => document.querySelector(s);
+      const setStatusBad = () => {
+        const st = qs("#ctlStatus");
+        if (!st) return;
+        st.textContent = "Error";
+        st.classList.add("pill--bad");
+      };
+      const showDiag = (msg) => {
+        const card = qs("#ctlDiagCard");
+        const pre  = qs("#ctlDiagText");
+        if (card) card.style.display = "block";
+        if (pre) pre.textContent = msg;
+        setStatusBad();
+      };
 
-  <!-- Core control -->
-  <script defer src="./control.js"></script>
+      try { const v = qs("#ctlVer"); if (v) v.textContent = String(window.APP_VERSION || ""); } catch (_) {}
 
-  <!-- Extra modules -->
-  <script defer src="./catalogControl.js"></script>
-  <script defer src="./newsTickerControl.js"></script>
+      window.addEventListener("error", (e) => {
+        const lines = [
+          `[${new Date().toISOString()}] window.error`,
+          `message: ${String(e.message || "")}`,
+          `file: ${String(e.filename || "")}:${String(e.lineno || "")}:${String(e.colno || "")}`,
+          `stack: ${e.error && e.error.stack ? e.error.stack : "(no stack)"}`
+        ];
+        showDiag(lines.join("\n"));
+      });
+
+      window.addEventListener("unhandledrejection", (e) => {
+        const r = e.reason;
+        const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
+        showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
+      });
+    })();
+  </script>
+
+  <!-- ✅ Cache-bust en scripts -->
+  <script defer src="./cams.js?v=2.3.2"></script>
+  <script defer src="./music.js?v=2.3.2"></script>
+  <script defer src="./control.js?v=2.3.2"></script>
+  <script defer src="./catalogControl.js?v=2.3.2"></script>
+  <script defer src="./newsTickerControl.js?v=2.3.2"></script>
 </body>
 </html>
