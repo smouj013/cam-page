@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es" data-theme="dark" data-ui="neo-atlas">
+<html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
@@ -11,7 +11,196 @@
   <title>Random Live Cams — Control</title>
 
   <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.2.1";</script>
+  <script>window.APP_VERSION = "2.3.0";</script>
+
+  <!-- ✅ Newsroom Skin (solo control.html) -->
+  <style>
+    :root{
+      --news-bg0:#05060b;
+      --news-bg1:#070b14;
+      --news-bg2:#0a1528;
+
+      --news-panel: rgba(10,14,22,.72);
+      --news-panel2: rgba(10,14,22,.86);
+
+      --news-stroke: rgba(255,255,255,.10);
+      --news-stroke2: rgba(255,255,255,.16);
+
+      --news-text: rgba(255,255,255,.92);
+      --news-muted: rgba(255,255,255,.64);
+
+      --news-accent: #ff3b3b;   /* breaking red */
+      --news-accent2:#37d6ff;   /* cyan */
+      --news-ok:#19e28a;
+      --news-bad:#ff5a5a;
+
+      --news-glow: 0 18px 60px rgba(0,0,0,.55);
+      --news-radius: 16px;
+    }
+
+    body.mode-control{
+      background:
+        radial-gradient(1200px 900px at 20% 0%, rgba(55,214,255,.14), transparent 55%),
+        radial-gradient(900px 700px at 85% 15%, rgba(255,59,59,.10), transparent 55%),
+        linear-gradient(180deg, var(--news-bg0), var(--news-bg1) 35%, var(--news-bg2));
+      color: var(--news-text);
+      overflow-x: hidden;
+    }
+
+    /* Fondo TV: grid + scanlines suaves */
+    body.mode-control::before{
+      content:"";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      opacity: .75;
+      background:
+        radial-gradient(900px 700px at 50% 40%, rgba(0,0,0,.20), rgba(0,0,0,.72)),
+        repeating-linear-gradient(0deg,
+          rgba(255,255,255,.05) 0 1px,
+          rgba(255,255,255,0) 1px 3px
+        ),
+        linear-gradient(90deg,
+          rgba(55,214,255,.08), transparent 35%,
+          rgba(255,59,59,.07)
+        );
+      mix-blend-mode: screen;
+    }
+
+    body.mode-control::after{
+      content:"";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      opacity: .20;
+      background:
+        repeating-linear-gradient(90deg,
+          rgba(255,255,255,.05) 0 1px,
+          rgba(255,255,255,0) 1px 18px
+        );
+      filter: blur(.2px);
+      transform: translateZ(0);
+      animation: rlcGridDrift 12s linear infinite;
+    }
+
+    @keyframes rlcGridDrift{
+      from { transform: translate3d(0,0,0); }
+      to   { transform: translate3d(-18px,0,0); }
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      body.mode-control::after{ animation: none; }
+    }
+
+    /* Eleva el panel por encima del fondo */
+    .controlWrap{ position: relative; z-index: 1; }
+
+    /* Header estilo noticiero */
+    .controlHeader{
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background:
+        linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
+      border: 1px solid var(--news-stroke);
+      box-shadow: var(--news-glow);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: var(--news-radius);
+      overflow: hidden;
+    }
+
+    .controlHeader::before{
+      content:"LIVE • CONTROL ROOM";
+      position:absolute;
+      top: 10px;
+      right: 12px;
+      font: 950 11px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      letter-spacing: .14em;
+      color: rgba(255,255,255,.92);
+      background: rgba(255,59,59,.18);
+      border: 1px solid rgba(255,59,59,.35);
+      padding: 6px 10px;
+      border-radius: 999px;
+    }
+
+    .controlTitle .kicker{
+      color: rgba(255,255,255,.75);
+      letter-spacing: .26em;
+    }
+    .controlTitle .name{
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    /* Cards más “broadcast” */
+    .card{
+      background: var(--news-panel);
+      border: 1px solid var(--news-stroke);
+      border-radius: var(--news-radius);
+      box-shadow: var(--news-glow);
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before{
+      content:"";
+      position:absolute;
+      left:0; right:0; top:0;
+      height: 3px;
+      background: linear-gradient(90deg, rgba(255,59,59,.85), rgba(55,214,255,.85));
+      opacity: .80;
+    }
+    .cardTitle{
+      font-weight: 950;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.86);
+    }
+
+    /* Pills más claras */
+    .pill{
+      border: 1px solid var(--news-stroke2) !important;
+      background: rgba(0,0,0,.28) !important;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .pill--ok{
+      border-color: rgba(25,226,138,.35) !important;
+      box-shadow: 0 0 0 1px rgba(25,226,138,.12) inset;
+    }
+    .pill--bad{
+      border-color: rgba(255,90,90,.40) !important;
+      box-shadow: 0 0 0 1px rgba(255,90,90,.12) inset;
+    }
+
+    /* Botones con look “news tech” */
+    .btn{
+      border-radius: 14px !important;
+      border: 1px solid rgba(255,255,255,.14) !important;
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06)) !important;
+      box-shadow: 0 10px 30px rgba(0,0,0,.30);
+    }
+    .btn.ghost{
+      background: rgba(0,0,0,.18) !important;
+      border-color: rgba(255,255,255,.12) !important;
+    }
+    .btn:hover{
+      transform: translateY(-1px);
+      border-color: rgba(55,214,255,.25) !important;
+      box-shadow: 0 14px 36px rgba(0,0,0,.38), 0 0 0 1px rgba(55,214,255,.08) inset;
+    }
+
+    /* Inputs */
+    .input, .select{
+      border-radius: 14px !important;
+      border: 1px solid rgba(255,255,255,.14) !important;
+      background: rgba(0,0,0,.18) !important;
+      color: rgba(255,255,255,.92) !important;
+    }
+    .hint{ color: var(--news-muted); }
+  </style>
 </head>
 
 <body class="mode-control">
@@ -140,6 +329,57 @@
           </label>
         </div>
 
+        <!-- ✅ Nuevos controles (opcionales) compatibles con catalogControl.js v1.2.0 -->
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogMode">
+            <span>Modo</span>
+            <select id="ctlCatalogMode" class="select">
+              <option value="follow">Follow (1 sigue)</option>
+              <option value="sync">Sync (rotan 4)</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogFollowSlot">
+            <span>Follow slot</span>
+            <select id="ctlCatalogFollowSlot" class="select">
+              <option value="0">Slot 1</option>
+              <option value="1">Slot 2</option>
+              <option value="2">Slot 3</option>
+              <option value="3">Slot 4</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogClickCycle">
+            <span>Click cycle</span>
+            <select id="ctlCatalogClickCycle" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogYtCookies">
+            <span>YT cookies</span>
+            <select id="ctlCatalogYtCookies" class="select">
+              <option value="on">ON (sesión)</option>
+              <option value="off">OFF (nocookie)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogWxTiles">
+            <span>Weather tiles</span>
+            <select id="ctlCatalogWxTiles" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogWxRefreshSec">
+            <span>WX refresh (s)</span>
+            <input id="ctlCatalogWxRefreshSec" class="input" type="number" min="10" max="180" step="1" value="30" inputmode="numeric" />
+          </label>
+        </div>
+
         <label class="row" for="ctlCatalogMuted">
           <span>Mutear vídeos</span>
           <select id="ctlCatalogMuted" class="select">
@@ -217,6 +457,11 @@
           <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
         </div>
 
+        <!-- ✅ Botón extra (lo usaba tu JS anterior; ahora sí existe) -->
+        <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">
+          Copiar URL Stream (con ticker)
+        </button>
+
         <div class="hint">
           ✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>.
         </div>
@@ -244,7 +489,7 @@
 
         <label class="row" for="ctlTitleBroadcasterId">
           <span>Broadcaster ID</span>
-          <input id="ctlTitleBroadcasterId" class="input" type="text" placeholder="ID numérico del canal" inputmode="numeric" autocomplete="off" />
+          <input id="ctlTitleBroadcasterId" class="input" type="text" placeholder="ID numérico del canal (opcional)" inputmode="numeric" autocomplete="off" />
         </label>
 
         <label class="row" for="ctlTitleToken">
@@ -258,15 +503,24 @@
                  value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
         </label>
 
+        <!-- ✅ Nuevo: cooldown -->
+        <label class="row" for="ctlTitleCooldown">
+          <span>Cooldown (s)</span>
+          <input id="ctlTitleCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
+        </label>
+
         <div class="row2">
           <button id="ctlTitleApply" class="btn full" type="button">Aplicar</button>
           <button id="ctlTitleTest" class="btn ghost full" type="button">Test ahora</button>
         </div>
 
-        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">Reset auto-título</button>
+        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">
+          Reset auto-título
+        </button>
 
         <div class="hint">
-          Necesita token de usuario con scope <b>channel:manage:broadcast</b> y el broadcaster_id debe coincidir.
+          Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b> (pone “ — ” solo si hay place).<br/>
+          Necesita token de usuario con scope <b>channel:manage:broadcast</b>.
         </div>
       </div>
 

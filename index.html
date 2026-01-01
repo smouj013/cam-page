@@ -1,3 +1,12 @@
+<!-- index.html — Random Live Cams (PLAYER) v2.2.1+ (NEWSROOM/BROADCAST)
+  ✅ Compatible con:
+    - styles.css (Neo-Atlas)
+    - cams.js, music.js
+    - weatherClock.js, newsTicker.js, catalogView.js, app.js
+  ✅ Countdown bootstrap:
+    - Compatible con cfg desde control.js: { enabled, label, targetMs }
+    - Compatible con legacy: { targetIso } y URL params antiguos/nuevos
+-->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas">
 <head>
@@ -17,7 +26,7 @@
 
   <script>window.APP_VERSION = "2.2.1";</script>
 
-  <!-- ✅ Countdown styles mínimos (WX ya lo hace styles.css) -->
+  <!-- ✅ Countdown styles mínimos (el resto ya va en styles.css) -->
   <style>
     #rlcCountdown{
       position:absolute;
@@ -244,7 +253,7 @@
       "use strict";
 
       const g = (typeof globalThis !== "undefined") ? globalThis : window;
-      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V101";
+      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V110";
       try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
       const BUS_BASE = "rlc_bus_v1";
@@ -252,16 +261,27 @@
 
       const qs = (s, r=document) => r.querySelector(s);
       const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
-      const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 
       function parseParams() {
         const u = new URL(location.href);
+
+        // ✅ acepta params antiguos y nuevos
+        const countdown = safeStr(u.searchParams.get("countdown") || "");
+        const key = safeStr(u.searchParams.get("key") || "");
+
+        const toA = safeStr(u.searchParams.get("countdownTo") || "");
+        const toB = safeStr(u.searchParams.get("countTo") || "");
+        const labelA = safeStr(u.searchParams.get("countdownLabel") || "");
+        const labelB = safeStr(u.searchParams.get("countLabel") || "");
+        const posA = safeStr(u.searchParams.get("countdownPos") || "");
+        const posB = safeStr(u.searchParams.get("countPos") || "");
+
         return {
-          key: safeStr(u.searchParams.get("key") || ""),
-          countdown: safeStr(u.searchParams.get("countdown") || ""),
-          countTo: safeStr(u.searchParams.get("countTo") || ""),
-          countLabel: safeStr(u.searchParams.get("countLabel") || ""),
-          countPos: safeStr(u.searchParams.get("countPos") || "")
+          key,
+          countdown,
+          countdownTo: toA || toB,
+          countdownLabel: labelA || labelB,
+          countdownPos: posA || posB
         };
       }
 
@@ -286,7 +306,8 @@
       const DEFAULTS = {
         enabled: false,
         label: "FIN DE AÑO",
-        targetIso: "",
+        targetMs: 0,          // ✅ forma nueva (control.js)
+        targetIso: "",        // ✅ legacy
         position: "tr",
         hideHudWhenCatalog: true
       };
@@ -303,21 +324,54 @@
       function normalizeCfg(inCfg) {
         const c = Object.assign({}, DEFAULTS, inCfg || {});
         c.enabled = (c.enabled === true);
-        c.label = safeStr(c.label || DEFAULTS.label).slice(0, 48);
-        c.targetIso = safeStr(c.targetIso || "");
-        c.position = (c.position === "tl" || c.position === "tr" || c.position === "bl" || c.position === "br") ? c.position : "tr";
+
+        c.label = safeStr(c.label || DEFAULTS.label).slice(0, 60) || DEFAULTS.label;
+
+        // position
+        c.position = (c.position === "tl" || c.position === "tr" || c.position === "bl" || c.position === "br")
+          ? c.position : "tr";
+
         c.hideHudWhenCatalog = (c.hideHudWhenCatalog !== false);
+
+        // targetMs (prefer)
+        const ms = (typeof c.targetMs === "number") ? c.targetMs : parseInt(String(c.targetMs || "0"), 10);
+        c.targetMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+
+        // legacy iso
+        c.targetIso = safeStr(c.targetIso || "");
+
+        // si viene URL como epoch
+        if (!c.targetMs && safeStr(c.targetIso).match(/^\d{10,13}$/)) {
+          const n = parseInt(c.targetIso, 10);
+          if (Number.isFinite(n)) c.targetMs = (String(n).length === 10) ? (n * 1000) : n;
+          c.targetIso = "";
+        }
+
         return c;
       }
 
       function cfgFromUrlParams() {
         const on = (P.countdown === "1" || P.countdown === "true");
-        if (!on && !P.countTo && !P.countLabel) return null;
+        if (!on && !P.countdownTo && !P.countdownLabel) return null;
+
+        let targetMs = 0;
+        const rawTo = safeStr(P.countdownTo || "");
+        if (rawTo) {
+          if (/^\d{10,13}$/.test(rawTo)) {
+            const n = parseInt(rawTo, 10);
+            if (Number.isFinite(n)) targetMs = (String(n).length === 10) ? (n * 1000) : n;
+          } else {
+            const d = new Date(rawTo);
+            const ms = d.getTime();
+            if (Number.isFinite(ms) && ms > 0) targetMs = ms;
+          }
+        }
+
         return normalizeCfg({
-          enabled: on || !!P.countTo,
-          label: P.countLabel || DEFAULTS.label,
-          targetIso: P.countTo || "",
-          position: P.countPos || "tr"
+          enabled: on || !!targetMs,
+          label: P.countdownLabel || DEFAULTS.label,
+          targetMs,
+          position: P.countdownPos || "tr"
         });
       }
 
@@ -345,31 +399,34 @@
         root.classList.toggle("hidden", !on);
       }
 
-      function parseTarget(iso) {
-        const s = safeStr(iso);
-        if (!s) return null;
-        const d = new Date(s);
-        if (!Number.isFinite(d.getTime())) return null;
-        return d;
+      function nextNewYearLocalMs() {
+        try {
+          const now = new Date();
+          const y = now.getFullYear() + 1;
+          return new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+        } catch (_) { return 0; }
       }
 
-      function nextNewYearLocal() {
-        const now = new Date();
-        const y = now.getFullYear();
-        return new Date(y + 1, 0, 1, 0, 0, 0, 0);
-      }
-
-      let targetDate = null;
+      let targetMs = 0;
 
       function applyCfg(cfg) {
         CFG = normalizeCfg(cfg);
+
         if (elLbl) elLbl.textContent = CFG.label || DEFAULTS.label;
         setPos(CFG.position || "tr");
 
-        targetDate = parseTarget(CFG.targetIso);
-        if (!targetDate && CFG.enabled) targetDate = nextNewYearLocal();
+        // target: prefer targetMs, fallback targetIso, fallback next new year if enabled
+        targetMs = CFG.targetMs || 0;
 
-        show(!!(CFG.enabled && targetDate));
+        if (!targetMs && CFG.targetIso) {
+          const d = new Date(CFG.targetIso);
+          const ms = d.getTime();
+          if (Number.isFinite(ms) && ms > 0) targetMs = ms;
+        }
+
+        if (!targetMs && CFG.enabled) targetMs = nextNewYearLocalMs();
+
+        show(!!(CFG.enabled && targetMs > 0));
       }
 
       function fmtRemain(ms) {
@@ -397,9 +454,9 @@
         } catch (_) {}
 
         if (!root || root.classList.contains("hidden")) return;
-        if (!targetDate) return;
+        if (!targetMs) return;
 
-        const ms = targetDate.getTime() - Date.now();
+        const ms = targetMs - Date.now();
 
         if (ms <= 0) {
           if (elTime) elTime.textContent = "🎉 00:00:00";
@@ -412,9 +469,19 @@
 
       function onBusMessage(msg, isMain) {
         if (!msg || typeof msg !== "object") return;
+
+        // ✅ Mensaje desde control.js: { type:"COUNTDOWN_CFG", cfg:{enabled,label,targetMs} }
         if (msg.type === "COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg === "object") {
           if (!keyOk(msg, isMain)) return;
           applyCfg(msg.cfg);
+          return;
+        }
+
+        // ✅ Si en algún momento lo mandas como cmd por BC
+        if (msg.type === "cmd" && msg.cmd === "COUNTDOWN_SET" && msg.payload && typeof msg.payload === "object") {
+          if (!keyOk(msg, isMain)) return;
+          applyCfg(msg.payload);
+          return;
         }
       }
 

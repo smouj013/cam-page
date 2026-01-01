@@ -1,8 +1,11 @@
-/* weatherClock.js — RLC Weather+LocalTime v1.0.4
+/* weatherClock.js — RLC Weather+LocalTime v1.0.5
    ✅ NO KEY (Open-Meteo)
-   ✅ NO FLICKER
+   ✅ NO FLICKER (oculta hasta tener datos válidos)
    ✅ Se auto-desactiva cuando catálogo 2x2 está ON (solo WX por tile)
    ✅ window.RLCWx.getSummaryForCam() para catalogView.js
+   ✅ Si timezone/hora/temp inválidos -> NO muestra contenedor (HUD) y devuelve null (tiles)
+   ✅ NO fallback a hora local (evita horas incorrectas)
+   ✅ Retry con backoff si falla API/geocode
 */
 
 (() => {
@@ -10,7 +13,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_WX_LOADED_V104";
+  const LOAD_GUARD = "__RLC_WX_LOADED_V105";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -111,7 +114,7 @@
     if (!chip) {
       chip = document.createElement("div");
       chip.id = "rlcHudWx";
-      chip.className = "wxOff";
+      chip.className = "wxOff"; // ✅ empieza oculto (sin placeholders)
       chip.innerHTML = `
         <span id="rlcHudWxIcon" aria-hidden="true">🌡️</span>
         <span id="rlcHudWxTemp" class="wxTemp">—°C</span>
@@ -131,9 +134,16 @@
   }
 
   function setHudChipVisible(on) {
-    const chip = ensureHudChip();
+    // ✅ si vamos a mostrar, aseguramos chip; si vamos a ocultar y no existe, no lo creamos
+    if (on) {
+      const chip = ensureHudChip();
+      if (!chip) return;
+      chip.classList.toggle("wxOff", false);
+      return;
+    }
+    const chip = qs("#rlcHudWx");
     if (!chip) return;
-    chip.classList.toggle("wxOff", !on);
+    chip.classList.add("wxOff");
   }
 
   function setHudChip(icon, tempText, timeText) {
@@ -147,6 +157,32 @@
     if (HUD.icon) HUD.icon.textContent = icon || "🌡️";
     if (HUD.temp) HUD.temp.textContent = tempText || "—°C";
     if (HUD.time) HUD.time.textContent = timeText || "--:--";
+  }
+
+  // ───────────────────────── Normalizers / validators
+  function normalizeTimeText(raw) {
+    const s0 = safeStr(raw);
+    if (!s0) return "";
+    const s = s0.replace(/[\u200E\u200F\u202A-\u202E]/g, ""); // Safari/RTL marks
+    const m = s.match(/(\d{1,2})\s*:\s*(\d{2})/);
+    if (!m) return "";
+    const hh = String(parseInt(m[1], 10)).padStart(2, "0");
+    const mm = String(parseInt(m[2], 10)).padStart(2, "0");
+    const h = parseInt(hh, 10), mi = parseInt(mm, 10);
+    if (!(h >= 0 && h <= 23 && mi >= 0 && mi <= 59)) return "";
+    return `${hh}:${mm}`;
+  }
+
+  function normalizeTempText(raw) {
+    const s = safeStr(raw);
+    if (!s) return "";
+    const m = s.match(/-?\d{1,3}/);
+    if (!m) return "";
+    const n = parseInt(m[0], 10);
+    if (!Number.isFinite(n)) return "";
+    // rango razonable para evitar basura (sensores/parse raros)
+    if (n < -90 || n > 70) return "";
+    return `${n}°C`;
   }
 
   // ───────────────────────── Open-Meteo helpers
@@ -244,8 +280,8 @@
 
   async function fetchCurrentWeather(lat, lon, tzWanted) {
     const cache = getWxCache();
-    const tz = safeStr(tzWanted || "auto");
-    const k = wxKey(lat, lon, tz);
+    const tzParam = safeStr(tzWanted || "auto");
+    const k = wxKey(lat, lon, tzParam);
 
     // cache 12 min
     const hit = cache[k];
@@ -257,7 +293,7 @@
       `&longitude=${encodeURIComponent(String(lon))}` +
       `&current=temperature_2m,weather_code,is_day` +
       `&temperature_unit=celsius` +
-      `&timezone=${encodeURIComponent(tz)}`;
+      `&timezone=${encodeURIComponent(tzParam)}`;
 
     const data = await fetchJson(url);
     const cur = data?.current;
@@ -267,11 +303,11 @@
       tempC: Number(cur.temperature_2m),
       code: Number(cur.weather_code),
       isDay: (cur.is_day === 1 || cur.is_day === true),
-      timezone: safeStr(data?.timezone || tzWanted || tz)
+      timezone: safeStr(data?.timezone) // ✅ NO "auto" fallback
     };
 
     if (!Number.isFinite(out.tempC)) return null;
-    if (!out.timezone) return null;
+    if (!out.timezone) return null; // ✅ si Open-Meteo no da tz, no mostramos nada
 
     cache[k] = { ts: Date.now(), data: out };
     setWxCache(cache);
@@ -280,6 +316,8 @@
   }
 
   function formatTimeInTZ(timezone) {
+    const tz = safeStr(timezone);
+    if (!tz) return "";
     try {
       const lang = (document.documentElement.getAttribute("lang") || "es").toLowerCase();
       const locale = lang.startsWith("es") ? "es-ES" : "en-GB";
@@ -287,12 +325,11 @@
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
-        timeZone: timezone
+        timeZone: tz
       });
-      return fmt.format(new Date());
+      return normalizeTimeText(fmt.format(new Date()));
     } catch (_) {
-      const d = new Date();
-      return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      return ""; // ✅ NO fallback a hora local
     }
   }
 
@@ -317,19 +354,23 @@
 
   // ───────────────────────── Public module for catalog tiles
   async function getSummaryForCam(cam) {
-    const place = extractPlace(cam);
-    if (!place) return null;
-
     const coords = extractCoords(cam);
+    const place = extractPlace(cam);
+
+    // ✅ si tengo coords, no necesito place
+    if (!coords && !place) return null;
 
     if (coords) {
       const wx = await fetchCurrentWeather(coords.lat, coords.lon, coords.timezone || "auto");
       if (!wx) return null;
 
       const icon = iconFromCode(wx.code, wx.isDay);
-      const temp = `${Math.round(wx.tempC)}°C`;
-      const tz = wx.timezone;
+      const tz = safeStr(wx.timezone);
+      const temp = normalizeTempText(`${Math.round(wx.tempC)}°C`);
       const time = formatTimeInTZ(tz);
+
+      // ✅ si algo no es válido, no devolvemos nada
+      if (!tz || !temp || !time) return null;
 
       return { icon, temp, time, timezone: tz };
     }
@@ -341,16 +382,18 @@
     if (!wx) return null;
 
     const icon = iconFromCode(wx.code, wx.isDay);
-    const temp = `${Math.round(wx.tempC)}°C`;
-    const tz = wx.timezone || geo.timezone;
+    const tz = safeStr(wx.timezone || geo.timezone);
+    const temp = normalizeTempText(`${Math.round(wx.tempC)}°C`);
     const time = formatTimeInTZ(tz);
+
+    if (!tz || !temp || !time) return null;
 
     return { icon, temp, time, timezone: tz, approx: true };
   }
 
   // ───────────────────────── HUD integration (single mode only)
   let activeTimezone = "";
-  let activeTempText = "—°C";
+  let activeTempText = "";
   let activeIcon = "🌡️";
   let hasData = false;
 
@@ -360,30 +403,73 @@
   let lastReqToken = 0;
   let clockTimer = null;
 
+  // ✅ retry/backoff
+  let retryTimer = null;
+  let retryMs = 0;
+
   function stopClock() {
     if (clockTimer) clearInterval(clockTimer);
     clockTimer = null;
   }
+
+  function clearRetry() {
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  function scheduleRetry(camId) {
+    const id = String(camId || "");
+    if (!id) return;
+    if (isCatalogOn()) return;
+    if (retryTimer) return;
+
+    retryMs = retryMs ? Math.min(Math.round(retryMs * 1.7), 120000) : 15000;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      if (isCatalogOn()) return;
+
+      const st = readStateFromLS() || lastState;
+      const cam = st?.cam || null;
+      if (!cam) return;
+      if (String(cam?.id || "") !== id) return;
+
+      runUpdate(cam);
+    }, retryMs);
+  }
+
   function startClock() {
     stopClock();
     if (!activeTimezone) return;
+
     clockTimer = setInterval(() => {
       if (!activeTimezone) return;
-      setHudChip(activeIcon, activeTempText, formatTimeInTZ(activeTimezone));
+
+      const t = formatTimeInTZ(activeTimezone);
+      if (!t) {
+        // ✅ si deja de ser válida, ocultar del todo
+        activeTimezone = "";
+        activeTempText = "";
+        hasData = false;
+        stopClock();
+        setHudChipVisible(false);
+        scheduleRetry(lastCamId);
+        return;
+      }
+
+      setHudChip(activeIcon, activeTempText, t);
     }, 1000);
   }
 
   function hardDisableForCatalog() {
     stopClock();
     inFlight = false;
+    clearRetry();
+    retryMs = 0;
+
     if (pendingTimer) clearTimeout(pendingTimer);
     pendingTimer = null;
 
-    // si existe chip, lo apagamos
-    try {
-      const chip = qs("#rlcHudWx");
-      if (chip) chip.classList.add("wxOff");
-    } catch (_) {}
+    setHudChipVisible(false);
   }
 
   async function runUpdate(cam) {
@@ -391,54 +477,102 @@
     if (isCatalogOn()) return;
 
     const camId = String(cam?.id || "");
-    if (!camId) return;
-
-    if (inFlight && camId === lastCamId) return;
-
-    // misma cam y ya hay data -> solo refresca hora
-    if (camId === lastCamId && hasData && activeTimezone) {
-      setHudChipVisible(true);
-      setHudChip(activeIcon, activeTempText, formatTimeInTZ(activeTimezone));
+    if (!camId) {
+      lastCamId = "";
+      activeTimezone = "";
+      activeTempText = "";
+      hasData = false;
+      stopClock();
+      clearRetry();
+      retryMs = 0;
+      setHudChipVisible(false);
       return;
     }
 
+    // si está en vuelo para la misma cam, no spamear
+    if (inFlight && camId === lastCamId) return;
+
+    // misma cam y ya hay data -> solo refresca hora (valida)
+    if (camId === lastCamId && hasData && activeTimezone) {
+      const t = formatTimeInTZ(activeTimezone);
+      if (!t) {
+        activeTimezone = "";
+        activeTempText = "";
+        hasData = false;
+        stopClock();
+        setHudChipVisible(false);
+        scheduleRetry(camId);
+        return;
+      }
+      setHudChip(activeIcon, activeTempText, t);
+      setHudChipVisible(true);
+      if (!clockTimer) startClock();
+      return;
+    }
+
+    // cam nueva -> ocultar inmediatamente (evita ver datos antiguos)
+    lastCamId = camId;
+    stopClock();
+    clearRetry();
+    setHudChipVisible(false);
+    hasData = false;
+    activeTimezone = "";
+    activeTempText = "";
+
     const token = ++lastReqToken;
-
-    setHudChipVisible(true);
-    if (!hasData) setHudChip("🌡️", "…°C", "--:--");
-
     inFlight = true;
+
     try {
       const sum = await getSummaryForCam(cam);
       if (token !== lastReqToken) return;
-      if (isCatalogOn()) return; // si se activó durante el fetch
+      if (isCatalogOn()) return;
 
       if (!sum) {
-        activeTimezone = "";
+        // ✅ no placeholders: oculto y reintento
         hasData = false;
-        stopClock();
-        setHudChip("🌡️", "—°C", "--:--");
+        activeTimezone = "";
+        activeTempText = "";
+        setHudChipVisible(false);
+        scheduleRetry(camId);
         return;
       }
 
-      lastCamId = camId;
-      activeTimezone = sum.timezone || "";
-      activeIcon = sum.icon || "🌡️";
-      activeTempText = sum.temp || "—°C";
-      hasData = !!activeTimezone;
+      const tz = safeStr(sum.timezone);
+      const temp = normalizeTempText(sum.temp);
+      const time = normalizeTimeText(sum.time);
 
-      setHudChip(activeIcon, activeTempText, sum.time || "--:--");
+      if (!tz || !temp || !time) {
+        hasData = false;
+        activeTimezone = "";
+        activeTempText = "";
+        setHudChipVisible(false);
+        scheduleRetry(camId);
+        return;
+      }
+
+      activeTimezone = tz;
+      activeIcon = safeStr(sum.icon) || "🌡️";
+      activeTempText = temp;
+      hasData = true;
+
+      retryMs = 0; // ✅ reset backoff
+      setHudChip(activeIcon, activeTempText, time);
+      setHudChipVisible(true);
       startClock();
+
       log("HUD WX OK:", { camId, sum });
     } catch (e) {
       if (token !== lastReqToken) return;
       if (isCatalogOn()) return;
+
       log("HUD WX error:", e?.message || e);
 
-      activeTimezone = "";
       hasData = false;
+      activeTimezone = "";
+      activeTempText = "";
       stopClock();
-      setHudChip("🌡️", "—°C", "--:--");
+      setHudChipVisible(false);
+      scheduleRetry(camId);
     } finally {
       inFlight = false;
     }

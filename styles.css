@@ -1,20 +1,15 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.3.1 (BROADCAST + HUD TITLE TICKER)
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.4.0 (NEWSROOM/BROADCAST)
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
-   ✅ Mantiene: --ui-top-offset robusto + line-clamp estándar + FIX WX CHIP
-   🚀 Mejora:
-   - HUD/Countdown/Progress estilo “noticiero” (como NewsTicker)
-   - Animaciones suaves (pop-in, shimmer, pulse, sheen) + reduced-motion friendly
-   - ✅ HUD TITLE TICKER (marquee): se activa si #hudTitle tiene:
+   ✅ Mantiene: --ui-top-offset robusto + line-clamp + FIX WX CHIP
+   ✅ HUD TITLE TICKER (marquee): si #hudTitle tiene:
        data-title="texto..." y data-marquee="1"
-     (si no lo tienes, se queda en clamp normal y perfecto)
-
-   TIP: si quieres que sea auto, en app.js al setear hudTitle:
-     hudTitle.dataset.title = hudTitle.textContent;
-     hudTitle.dataset.marquee = (hudTitle.scrollWidth > hudTitle.clientWidth + 4) ? "1" : "0";
+   🚀 Mejora:
+   - “Broadcast vibe”: glass + vignette + grain + scanlines suaves
+   - Fondo del sistema (player + control) más noticiero/estudio
+   - Fallbacks (Opera/Safari) y prefers-reduced-motion
 */
 
-/* ───────────────────────── Theme Tokens ───────────────────────── */
 :root{
   /* Base */
   --bg: #04060b;
@@ -44,8 +39,15 @@
   /* “Broadcast / News” */
   --news-red: #ff375f;
   --news-red2: rgba(255,55,95,.22);
+  --news-blue: rgba(77,215,255,.22);
+  --news-mint: rgba(37,243,166,.20);
+
   --news-bg-top: rgba(10,14,20,.88);
   --news-bg-bot: rgba(8,10,14,.78);
+
+  /* Glass */
+  --glass: rgba(255,255,255,.055);
+  --glass2: rgba(255,255,255,.075);
 
   /* Radius & shadow */
   --r: 16px;
@@ -81,11 +83,14 @@
   --hudMarqueeGap: 44px;
   --hudMarqueeDur: 12s;
 
+  /* Broadcast overlays */
+  --grain-opacity: .10;
+  --scan-opacity: .07;
+  --vignette-opacity: .42;
+
   /* ───────────────────────── Ticker stacking (ROBUST) ───────────────────────── */
   --ticker-h: var(--rlcTickerH, 34px);
   --ticker-gap: var(--rlcTickerGap, 12px);
-
-  /* ✅ FIX: si --ticker-h = 0px, el gap también queda en 0 (sin “espacio fantasma”) */
   --ui-top-offset: calc(var(--ticker-h) + min(var(--ticker-h), var(--ticker-gap)));
 }
 
@@ -118,6 +123,12 @@
 @keyframes rlcHudMarquee{
   from{ transform: translate3d(0,0,0); }
   to{ transform: translate3d(calc(-100% - var(--hudMarqueeGap)),0,0); }
+}
+@keyframes rlcStudioSweep{
+  0%{ transform: translate3d(-12%,0,0); opacity:.0; }
+  18%{ opacity:.22; }
+  50%{ opacity:.10; }
+  100%{ transform: translate3d(12%,0,0); opacity:0; }
 }
 
 /* ───────────────────────── Base ───────────────────────── */
@@ -211,11 +222,23 @@ input[type="range"]{ accent-color: var(--accent); }
 /* ───────────────────────── Player Layout ───────────────────────── */
 .app, .stage{ width:100%; height:100%; }
 
+.layer{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+.layer-media{ z-index: 1; }
+.layer-ui{ z-index: 3; pointer-events:none; }
+.layer-ui *{ pointer-events:none; }
+.layer-ui .hud a, .layer-ui .hud button{ pointer-events:auto; }
+
 .stage{
   position: fixed;
   inset: 0;
   overflow: hidden;
 
+  /* Fondo “estudio” */
   background:
     radial-gradient(1100px 650px at 50% 18%, rgba(77,215,255,.13), transparent 58%),
     radial-gradient(900px 720px at 78% 78%, rgba(37,243,166,.11), transparent 62%),
@@ -224,6 +247,48 @@ input[type="range"]{ accent-color: var(--accent); }
     repeating-linear-gradient(90deg, rgba(255,255,255,.028) 0, rgba(255,255,255,.028) 1px, transparent 1px, transparent 52px),
     repeating-linear-gradient(180deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 2px, transparent 2px, transparent 10px),
     linear-gradient(180deg, var(--bg), var(--bg2));
+}
+
+/* Vignette + noise + scanlines sobre TODO el escenario (muy sutil) */
+.stage::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  pointer-events:none;
+  z-index: 2;
+  background:
+    radial-gradient(1200px 800px at 50% 55%, rgba(0,0,0,0), rgba(0,0,0,var(--vignette-opacity))),
+    repeating-linear-gradient(0deg, rgba(255,255,255,var(--scan-opacity)) 0, rgba(255,255,255,var(--scan-opacity)) 1px, transparent 1px, transparent 6px),
+    radial-gradient(800px 280px at 50% 0%, rgba(255,55,95,.09), transparent 70%),
+    radial-gradient(900px 300px at 70% 0%, rgba(77,215,255,.08), transparent 72%);
+  mix-blend-mode: overlay;
+  opacity: .55;
+}
+.stage::after{
+  content:"";
+  position:absolute;
+  inset:-10%;
+  pointer-events:none;
+  z-index: 2;
+  background:
+    linear-gradient(110deg, transparent 0%, rgba(77,215,255,.16) 40%, rgba(255,55,95,.12) 55%, transparent 75%);
+  filter: blur(18px);
+  opacity: .0;
+  animation: rlcStudioSweep 6.8s var(--ease-soft) infinite;
+}
+
+/* “Grain” sobre el video/iframe/img (broadcast vibe) */
+.layer-media::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  z-index: 2;
+  background:
+    radial-gradient(1200px 700px at 50% 50%, rgba(0,0,0,0), rgba(0,0,0,.22)),
+    repeating-linear-gradient(90deg, rgba(255,255,255,var(--grain-opacity)) 0, rgba(255,255,255,var(--grain-opacity)) 1px, transparent 1px, transparent 3px);
+  opacity: .14;
+  mix-blend-mode: overlay;
 }
 
 /* Media (video/iframe/img) */
@@ -241,6 +306,7 @@ input[type="range"]{ accent-color: var(--accent); }
 .fallback{
   position:absolute;
   inset:0;
+  z-index: 4;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -263,7 +329,7 @@ input[type="range"]{ accent-color: var(--accent); }
   animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
 }
 .fallbackTitle{
-  font-weight: 900;
+  font-weight: 950;
   margin: 0 0 6px;
   letter-spacing:.01em;
   font-size: 15px;
@@ -367,7 +433,7 @@ input[type="range"]{ accent-color: var(--accent); }
   display: -webkit-box;
   -webkit-box-orient: vertical;
 
-  /* ✅ Standard + WebKit */
+  /* Standard + WebKit (no rompe si no existe line-clamp) */
   line-clamp: 2;
   -webkit-line-clamp: 2;
 
@@ -388,18 +454,13 @@ input[type="range"]{ accent-color: var(--accent); }
   display: block;
   white-space: nowrap;
 
-  /* anulamos el clamp para que el marquee sea real */
   line-clamp: unset;
   -webkit-line-clamp: unset;
   -webkit-box-orient: initial;
 
-  /* escondemos el texto real, renderiza el pseudo con data-title */
   color: transparent;
-
-  /* clipping del marquee */
   overflow: hidden;
 
-  /* mantenemos el fade broadcast */
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
   mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
 }
@@ -509,7 +570,7 @@ input[type="range"]{ accent-color: var(--accent); }
   pointer-events:none;
 }
 
-/* Details: animables */
+/* Details */
 .hudDetails{
   padding: 10px 12px 12px;
   background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,0));
@@ -585,7 +646,6 @@ input[type="range"]{ accent-color: var(--accent); }
   font-variant-numeric: tabular-nums;
   min-width: 132px;
 
-  /* ✅ FIX: que nunca se aplaste/colapse en layouts estrechos */
   flex: 0 0 auto;
   max-width: 240px;
   overflow: hidden;
@@ -616,10 +676,7 @@ input[type="range"]{ accent-color: var(--accent); }
   text-align: right;
 }
 #rlcHudWx.wxOff{
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  animation: none !important;
+  display: none !important;
 }
 
 /* ───────────────────────── Vote Overlay ───────────────────────── */
@@ -793,6 +850,18 @@ input[type="range"]{ accent-color: var(--accent); }
   gap: 12px;
   margin-bottom: 14px;
   flex-wrap: wrap;
+
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  position: relative;
+}
+.controlHeader::after{
+  content:"";
+  position:absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(77,215,255,.40), rgba(37,243,166,.35), transparent);
+  opacity: .65;
 }
 
 .controlTitle .kicker{
@@ -910,6 +979,12 @@ input[type="range"]{ accent-color: var(--accent); }
   border: 0;
 }
 
+/* Fallback Opera/antiguos si aspect-ratio falla */
+@supports not (aspect-ratio: 16 / 9){
+  .previewWrap{ position: relative; height: 0; padding-top: 56.25%; }
+  .previewFrame{ position:absolute; inset:0; width:100%; height:100%; }
+}
+
 .controlFooter{
   margin-top: 14px;
   color: rgba(255,255,255,.56);
@@ -939,7 +1014,7 @@ input[type="range"]{ accent-color: var(--accent); }
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle, .card, .pill{ transition: none !important; }
-  .badge::before, #rlcHudWx, .progressBar::after{ animation: none !important; }
+  .badge::before, #rlcHudWx, .progressBar::after, .stage::after{ animation: none !important; }
   .fallbackCard, .hud, .vote, #rlcChatList > *{ animation: none !important; }
 }
 
@@ -956,6 +1031,7 @@ input[type="range"]{ accent-color: var(--accent); }
     background: rgba(12,16,24,.88) !important;
     border-color: rgba(255,255,255,.10) !important;
   }
+  .stage::before, .layer-media::after{ mix-blend-mode: normal; opacity: .18; }
 }
 
 /* ───────────────────────── Optional: better rendering on OLED ───────────────────────── */

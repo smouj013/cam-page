@@ -1,8 +1,15 @@
-/* catalogView.js — RLC Catalog View v1.0.2 (CCTV 2x2 + WX chip + HIDE SINGLE HUD)
-   ✅ Modo catálogo 4 cams (2x2)
-   ✅ Oculta HUD single cuando catálogo está ON
-   ✅ Señaliza modo catálogo: dataset + CustomEvent ("rlc_catalog_mode")
-   ✅ Si existe window.RLCWx (weatherClock.js), muestra temp+hora en cada tile
+/* catalogView.js — RLC Catalog View v1.1.3
+   ✅ Catálogo 2x2 (4 cams)
+   ✅ Modo "follow": SOLO 1 tile sigue al state (los demás no cambian)
+   ✅ Modo "sync": rotan las 4 a la vez (comportamiento antiguo)
+   ✅ Slots "sticky" guardados en localStorage (por KEY)
+   ✅ Click-to-cycle: cambia SOLO ese tile a la siguiente cam (opcional) (SHIFT => anterior)
+   ✅ ytCookies: true => youtube.com/embed (permite login/Premium si existe)
+   ✅ Oculta HUD single cuando catálogo ON + avisa a otros módulos ("rlc_catalog_mode")
+   ✅ Si existe window.RLCWx.getSummaryForCam(), muestra temp+hora por tile:
+      - NO placeholders ("…")
+      - Solo se ve si hay datos válidos (temp+time). Si falla => se oculta
+      - Refresh suave cada X segundos, sin flicker
 */
 
 (() => {
@@ -10,12 +17,14 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V102";
+  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V113";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
+  // ───────────────────────── Keys / Bus
   const BUS_BASE = "rlc_bus_v1";
   const STATE_KEY_BASE = "rlc_state_v1";
   const CFG_BASE = "rlc_catalog_cfg_v1";
+  const SLOTS_BASE = "rlc_catalog_slots_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -23,7 +32,7 @@
 
   function parseParams() {
     const u = new URL(location.href);
-    return { key: (u.searchParams.get("key") || "").trim() };
+    return { key: safeStr(u.searchParams.get("key") || "") };
   }
   const KEY = String(parseParams().key || "").trim();
 
@@ -36,15 +45,27 @@
   const CFG_KEY = KEY ? `${CFG_BASE}:${KEY}` : CFG_BASE;
   const CFG_KEY_LEGACY = CFG_BASE;
 
+  const SLOTS_KEY = KEY ? `${SLOTS_BASE}:${KEY}` : SLOTS_BASE;
+
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
+  // ───────────────────────── Config
   const DEFAULTS = {
     enabled: false,
     layout: "quad",
     gapPx: 8,
     labels: true,
-    muted: true
+    muted: true,
+
+    mode: "follow",     // "follow" | "sync"
+    followSlot: 0,      // 0..3
+    ytCookies: true,    // true => youtube.com/embed (cookies)
+    clickCycle: true,   // click en tile => next cam
+
+    // Opcionales (si no vienen, se usan defaults y no rompen nada)
+    wxTiles: true,      // WX en cada tile (si existe RLCWx)
+    wxRefreshSec: 30    // refresh suave
   };
 
   function readJson(key) {
@@ -55,14 +76,29 @@
       return (obj && typeof obj === "object") ? obj : null;
     } catch (_) { return null; }
   }
+  function writeJson(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
+  }
 
   function normalizeCfg(inCfg) {
     const c = Object.assign({}, DEFAULTS, inCfg || {});
     c.enabled = (c.enabled === true);
     c.layout = "quad";
+
     c.gapPx = clamp(parseInt(c.gapPx, 10) || DEFAULTS.gapPx, 0, 24);
     c.labels = (c.labels !== false);
     c.muted = (c.muted !== false);
+
+    const mode = safeStr(c.mode).toLowerCase();
+    c.mode = (mode === "sync") ? "sync" : "follow";
+    c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, 3);
+
+    c.ytCookies = (c.ytCookies !== false);
+    c.clickCycle = (c.clickCycle !== false);
+
+    c.wxTiles = (c.wxTiles !== false);
+    c.wxRefreshSec = clamp((parseInt(c.wxRefreshSec, 10) || DEFAULTS.wxRefreshSec), 10, 180);
+
     return c;
   }
 
@@ -70,8 +106,8 @@
     return normalizeCfg(readJson(CFG_KEY) || readJson(CFG_KEY_LEGACY) || DEFAULTS);
   }
 
-  let lastState = null;
   let CFG = loadCfg();
+  let lastState = null;
 
   function keyOk(msg, isMainChannel) {
     if (!KEY) return true;
@@ -85,15 +121,18 @@
       const rawLegacy = rawMain ? null : localStorage.getItem(STATE_KEY_LEGACY);
       const raw = rawMain || rawLegacy;
       if (!raw) return null;
+
       const st = JSON.parse(raw);
       if (!st || st.type !== "state") return null;
+
       const isMain = !!rawMain;
       if (!keyOk(st, isMain)) return null;
+
       return st;
     } catch (_) { return null; }
   }
 
-  // ───────────────────────── UI
+  // ───────────────────────── UI (styles + root)
   function injectStylesOnce() {
     if (qs("#rlcCatalogStyle")) return;
 
@@ -174,6 +213,7 @@
   opacity: .92;
   font-weight: 950;
 }
+
 #rlcCatalog .slot.offline::after{
   content: "NO EMBED / OFFLINE";
   position:absolute;
@@ -211,7 +251,7 @@
             <div class="tag">
               <div class="chip small" data-chip="n">CAM ${i+1}</div>
               <div class="chip" data-chip="t">—</div>
-              <div class="chip wx" data-chip="wx" style="display:none">🌡️ —°C · --:--</div>
+              <div class="chip wx" data-chip="wx" style="display:none"></div>
             </div>
           </div>
         `).join("")}
@@ -232,9 +272,9 @@
     if (img) img.style.display = on ? "" : "none";
   }
 
-  // ✅ NUEVO: ocultar/mostrar HUD single (el panel “normal”)
+  // ✅ ocultar HUD single
   let _hudEl = null;
-  let _hudPrevDisplay = "";
+  let _hudPrevDisplay = null; // null => “no capturado aún”
   function findHudEl() {
     return qs(".hud") || qs("#hud") || qs("#rlcHud") || null;
   }
@@ -243,23 +283,19 @@
     if (!_hudEl) return;
 
     if (on) {
-      _hudEl.style.display = _hudPrevDisplay || "";
+      _hudEl.style.display = (_hudPrevDisplay == null) ? "" : _hudPrevDisplay;
     } else {
-      if (_hudPrevDisplay === "") _hudPrevDisplay = _hudEl.style.display || "";
+      if (_hudPrevDisplay == null) _hudPrevDisplay = _hudEl.style.display || "";
       _hudEl.style.display = "none";
     }
   }
 
-  // ✅ NUEVO: señal global para otros módulos (weatherClock)
   function signalCatalogMode(on) {
-    try {
-      document.documentElement.dataset.rlcCatalog = on ? "1" : "0";
-    } catch (_) {}
-    try {
-      g.dispatchEvent(new CustomEvent("rlc_catalog_mode", { detail: { on: !!on, ts: Date.now() } }));
-    } catch (_) {}
+    try { document.documentElement.dataset.rlcCatalog = on ? "1" : "0"; } catch (_) {}
+    try { g.dispatchEvent(new CustomEvent("rlc_catalog_mode", { detail: { on: !!on, ts: Date.now() } })); } catch (_) {}
   }
 
+  // ───────────────────────── Catalog data helpers
   function getCamList() {
     return Array.isArray(g.CAM_LIST) ? g.CAM_LIST : [];
   }
@@ -282,6 +318,7 @@
     return out;
   }
 
+  // ───────────────────────── Media kind + URL
   function detectKind(url) {
     const u = String(url || "").toLowerCase();
     if (!u) return "iframe";
@@ -292,7 +329,6 @@
   }
 
   function extractUrl(cam) {
-    // soporte para tu catálogo (youtubeId/url/originUrl)
     if (!cam) return "";
     if (cam.kind === "youtube" && cam.youtubeId) {
       return `https://www.youtube.com/watch?v=${encodeURIComponent(cam.youtubeId)}`;
@@ -311,30 +347,35 @@
 
   function ytEmbed(url) {
     const u = String(url || "");
-    if (/\/embed\//i.test(u)) {
-      const o = new URL(u, location.href);
-      o.searchParams.set("autoplay", "1");
-      o.searchParams.set("mute", "1");
-      o.searchParams.set("controls", "0");
-      o.searchParams.set("playsinline", "1");
-      o.searchParams.set("rel", "0");
-      return o.toString();
-    }
 
-    const m1 = u.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/i);
-    const m2 = u.match(/[?&]v=([A-Za-z0-9_-]{6,})/i);
-    const id = (m1 && m1[1]) || (m2 && m2[1]) || "";
+    let id = "";
+    try {
+      if (/\/embed\//i.test(u)) {
+        const m = u.match(/\/embed\/([A-Za-z0-9_-]{6,})/i);
+        id = (m && m[1]) || "";
+      } else {
+        const m1 = u.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/i);
+        const m2 = u.match(/[?&]v=([A-Za-z0-9_-]{6,})/i);
+        id = (m1 && m1[1]) || (m2 && m2[1]) || "";
+      }
+    } catch (_) {}
     if (!id) return u;
 
-    const o = new URL(`https://www.youtube-nocookie.com/embed/${id}`);
+    const base = CFG.ytCookies
+      ? `https://www.youtube.com/embed/${id}`
+      : `https://www.youtube-nocookie.com/embed/${id}`;
+
+    const o = new URL(base);
     o.searchParams.set("autoplay", "1");
     o.searchParams.set("mute", "1");
     o.searchParams.set("controls", "0");
     o.searchParams.set("playsinline", "1");
     o.searchParams.set("rel", "0");
+    o.searchParams.set("modestbranding", "1");
     return o.toString();
   }
 
+  // ───────────────────────── HLS
   function stopHls(slot) {
     try { slot._hls?.destroy?.(); } catch (_) {}
     slot._hls = null;
@@ -346,6 +387,7 @@
     if (slot.img) slot.img.style.display = (kind === "img") ? "block" : "none";
   }
 
+  // ───────────────────────── Labels
   function setLabel(slotEl, cam, n) {
     const labelsOn = !!CFG.labels;
     const tag = slotEl.querySelector(".tag");
@@ -361,49 +403,131 @@
     if (chipT) chipT.textContent = p ? `${t} — ${p}` : t;
   }
 
-  async function setWxChip(slotEl, cam) {
+  // ───────────────────────── WX (NO placeholders / sin flicker)
+  function hideWxChip(slotEl) {
+    const chip = slotEl.querySelector('[data-chip="wx"]');
+    if (!chip) return;
+    chip.style.display = "none";
+    chip.textContent = "";
+  }
+
+  function wxApi() {
+    const WX = g.RLCWx;
+    if (!WX || typeof WX.getSummaryForCam !== "function") return null;
+    return WX;
+  }
+
+  async function setWxChipInitial(slotObj, cam) {
+    const slotEl = slotObj.el;
     const chip = slotEl.querySelector('[data-chip="wx"]');
     if (!chip) return;
 
-    const WX = g.RLCWx;
-    if (!WX || typeof WX.getSummaryForCam !== "function") {
-      chip.style.display = "none";
+    // si labels off o wxTiles off => ocultar
+    if (!CFG.labels || !CFG.wxTiles) {
+      hideWxChip(slotEl);
+      slotObj._wxCamId = "";
       return;
     }
 
-    chip.style.display = "";
-    chip.textContent = "🌡️ …";
+    const WX = wxApi();
+    if (!WX) {
+      hideWxChip(slotEl);
+      slotObj._wxCamId = "";
+      return;
+    }
 
-    const token = String(Date.now()) + ":" + Math.random().toString(16).slice(2);
-    slotEl.dataset.wxTok = token;
+    const camId = String(cam?.id || "");
+    if (!camId) {
+      hideWxChip(slotEl);
+      slotObj._wxCamId = "";
+      return;
+    }
+
+    // ✅ cam nueva: oculto hasta tener datos válidos (NO placeholders)
+    hideWxChip(slotEl);
+    slotObj._wxCamId = camId;
+
+    const tok = String((parseInt(chip.dataset.wxTok || "0", 10) || 0) + 1);
+    chip.dataset.wxTok = tok;
+    chip.dataset.wxCamId = camId;
 
     try {
       const sum = await WX.getSummaryForCam(cam);
-      if (slotEl.dataset.wxTok !== token) return;
+      if (chip.dataset.wxTok !== tok) return;
+      if (chip.dataset.wxCamId !== camId) return;
 
-      if (!sum) {
-        chip.style.display = "none";
+      // ✅ solo visible con temp+time válidos
+      if (!sum || !sum.temp || !sum.time) {
+        hideWxChip(slotEl);
         return;
       }
 
+      chip.textContent = `${sum.icon || "🌡️"} ${sum.temp} · ${sum.time}`;
       chip.style.display = "";
-      chip.textContent = `${sum.icon || "🌡️"} ${sum.temp || "—°C"} · ${sum.time || "--:--"}`;
     } catch (_) {
-      if (slotEl.dataset.wxTok !== token) return;
-      chip.style.display = "none";
+      if (chip.dataset.wxTok !== tok) return;
+      hideWxChip(slotEl);
     }
   }
 
+  async function refreshWxChipSoft(slotObj) {
+    if (!CFG.enabled || !CFG.labels || !CFG.wxTiles) return;
+    if (document.visibilityState === "hidden") return;
+
+    const cam = slotObj._camRef || null;
+    const camId = String(cam?.id || "");
+    if (!camId || slotObj._wxCamId !== camId) return;
+
+    const slotEl = slotObj.el;
+    const chip = slotEl.querySelector('[data-chip="wx"]');
+    if (!chip) return;
+
+    const WX = wxApi();
+    if (!WX) {
+      hideWxChip(slotEl);
+      return;
+    }
+
+    // ✅ refresh sin flicker: NO ocultar antes de tiempo
+    const tok = String((parseInt(chip.dataset.wxTok || "0", 10) || 0) + 1);
+    chip.dataset.wxTok = tok;
+    chip.dataset.wxCamId = camId;
+
+    try {
+      const sum = await WX.getSummaryForCam(cam);
+      if (chip.dataset.wxTok !== tok) return;
+      if (chip.dataset.wxCamId !== camId) return;
+
+      if (!sum || !sum.temp || !sum.time) {
+        hideWxChip(slotEl);
+        return;
+      }
+
+      const text = `${sum.icon || "🌡️"} ${sum.temp} · ${sum.time}`;
+      if (chip.textContent !== text) chip.textContent = text;
+      chip.style.display = "";
+    } catch (_) {
+      if (chip.dataset.wxTok !== tok) return;
+      // si ya había un texto válido, no lo mates por un fallo puntual
+      if (!chip.textContent) hideWxChip(slotEl);
+    }
+  }
+
+  // ───────────────────────── Slot rendering
   function renderCamIntoSlot(slot, cam, n) {
     const slotEl = slot.el;
     slotEl.classList.remove("offline");
+
+    slot._camRef = cam || null;
+    slot._wxCamId = String(cam?.id || "");
 
     const urlRaw = extractUrl(cam);
     const kind = detectKind(urlRaw);
 
     setLabel(slotEl, cam, n);
-    setWxChip(slotEl, cam);
+    setWxChipInitial(slot, cam);
 
+    // reset medias
     if (slot.iframe) slot.iframe.src = "about:blank";
     if (slot.img) slot.img.src = "";
     if (slot.video) {
@@ -429,6 +553,7 @@
 
     if (kind === "hls") {
       showOnly(slot, "hls");
+
       const v = slot.video;
       if (!v) { slotEl.classList.add("offline"); return; }
 
@@ -466,44 +591,133 @@
 
   function buildSlots() {
     const root = ensureCatalogRoot();
-    const slots = [];
+    const out = [];
     for (let i = 0; i < 4; i++) {
       const el = root.querySelector(`.slot[data-slot="${i}"]`);
       if (!el) continue;
-      slots.push({
+      out.push({
         el,
         iframe: el.querySelector("iframe"),
         video: el.querySelector("video"),
         img: el.querySelector("img"),
-        _hls: null
+        _hls: null,
+
+        _camRef: null,
+        _wxCamId: ""
       });
     }
-    return slots;
+    return out;
   }
 
+  // ───────────────────────── Sticky slots
+  function loadSlotIds() {
+    const obj = readJson(SLOTS_KEY);
+    const arr = Array.isArray(obj?.ids) ? obj.ids : null;
+    if (!arr || arr.length !== 4) return null;
+    return arr.map(x => String(x || ""));
+  }
+
+  function saveSlotIds(ids) {
+    writeJson(SLOTS_KEY, { ts: Date.now(), ids: (ids || []).slice(0, 4) });
+  }
+
+  function ensureUnique(ids) {
+    const seen = new Set();
+    for (let i = 0; i < ids.length; i++) {
+      const id = String(ids[i] || "");
+      if (!id) continue;
+      if (seen.has(id)) ids[i] = "";
+      else seen.add(id);
+    }
+    return ids;
+  }
+
+  function initSlotsFromState(list) {
+    let idx = -1;
+    const camId = lastState?.cam?.id;
+
+    if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
+    if (idx < 0) idx = findIndexById(list, camId);
+
+    const picked = pick4(list, idx);
+    const ids = picked.map(c => String(c?.id || ""));
+    saveSlotIds(ids);
+    return ids;
+  }
+
+  function fillMissingSlots(list, ids) {
+    const used = new Set(ids.filter(Boolean));
+    let ptr = 0;
+
+    for (let i = 0; i < 4; i++) {
+      const id = String(ids[i] || "");
+      if (id && findIndexById(list, id) >= 0) continue;
+
+      let safety = 0;
+      while (safety++ < list.length) {
+        const cam = list[ptr % list.length];
+        ptr++;
+
+        const cid = String(cam?.id || "");
+        if (!cid) continue;
+        if (used.has(cid)) continue;
+
+        ids[i] = cid;
+        used.add(cid);
+        break;
+      }
+    }
+    return ids;
+  }
+
+  // ───────────────────────── Main (root + state)
   const root = ensureCatalogRoot();
   let slots = buildSlots();
-  let lastSig = "";
+
+  let lastCfgSig = "";
+  let lastRenderedIds = ["", "", "", ""];
 
   function applyCfgToUI() {
     root.style.setProperty("--rlcCatalogGap", `${CFG.gapPx}px`);
   }
 
+  // WX refresh loop
+  let wxTimer = null;
+  function stopWxRefresh() {
+    if (wxTimer) clearInterval(wxTimer);
+    wxTimer = null;
+  }
+  function startWxRefresh() {
+    stopWxRefresh();
+    if (!CFG.enabled || !CFG.labels || !CFG.wxTiles) return;
+
+    const ms = (CFG.wxRefreshSec | 0) * 1000;
+    wxTimer = setInterval(() => {
+      if (!CFG.enabled || !root.classList.contains("on")) return;
+      if (!CFG.labels || !CFG.wxTiles) return;
+      for (const s of slots) refreshWxChipSoft(s);
+    }, ms);
+  }
+
   function setCatalogEnabled(on) {
     root.classList.toggle("on", !!on);
 
-    // ✅ clave: esconder/mostrar HUD single
     setSingleHudVisible(!on);
-
-    // ✅ avisar a otros módulos (weatherClock)
     signalCatalogMode(!!on);
 
     if (on) {
       applyCfgToUI();
       setSingleMediaVisible(false);
+      startWxRefresh();
     } else {
+      stopWxRefresh();
+
       for (const s of slots) {
         stopHls(s);
+        s._camRef = null;
+        s._wxCamId = "";
+        hideWxChip(s.el);
+
         try { if (s.iframe) s.iframe.src = "about:blank"; } catch (_) {}
         try { if (s.img) s.img.src = ""; } catch (_) {}
         if (s.video) {
@@ -516,11 +730,22 @@
     }
   }
 
-  function updateCatalogFromState() {
-    if (!CFG.enabled) return;
+  function cfgSig() {
+    return [
+      `m=${CFG.muted ? 1 : 0}`,
+      `l=${CFG.labels ? 1 : 0}`,
+      `g=${CFG.gapPx | 0}`,
+      `ytc=${CFG.ytCookies ? 1 : 0}`,
+      `mode=${CFG.mode}`,
+      `fs=${CFG.followSlot | 0}`,
+      `cc=${CFG.clickCycle ? 1 : 0}`,
+      `wx=${CFG.wxTiles ? 1 : 0}`,
+      `wxr=${CFG.wxRefreshSec | 0}`
+    ].join("|");
+  }
 
-    const list = getCamList();
-    if (!list.length) return;
+  function getCurrentCamFromState(list) {
+    if (!list.length) return null;
 
     const camId = lastState?.cam?.id;
     let idx = -1;
@@ -528,18 +753,118 @@
     if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
     if (idx < 0) idx = findIndexById(list, camId);
 
-    const picked = pick4(list, idx);
-    const sig = picked.map(x => String(x?.id || "")).join("|") + `|m=${CFG.muted?1:0}|l=${CFG.labels?1:0}|g=${CFG.gapPx|0}`;
-    if (sig === lastSig) return;
-    lastSig = sig;
+    return (idx >= 0) ? list[idx] : list[0];
+  }
+
+  function updateCatalog() {
+    if (!CFG.enabled) return;
+
+    const list = getCamList();
+    if (!list.length) return;
+
+    const sig = cfgSig();
+    const cfgChanged = (sig !== lastCfgSig);
+    if (cfgChanged) lastCfgSig = sig;
+
+    let ids = loadSlotIds();
+
+    if (CFG.mode === "sync") {
+      // rotan 4
+      let idx = -1;
+      const camId = lastState?.cam?.id;
+      if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
+      if (idx < 0) idx = findIndexById(list, camId);
+
+      const picked = pick4(list, idx);
+      ids = picked.map(c => String(c?.id || ""));
+      ids = fillMissingSlots(list, ensureUnique(ids));
+      saveSlotIds(ids);
+    } else {
+      // follow: solo un slot sigue el state
+      if (!ids) ids = initSlotsFromState(list);
+      ids = fillMissingSlots(list, ensureUnique(ids));
+
+      const cur = getCurrentCamFromState(list);
+      const curId = String(cur?.id || "");
+      if (curId) {
+        const fs = CFG.followSlot | 0;
+
+        // si ya está en otro slot => swap
+        const other = ids.findIndex((x, i) => x === curId && i !== fs);
+        if (other >= 0) {
+          const tmp = ids[fs];
+          ids[fs] = ids[other];
+          ids[other] = tmp;
+        }
+
+        if (ids[fs] !== curId) {
+          ids[fs] = curId;
+          ids = fillMissingSlots(list, ensureUnique(ids));
+          saveSlotIds(ids);
+        }
+      }
+    }
 
     applyCfgToUI();
 
+    // render solo tiles cambiados (o todos si cfg cambió)
     for (let i = 0; i < 4; i++) {
-      renderCamIntoSlot(slots[i], picked[i], i + 1);
+      const id = String(ids?.[i] || "");
+      if (!cfgChanged && id === lastRenderedIds[i]) continue;
+
+      const camIdx = findIndexById(list, id);
+      const cam = (camIdx >= 0) ? list[camIdx] : null;
+
+      lastRenderedIds[i] = id;
+
+      if (cam) {
+        renderCamIntoSlot(slots[i], cam, i + 1);
+      } else {
+        const fallback = list[i % list.length];
+        renderCamIntoSlot(slots[i], fallback, i + 1);
+        lastRenderedIds[i] = String(fallback?.id || "");
+      }
     }
+
+    if (cfgChanged) startWxRefresh();
   }
 
+  // click-to-cycle: cambia solo ese tile
+  function cycleSlot(slotIndex, dir = 1) {
+    if (!CFG.enabled || !CFG.clickCycle) return;
+
+    const list = getCamList();
+    if (!list.length) return;
+
+    let ids = loadSlotIds();
+    if (!ids) ids = initSlotsFromState(list);
+
+    const currentId = String(ids[slotIndex] || "");
+    let idx = findIndexById(list, currentId);
+    if (idx < 0) idx = slotIndex % list.length;
+
+    idx = (idx + (dir >= 0 ? 1 : -1) + list.length) % list.length;
+
+    const next = list[idx];
+    const nextId = String(next?.id || "");
+    if (!nextId) return;
+
+    // evitar duplicados: si ya está en otro slot => swap
+    const other = ids.findIndex((x, i) => x === nextId && i !== slotIndex);
+    if (other >= 0) {
+      const tmp = ids[slotIndex];
+      ids[slotIndex] = ids[other];
+      ids[other] = tmp;
+    } else {
+      ids[slotIndex] = nextId;
+    }
+
+    ids = fillMissingSlots(list, ensureUnique(ids));
+    saveSlotIds(ids);
+    updateCatalog();
+  }
+
+  // ───────────────────────── Bus listeners
   function onBusMessage(msg, isMain) {
     if (!msg || typeof msg !== "object") return;
 
@@ -547,14 +872,14 @@
       if (!keyOk(msg, isMain)) return;
       CFG = normalizeCfg(msg.cfg);
       setCatalogEnabled(CFG.enabled);
-      updateCatalogFromState();
+      updateCatalog();
       return;
     }
 
     if (msg.type === "state") {
       if (!keyOk(msg, isMain)) return;
       lastState = msg;
-      if (CFG.enabled) updateCatalogFromState();
+      if (CFG.enabled) updateCatalog();
       return;
     }
   }
@@ -562,28 +887,57 @@
   if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
   if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
 
+  // polling suave
   setInterval(() => {
     const st = readStateFromLS();
     if (st) {
       lastState = st;
-      if (CFG.enabled) updateCatalogFromState();
+      if (CFG.enabled) updateCatalog();
     }
   }, 550);
 
+  // storage cfg
   window.addEventListener("storage", (e) => {
     if (!e) return;
     if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
       CFG = normalizeCfg(loadCfg());
       setCatalogEnabled(CFG.enabled);
-      updateCatalogFromState();
+      updateCatalog();
     }
   });
+
+  // al volver a pestaña: refresh WX
+  document.addEventListener("visibilitychange", () => {
+    if (!CFG.enabled) return;
+    if (document.visibilityState !== "visible") return;
+    for (const s of slots) refreshWxChipSoft(s);
+  });
+
+  // clicks (solo una vez)
+  function hookClicksOnce() {
+    if (root.dataset.rlcClicksHooked === "1") return;
+    root.dataset.rlcClicksHooked = "1";
+
+    for (let i = 0; i < 4; i++) {
+      const el = root.querySelector(`.slot[data-slot="${i}"]`);
+      if (!el) continue;
+
+      el.addEventListener("click", (ev) => {
+        if (!CFG.enabled || !CFG.clickCycle) return;
+        const back = !!ev?.shiftKey; // SHIFT => atrás
+        cycleSlot(i, back ? -1 : 1);
+      });
+    }
+  }
 
   function boot() {
     CFG = normalizeCfg(loadCfg());
     setCatalogEnabled(CFG.enabled);
+
     lastState = readStateFromLS() || lastState;
-    if (CFG.enabled) updateCatalogFromState();
+
+    hookClicksOnce();
+    if (CFG.enabled) updateCatalog();
   }
 
   if (document.readyState === "loading") {
