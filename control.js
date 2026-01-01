@@ -1,4 +1,4 @@
-/* control.js — RLC Control v2.3.0 (NEWSROOM + COMPAT FIX)
+/* control.js — RLC Control v2.3.1 (NEWSROOM + OAUTH BUTTON + COMPAT FIX)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
@@ -10,6 +10,7 @@
    ✅ News Ticker cfg (storage + BC)
    ✅ Countdown cfg + BC/LS + URL params
    ✅ Auto Twitch Title (Helix) — COMPAT con IDs ctlTitle* del HTML (y soporta legacy ctlHelix* si existieran)
+   ✅ NUEVO: Botón “🔑 Obtener token (OAuth)” (abre Twitch OAuth y rellena ctlTitleToken automáticamente)
 */
 
 (() => {
@@ -17,7 +18,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V230";
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V231";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Base keys / params
@@ -30,6 +31,10 @@
   const TICKER_CFG_KEY_BASE = "rlc_ticker_cfg_v1";        // player + control
   const HELIX_CFG_KEY_BASE  = "rlc_helix_cfg_v1";         // solo control.html (auto title)
   const COUNTDOWN_CFG_KEY_BASE = "rlc_countdown_cfg_v1";  // player + control
+
+  // OAuth helper storage (shared origin)
+  const OAUTH_EXPECT_STATE_KEY_BASE = "rlc_oauth_state_v1";
+  const OAUTH_LAST_APPLY_AT_KEY_BASE = "rlc_oauth_last_apply_at_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -61,6 +66,9 @@
   const TICKER_CFG_KEY = KEY ? `${TICKER_CFG_KEY_BASE}:${KEY}` : TICKER_CFG_KEY_BASE;
   const HELIX_CFG_KEY  = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
+
+  const OAUTH_EXPECT_STATE_KEY = KEY ? `${OAUTH_EXPECT_STATE_KEY_BASE}:${KEY}` : OAUTH_EXPECT_STATE_KEY_BASE;
+  const OAUTH_LAST_APPLY_AT_KEY = KEY ? `${OAUTH_LAST_APPLY_AT_KEY_BASE}:${KEY}` : OAUTH_LAST_APPLY_AT_KEY_BASE;
 
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
@@ -146,7 +154,7 @@
   const ctlBotTestText = qs("#ctlBotTestText");
   const ctlBotTestSend = qs("#ctlBotTestSend");
 
-  // Ticker (puede estar controlado por newsTickerControl.js, pero aquí lo soportamos igual)
+  // Ticker
   const ctlTickerOn = qs("#ctlTickerOn");
   const ctlTickerLang = qs("#ctlTickerLang");
   const ctlTickerSpeed = qs("#ctlTickerSpeed");
@@ -171,7 +179,7 @@
   const ctlTitleOn = qs("#ctlTitleOn") || qs("#ctlHelixOn");
   const ctlTitleStatus = qs("#ctlTitleStatus") || qs("#ctlHelixStatus");
   const ctlTitleClientId = qs("#ctlTitleClientId") || qs("#ctlHelixClientId");
-  const ctlTitleBroadcasterId = qs("#ctlTitleBroadcasterId"); // (nuevo en tu HTML)
+  const ctlTitleBroadcasterId = qs("#ctlTitleBroadcasterId");
   const ctlTitleToken = qs("#ctlTitleToken") || qs("#ctlHelixToken");
   const ctlTitleTemplate = qs("#ctlTitleTemplate") || qs("#ctlHelixTpl");
   const ctlTitleCooldown = qs("#ctlTitleCooldown") || qs("#ctlHelixCooldown");
@@ -200,6 +208,9 @@
   // Auto announce cam
   let lastAnnouncedCamId = "";
   let lastAnnounceAt = 0;
+
+  // OAuth popup ref (para poder cerrarlo cuando llega el token)
+  let oauthPopup = null;
 
   // ───────────────────────── helpers
   function fmtMMSS(sec) {
@@ -534,7 +545,7 @@
     return normalizeCountdownCfg({ enabled, label, targetMs });
   }
 
-  // ───────────────────────── Helix Auto Title cfg (usa IDs ctlTitle*)
+  // ───────────────────────── Helix Auto Title cfg (usa IDs ctlTitle*))
   const HELIX_DEFAULTS = {
     enabled: false,
     clientId: "",
@@ -739,6 +750,205 @@
       const msg = String(e?.message || e || "Error").slice(0, 120);
       setTitleStatus(`Helix error: ${msg}`, false);
       helixResolvedBroadcasterId = "";
+    }
+  }
+
+  // ───────────────────────── ✅ OAuth bridge (botón + postMessage + fallback LS)
+  const OAUTH_SCOPES = "channel:manage:broadcast chat:read chat:edit";
+
+  function oauthRedirectUri() {
+    // IMPORTANTE: redirect_uri NO lleva query ni hash (evita redirect_mismatch)
+    try {
+      const u = new URL(location.href);
+      let path = u.pathname || "/";
+      if (/control\.html$/i.test(path)) path = path.replace(/control\.html$/i, "oauth.html");
+      else path = path.replace(/\/[^\/]*$/, "/oauth.html");
+      return `${u.origin}${path}`;
+    } catch (_) {
+      // fallback bruto
+      return `${location.origin}${(location.pathname || "/").replace(/control\.html$/i, "oauth.html")}`;
+    }
+  }
+
+  function randomState() {
+    try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch (_) {}
+    return `st_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+  }
+
+  function buildAuthorizeUrl(clientId, scopes, redirectUri, state) {
+    const u = new URL("https://id.twitch.tv/oauth2/authorize");
+    u.searchParams.set("response_type", "token"); // implicit
+    u.searchParams.set("client_id", String(clientId || "").trim());
+    u.searchParams.set("redirect_uri", String(redirectUri || "").trim());
+    u.searchParams.set("scope", String(scopes || "").trim());
+    u.searchParams.set("state", String(state || "").trim());
+    u.searchParams.set("force_verify", "true");
+    return u.toString();
+  }
+
+  function applyOAuthTokenToUI(accessToken, scopeStr = "", tokenType = "bearer", state = "") {
+    const tok = String(accessToken || "").trim();
+    if (!tok) return false;
+
+    // Seguridad mínima: valida state si lo esperamos
+    const expected = String(lsGet(OAUTH_EXPECT_STATE_KEY) || "").trim();
+    if (expected && state && state !== expected) {
+      setTitleStatus("OAuth state mismatch (¿popup antiguo?)", false);
+      return false;
+    }
+
+    // Rellena token helix
+    if (ctlTitleToken) ctlTitleToken.value = tok;
+
+    // Si el bot token está vacío, también lo rellenamos (muy útil)
+    try {
+      const botTokNow = String(ctlBotToken?.value || "").trim();
+      if (ctlBotToken && !botTokNow) ctlBotToken.value = tok;
+    } catch (_) {}
+
+    // Persist Helix
+    try {
+      helixCfg = readHelixUI();
+      saveHelixCfg(helixCfg);
+      // resetea caches para que pueda resolver broadcaster_id si hace falta
+      helixResolvedBroadcasterId = "";
+      helixLastSig = "";
+      helixLastUpdateAt = 0;
+    } catch (_) {}
+
+    // Persist Bot (si lo hemos rellenado / cambiado)
+    try {
+      persistBotUIToStore();
+    } catch (_) {}
+
+    // Marca que aplicamos (para fallback LS)
+    try { lsSet(OAUTH_LAST_APPLY_AT_KEY, String(Date.now())); } catch (_) {}
+
+    const scopeShort = String(scopeStr || "").trim();
+    setTitleStatus(scopeShort ? `OAuth OK ✅ (${scopeShort.slice(0, 40)}${scopeShort.length > 40 ? "…" : ""})` : "OAuth OK ✅", true);
+
+    // Si el bot está ON, intenta reconectar para usar token nuevo
+    try {
+      if (ctlBotOn?.value === "on") {
+        // si no está conectado, esto lo levantará; si está, no pasa nada
+        bot.connect();
+      }
+    } catch (_) {}
+
+    // Cierra popup si lo tenemos
+    try { if (oauthPopup && !oauthPopup.closed) oauthPopup.close(); } catch (_) {}
+    oauthPopup = null;
+
+    return true;
+  }
+
+  function ensureOAuthButtonsInjected() {
+    if (!ctlTitleToken) return;
+    if (qs("#ctlTitleOAuthBtn")) return; // ya existe
+
+    // Insertamos justo después del input del token
+    const parent = ctlTitleToken.parentElement || ctlTitleToken.closest(".row") || ctlTitleToken.closest(".card") || ctlTitleToken.parentNode;
+    if (!parent || !parent.appendChild) return;
+
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.gap = "10px";
+    wrap.style.flexWrap = "wrap";
+    wrap.style.marginTop = "10px";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "ctlTitleOAuthBtn";
+    btn.textContent = "🔑 Obtener token (OAuth)";
+    // intenta heredar clases del Apply/Test si existen
+    btn.className = (ctlTitleApply && ctlTitleApply.className) ? ctlTitleApply.className : "";
+
+    const btn2 = document.createElement("button");
+    btn2.type = "button";
+    btn2.id = "ctlTitleOAuthCopyRedirectBtn";
+    btn2.textContent = "📋 Copiar redirect_uri";
+    btn2.className = (ctlTitleReset && ctlTitleReset.className) ? ctlTitleReset.className : "";
+
+    wrap.appendChild(btn);
+    wrap.appendChild(btn2);
+
+    // Insertarlo “debajo” del token input sin romper layout
+    try {
+      // si el parent es un label/field, append suele quedar bien
+      parent.appendChild(wrap);
+    } catch (_) {}
+
+    btn2.addEventListener("click", async () => {
+      const ok = await copyToClipboard(oauthRedirectUri());
+      setTitleStatus(ok ? "redirect_uri copiado ✅" : "No se pudo copiar redirect_uri", ok);
+    });
+
+    btn.addEventListener("click", () => {
+      const clientId = String(ctlTitleClientId?.value || "").trim();
+      if (!clientId) {
+        setTitleStatus("OAuth: pega Client ID primero", false);
+        return;
+      }
+
+      const redir = oauthRedirectUri();
+      const st = randomState();
+      try { lsSet(OAUTH_EXPECT_STATE_KEY, st); } catch (_) {}
+
+      const url = buildAuthorizeUrl(clientId, OAUTH_SCOPES, redir, st);
+
+      setTitleStatus("Abriendo OAuth…", true);
+
+      // Popup (mejor UX). Si lo bloquea, abre en la misma pestaña.
+      try {
+        oauthPopup = window.open(url, "twitch_oauth", "width=520,height=720,noopener,noreferrer");
+      } catch (_) {
+        oauthPopup = null;
+      }
+      if (!oauthPopup) {
+        // fallback: navega aquí
+        location.href = url;
+      }
+    });
+  }
+
+  // Recibe token desde oauth.html (postMessage)
+  window.addEventListener("message", (ev) => {
+    try {
+      if (!ev || ev.origin !== location.origin) return;
+      const d = ev.data || {};
+      if (!d || d.type !== "TWITCH_OAUTH_TOKEN") return;
+
+      const tok = String(d.access_token || "").trim();
+      if (!tok) return;
+
+      const scopeStr = String(d.scope || "").trim();
+      const tokenType = String(d.token_type || "bearer").trim();
+      const state = String(d.state || "").trim();
+
+      // Si DOM no está aún, lo aplicará igualmente cuando existan inputs (pero aquí normalmente ya están)
+      applyOAuthTokenToUI(tok, scopeStr, tokenType, state);
+    } catch (_) {}
+  });
+
+  // Fallback: si por lo que sea postMessage falla, oauth.html guarda token en localStorage.
+  function tryConsumeOAuthTokenFromLocalStorage() {
+    try {
+      const tok = String(lsGet("twitch_oauth_access_token") || "").trim();
+      if (!tok) return false;
+
+      const savedAt = parseInt(String(lsGet("twitch_oauth_saved_at") || "0"), 10) || 0;
+      const lastApply = parseInt(String(lsGet(OAUTH_LAST_APPLY_AT_KEY) || "0"), 10) || 0;
+
+      // Solo aplicar si es “nuevo” y distinto al actual
+      const current = String(ctlTitleToken?.value || "").trim();
+      if (savedAt && savedAt <= lastApply && current === tok) return false;
+
+      const scopeStr = String(lsGet("twitch_oauth_scope") || "").trim();
+      const tokenType = String(lsGet("twitch_oauth_token_type") || "bearer").trim();
+
+      return applyOAuthTokenToUI(tok, scopeStr, tokenType, "");
+    } catch (_) {
+      return false;
     }
   }
 
@@ -1046,7 +1256,7 @@
 
     if (ctlAdChatText?.value) u.searchParams.set("adChatText", ctlAdChatText.value.trim());
 
-    // ticker params (desde UI/LS)
+    // ticker params
     const tc = normalizeTickerCfg(readTickerUI());
     if (!tc.enabled) u.searchParams.set("ticker", "0");
     else u.searchParams.delete("ticker");
@@ -1106,7 +1316,7 @@
       ctlBgmNow.textContent = name ? `Now: ${name} · ${st?.bgm?.playing ? "playing" : "paused"}` : "—";
     }
 
-    // Vote state (si viene)
+    // Vote state
     const vote = st?.vote || {};
     if (ctlTwitchChannel && typeof vote?.channel === "string") {
       if (!ctlTwitchChannel.value || !isEditing(ctlTwitchChannel)) safeSetValue(ctlTwitchChannel, vote.channel);
@@ -1131,7 +1341,7 @@
       ctlYtCookies.value = st.ytCookies ? "on" : "off";
     }
 
-    // Chat/Alerts/Ads (si vienen)
+    // Chat/Alerts/Ads
     if (ctlChatOn && st?.chat?.enabled != null && !isEditing(ctlChatOn)) ctlChatOn.value = st.chat.enabled ? "on" : "off";
     if (ctlChatHideCmd && st?.chat?.hideCommands != null && !isEditing(ctlChatHideCmd)) ctlChatHideCmd.value = st.chat.hideCommands ? "on" : "off";
     if (ctlAlertsOn && st?.alertsEnabled != null && !isEditing(ctlAlertsOn)) ctlAlertsOn.value = st.alertsEnabled ? "on" : "off";
@@ -1312,6 +1522,10 @@
     try { sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
 
     syncHelixUIFromStore();
+
+    // ✅ Inyecta botón OAuth + aplica token guardado si existe
+    try { ensureOAuthButtonsInjected(); } catch (_) {}
+    try { tryConsumeOAuthTokenFromLocalStorage(); } catch (_) {}
 
     // defaults defensivos
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";

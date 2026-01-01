@@ -1,54 +1,274 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-theme="dark">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="robots" content="noindex,nofollow" />
   <title>Twitch OAuth Return</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial; background:#0b0b10; color:#eaeaf0; margin:0; padding:24px;}
-    .card{max-width:860px; margin:0 auto; background:#141424; border:1px solid #2a2a45; border-radius:14px; padding:18px;}
-    h1{margin:0 0 10px; font-size:18px}
-    code,pre{background:#0f0f1a; border:1px solid #2a2a45; border-radius:10px; padding:10px; display:block; overflow:auto; color:#d7d7ff}
-    .row{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
-    button{cursor:pointer; border:0; border-radius:10px; padding:10px 12px; background:#7c3aed; color:white; font-weight:700}
-    button.secondary{background:#2b2b45}
-    .ok{color:#7CFF9B}
-    .bad{color:#FF7C7C}
-    .muted{opacity:.8}
+    :root{
+      --bg0:#05060b; --bg1:#070b14; --bg2:#0a1528;
+      --panel: rgba(10,14,22,.78);
+      --stroke: rgba(255,255,255,.12);
+      --stroke2: rgba(255,255,255,.18);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.66);
+      --ok:#19e28a; --bad:#ff5a5a; --acc:#37d6ff;
+      --shadow: 0 18px 60px rgba(0,0,0,.55);
+      --r: 16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+    body{
+      margin:0; min-height:100svh; color:var(--text); font-family:var(--sans);
+      background:
+        radial-gradient(1200px 900px at 20% 0%, rgba(55,214,255,.14), transparent 55%),
+        radial-gradient(900px 700px at 85% 15%, rgba(255,59,59,.10), transparent 55%),
+        linear-gradient(180deg, var(--bg0), var(--bg1) 35%, var(--bg2));
+      overflow-x:hidden;
+    }
+    body::before{
+      content:"";
+      position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.65;
+      background:
+        radial-gradient(900px 700px at 50% 40%, rgba(0,0,0,.20), rgba(0,0,0,.72)),
+        repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0 1px, rgba(255,255,255,0) 1px 3px),
+        linear-gradient(90deg, rgba(55,214,255,.08), transparent 35%, rgba(255,59,59,.07));
+      mix-blend-mode: screen;
+    }
+    .wrap{position:relative; z-index:1; padding:24px;}
+    .card{
+      max-width: 980px; margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: var(--r);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .topbar{
+      padding: 16px 18px;
+      background: linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
+      border-bottom: 1px solid var(--stroke);
+      display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    }
+    .title{
+      display:flex; flex-direction:column; gap:4px;
+    }
+    .kicker{letter-spacing:.26em; font-weight:900; font-size:12px; opacity:.82}
+    h1{margin:0; font-size:16px; letter-spacing:.04em; text-transform:uppercase}
+    .pill{
+      font: 800 12px/1 var(--sans);
+      border: 1px solid var(--stroke2);
+      background: rgba(0,0,0,.25);
+      padding: 8px 10px;
+      border-radius: 999px;
+      display:inline-flex; align-items:center; gap:8px;
+      user-select:none;
+    }
+    .pill.ok{border-color: rgba(25,226,138,.35);}
+    .pill.bad{border-color: rgba(255,90,90,.40);}
+    .body{padding: 18px;}
+    .muted{color:var(--muted)}
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media (min-width: 920px){
+      .grid{grid-template-columns: 1.25fr .75fr;}
+    }
+    .box{
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      background: rgba(0,0,0,.18);
+      padding: 12px;
+      overflow:auto;
+    }
+    pre{
+      margin:0; font-family: var(--mono);
+      white-space: pre-wrap; word-break: break-word;
+      color: rgba(255,255,255,.92);
+    }
+    code{font-family:var(--mono)}
+    .row{display:flex; gap:10px; flex-wrap:wrap; margin-top: 12px;}
+    .btn{
+      cursor:pointer; border:1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+      color: rgba(255,255,255,.92);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-weight: 900;
+      letter-spacing:.02em;
+      box-shadow: 0 10px 30px rgba(0,0,0,.30);
+    }
+    .btn:hover{transform: translateY(-1px); border-color: rgba(55,214,255,.25);}
+    .btn.ghost{background: rgba(0,0,0,.18);}
+    .btn.full{flex:1 1 220px;}
+    .small{font-size:12px}
+    .warn{
+      margin-top: 12px;
+      border-left: 3px solid rgba(255,90,90,.65);
+      padding: 10px 12px;
+      background: rgba(255,90,90,.08);
+      border-radius: 12px;
+    }
+    .good{
+      margin-top: 12px;
+      border-left: 3px solid rgba(25,226,138,.55);
+      padding: 10px 12px;
+      background: rgba(25,226,138,.08);
+      border-radius: 12px;
+    }
+    .linkish{
+      color: rgba(55,214,255,.95);
+      text-decoration: none;
+    }
+    .linkish:hover{text-decoration: underline;}
+    .field{
+      display:flex; flex-direction:column; gap:6px;
+      margin-top: 10px;
+    }
+    label{font-weight:900; letter-spacing:.02em; font-size:12px; opacity:.9}
+    input{
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      color: rgba(255,255,255,.92);
+      padding: 10px 12px;
+      outline:none;
+      font-family: var(--mono);
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>✅ Twitch OAuth recibido</h1>
-    <p class="muted">Esta página captura el token devuelto por Twitch (fragmento <code>#</code> o <code>?code=</code>).</p>
+  <div class="wrap">
+    <div class="card">
+      <div class="topbar">
+        <div class="title">
+          <div class="kicker">OAUTH CALLBACK</div>
+          <h1>✅ Twitch OAuth recibido</h1>
+        </div>
+        <div id="pill" class="pill">Leyendo respuesta…</div>
+      </div>
 
-    <div id="status" class="muted">Leyendo respuesta...</div>
+      <div class="body">
+        <p class="muted small" style="margin:0">
+          Esta página captura el token devuelto por Twitch (fragmento <code>#</code>).
+          Si abriste esto desde tu panel, también lo devuelve automáticamente al <code>window.opener</code>.
+        </p>
 
-    <h2 style="font-size:14px;margin:14px 0 8px;">Access Token</h2>
-    <pre id="tokenBox">(vacío)</pre>
+        <div class="grid">
+          <div>
+            <div class="field">
+              <label>Redirect URI (este mismo)</label>
+              <input id="redirectBox" type="text" readonly />
+              <div class="muted small">Añade esta URL EXACTA en tu app de Twitch → <b>OAuth Redirect URLs</b>.</div>
+            </div>
 
-    <h2 style="font-size:14px;margin:14px 0 8px;">Scopes</h2>
-    <pre id="scopeBox">(vacío)</pre>
+            <div class="row">
+              <button id="copyRedirectBtn" class="btn ghost full" type="button">Copiar redirect URI</button>
+              <button id="closeBtn" class="btn ghost full" type="button">Cerrar</button>
+            </div>
 
-    <div class="row">
-      <button id="copyBtn">Copiar token</button>
-      <button id="closeBtn" class="secondary">Cerrar</button>
+            <div id="msgBox" class=""></div>
+
+            <div class="field" style="margin-top:16px">
+              <label>Access Token</label>
+              <div class="box"><pre id="tokenBox">(vacío)</pre></div>
+            </div>
+
+            <div class="field">
+              <label>Scopes</label>
+              <div class="box"><pre id="scopeBox">(vacío)</pre></div>
+            </div>
+
+            <div class="row">
+              <button id="copyTokenBtn" class="btn full" type="button">Copiar token</button>
+              <button id="copyScopesBtn" class="btn ghost full" type="button">Copiar scopes</button>
+            </div>
+
+            <div class="warn small">
+              ⚠️ No publiques este token en GitHub. Guárdalo en local (localStorage / tu panel admin / config privada).
+            </div>
+          </div>
+
+          <div>
+            <div class="field">
+              <label>Generador de URL OAuth (para probar)</label>
+              <div class="muted small">
+                Para auto-título necesitas el scope <code>channel:manage:broadcast</code>.
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Client ID</label>
+              <input id="clientId" type="text" placeholder="Pega tu Client ID aquí" autocomplete="off"/>
+            </div>
+
+            <div class="field">
+              <label>Scopes (separados por espacio)</label>
+              <input id="scopes" type="text" value="channel:manage:broadcast" autocomplete="off"/>
+            </div>
+
+            <div class="row">
+              <button id="openAuthBtn" class="btn full" type="button">Abrir login Twitch</button>
+              <button id="copyAuthBtn" class="btn ghost full" type="button">Copiar URL login</button>
+            </div>
+
+            <div class="good small">
+              Si te sale <b>redirect_mismatch</b>:
+              <ul style="margin:8px 0 0; padding-left:18px">
+                <li>El <code>redirect_uri</code> del login debe ser EXACTAMENTE el de arriba (sin <code>?</code> ni <code>#</code>).</li>
+                <li>Añádelo tal cual en la app de Twitch → <b>OAuth Redirect URLs</b>.</li>
+              </ul>
+            </div>
+
+            <div class="muted small" style="margin-top:10px">
+              Tip: si abres esto desde tu <code>control.html</code> en popup, cuando llegue el token
+              se enviará por <code>postMessage</code> al panel automáticamente.
+            </div>
+          </div>
+        </div>
+
+      </div>
     </div>
-
-    <p class="muted" style="margin-top:14px">
-      ⚠️ No publiques este token en GitHub. Guárdalo en local (localStorage / tu panel admin / config privada).
-    </p>
   </div>
 
 <script>
 (() => {
-  const status = document.getElementById("status");
+  const pill = document.getElementById("pill");
+  const msgBox = document.getElementById("msgBox");
   const tokenBox = document.getElementById("tokenBox");
   const scopeBox = document.getElementById("scopeBox");
-  const copyBtn = document.getElementById("copyBtn");
   const closeBtn = document.getElementById("closeBtn");
+  const copyTokenBtn = document.getElementById("copyTokenBtn");
+  const copyScopesBtn = document.getElementById("copyScopesBtn");
+  const redirectBox = document.getElementById("redirectBox");
+  const copyRedirectBtn = document.getElementById("copyRedirectBtn");
 
-  // 1) Implicit flow: token viene en el fragment (#access_token=...)
+  const clientIdEl = document.getElementById("clientId");
+  const scopesEl = document.getElementById("scopes");
+  const openAuthBtn = document.getElementById("openAuthBtn");
+  const copyAuthBtn = document.getElementById("copyAuthBtn");
+
+  const okPill = (t) => { pill.className = "pill ok"; pill.textContent = t; };
+  const badPill = (t) => { pill.className = "pill bad"; pill.textContent = t; };
+
+  const showWarn = (html) => { msgBox.className = "warn small"; msgBox.innerHTML = html; };
+  const showGood = (html) => { msgBox.className = "good small"; msgBox.innerHTML = html; };
+  const clearMsg = () => { msgBox.className = ""; msgBox.innerHTML = ""; };
+
+  function cleanRedirectUri() {
+    // redirect_uri "estable": sin query, sin hash
+    return location.origin + location.pathname;
+  }
+
+  redirectBox.value = cleanRedirectUri();
+
+  // Twitch devuelve token en fragment (#access_token=...)
   const hash = (location.hash || "").startsWith("#") ? location.hash.slice(1) : "";
   const hp = new URLSearchParams(hash);
 
@@ -57,57 +277,149 @@
   const state = hp.get("state") || "";
   const tokenType = hp.get("token_type") || "";
 
-  // 2) Authorization code flow: code viene en query (?code=...)
+  // Errores pueden venir en query (?error=...)
   const qp = new URLSearchParams(location.search);
-  const code = qp.get("code") || "";
   const err = qp.get("error") || "";
   const errDesc = qp.get("error_description") || "";
 
-  function showOK(msg){ status.innerHTML = `<span class="ok">${msg}</span>`; }
-  function showBAD(msg){ status.innerHTML = `<span class="bad">${msg}</span>`; }
+  function safeDecode(s) {
+    try { return decodeURIComponent(s || ""); } catch { return String(s || ""); }
+  }
 
+  async function copyText(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    try { await navigator.clipboard.writeText(t); return true; }
+    catch (_) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        return true;
+      } catch { return false; }
+    }
+  }
+
+  function buildAuthorizeUrl(clientId, scopes) {
+    const cid = String(clientId || "").trim();
+    const sc = String(scopes || "").trim();
+    const redirect = cleanRedirectUri();
+    const st = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
+
+    // Guardamos state para el panel (si quieres verificar)
+    try { sessionStorage.setItem("twitch_oauth_state", st); } catch (_) {}
+
+    const u = new URL("https://id.twitch.tv/oauth2/authorize");
+    u.searchParams.set("response_type", "token"); // implicit
+    u.searchParams.set("client_id", cid);
+    u.searchParams.set("redirect_uri", redirect);
+    if (sc) u.searchParams.set("scope", sc);
+    u.searchParams.set("state", st);
+    u.searchParams.set("force_verify", "true");
+    return u.toString();
+  }
+
+  function clearTokenFromAddressBar() {
+    // quita el fragmento con el token de la barra (seguridad)
+    try {
+      history.replaceState(null, "", location.pathname + location.search);
+    } catch (_) {}
+  }
+
+  // UI handlers
+  copyRedirectBtn.addEventListener("click", async () => {
+    const ok = await copyText(redirectBox.value);
+    if (ok) showGood("✅ Redirect URI copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  copyTokenBtn.addEventListener("click", async () => {
+    const ok = await copyText(tokenBox.textContent);
+    if (ok) showGood("✅ Token copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  copyScopesBtn.addEventListener("click", async () => {
+    const ok = await copyText(scopeBox.textContent);
+    if (ok) showGood("✅ Scopes copiados.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  closeBtn.addEventListener("click", () => {
+    // window.close solo funciona si se abrió con JS (popup)
+    try { window.close(); } catch (_) {}
+  });
+
+  openAuthBtn.addEventListener("click", () => {
+    clearMsg();
+    const cid = clientIdEl.value.trim();
+    if (!cid) { showWarn("Pon tu <b>Client ID</b> primero."); return; }
+    const url = buildAuthorizeUrl(cid, scopesEl.value);
+    // abre en esta pestaña o popup según prefieras
+    location.href = url;
+  });
+
+  copyAuthBtn.addEventListener("click", async () => {
+    clearMsg();
+    const cid = clientIdEl.value.trim();
+    if (!cid) { showWarn("Pon tu <b>Client ID</b> primero."); return; }
+    const url = buildAuthorizeUrl(cid, scopesEl.value);
+    const ok = await copyText(url);
+    if (ok) showGood("✅ URL de login copiada.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  // Mostrar estado principal
   if (err) {
-    showBAD(`Error OAuth: ${err} — ${decodeURIComponent(errDesc || "")}`);
+    badPill("Error OAuth");
+    const desc = safeDecode(errDesc);
+    tokenBox.textContent = "(vacío)";
+    scopeBox.textContent = "(vacío)";
+    showWarn(`<b>Error OAuth:</b> <code>${err}</code>${desc ? ` — ${desc}` : ""}<br/><br/>
+      Si el error es <b>redirect_mismatch</b>, revisa que <b>redirect_uri</b> sea exactamente:<br/>
+      <code>${cleanRedirectUri()}</code><br/>
+      y que esté añadido en tu app → <b>OAuth Redirect URLs</b>.`);
   } else if (accessToken) {
-    showOK(`Token recibido (type: ${tokenType || "bearer"}) ${state ? "· state=" + state : ""}`);
+    okPill("Token recibido ✅");
     tokenBox.textContent = accessToken;
-    scopeBox.textContent = decodeURIComponent(scope || "(sin scope)");
+    scopeBox.textContent = safeDecode(scope || "(sin scope)");
+    showGood(`Token recibido (<code>${tokenType || "bearer"}</code>)${state ? ` · state=<code>${state}</code>` : ""}.`);
 
-    // Guarda local (si quieres leerlo desde tu app/panel)
+    // Guardado local (por si quieres recuperarlo sin el panel)
     try {
       localStorage.setItem("twitch_oauth_access_token", accessToken);
-      localStorage.setItem("twitch_oauth_scope", scope);
-      localStorage.setItem("twitch_oauth_token_type", tokenType);
+      localStorage.setItem("twitch_oauth_scope", scope || "");
+      localStorage.setItem("twitch_oauth_token_type", tokenType || "bearer");
+      localStorage.setItem("twitch_oauth_saved_at", String(Date.now()));
     } catch (_) {}
 
-    // Si abriste esto con window.open desde tu panel, devuelve el token
+    // Devuelve al opener (tu control.html) si existe
     try {
       if (window.opener && window.opener !== window) {
         window.opener.postMessage({
           type: "TWITCH_OAUTH_TOKEN",
           access_token: accessToken,
-          scope: decodeURIComponent(scope || ""),
-          token_type: tokenType || "bearer"
+          scope: safeDecode(scope || ""),
+          token_type: tokenType || "bearer",
+          state: state || ""
         }, location.origin);
       }
     } catch (_) {}
-  } else if (code) {
-    // Solo informativo (este flujo requiere canjear el code por token en un servidor)
-    showOK("Recibido ?code=. Ahora debes canjearlo por token en /oauth2/token (flujo Authorization Code).");
-    tokenBox.textContent = code;
-    scopeBox.textContent = "(scope viene al canjear el code)";
+
+    // Limpia la URL para no dejar el token en el address bar
+    clearTokenFromAddressBar();
   } else {
-    showBAD("No llegó access_token ni code. Revisa que el link use el redirect_uri correcto.");
+    badPill("Sin token");
+    tokenBox.textContent = "(vacío)";
+    scopeBox.textContent = "(vacío)";
+    showWarn(`No llegó <code>access_token</code>.<br/><br/>
+      Asegúrate de que el login usa <code>response_type=token</code> (implicit) y que el <code>redirect_uri</code> coincide exactamente con el registrado.`);
   }
-
-  copyBtn.addEventListener("click", async () => {
-    const t = tokenBox.textContent.trim();
-    if (!t || t === "(vacío)") return;
-    try { await navigator.clipboard.writeText(t); showOK("Token copiado al portapapeles ✅"); }
-    catch { showBAD("No se pudo copiar (bloqueo del navegador). Copia manualmente."); }
-  });
-
-  closeBtn.addEventListener("click", () => window.close());
 })();
 </script>
 </body>
