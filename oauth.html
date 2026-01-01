@@ -21,8 +21,13 @@
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
     }
+    html, body { height: 100%; }
     body{
-      margin:0; min-height:100svh; color:var(--text); font-family:var(--sans);
+      margin:0;
+      min-height:100vh;
+      min-height:100svh;
+      color:var(--text);
+      font-family:var(--sans);
       background:
         radial-gradient(1200px 900px at 20% 0%, rgba(55,214,255,.14), transparent 55%),
         radial-gradient(900px 700px at 85% 15%, rgba(255,59,59,.10), transparent 55%),
@@ -53,9 +58,7 @@
       border-bottom: 1px solid var(--stroke);
       display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
     }
-    .title{
-      display:flex; flex-direction:column; gap:4px;
-    }
+    .title{display:flex; flex-direction:column; gap:4px;}
     .kicker{letter-spacing:.26em; font-weight:900; font-size:12px; opacity:.82}
     h1{margin:0; font-size:16px; letter-spacing:.04em; text-transform:uppercase}
     .pill{
@@ -122,11 +125,6 @@
       background: rgba(25,226,138,.08);
       border-radius: 12px;
     }
-    .linkish{
-      color: rgba(55,214,255,.95);
-      text-decoration: none;
-    }
-    .linkish:hover{text-decoration: underline;}
     .field{
       display:flex; flex-direction:column; gap:6px;
       margin-top: 10px;
@@ -140,6 +138,14 @@
       padding: 10px 12px;
       outline:none;
       font-family: var(--mono);
+    }
+    .split{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    @media (min-width: 720px){
+      .split{grid-template-columns: 1fr 1fr;}
     }
   </style>
 </head>
@@ -157,7 +163,7 @@
       <div class="body">
         <p class="muted small" style="margin:0">
           Esta página captura el token devuelto por Twitch (fragmento <code>#</code>).
-          Si abriste esto desde tu panel, también lo devuelve automáticamente al <code>window.opener</code>.
+          Si la abriste desde tu panel, también lo devuelve automáticamente al <code>window.opener</code>.
         </p>
 
         <div class="grid">
@@ -175,19 +181,35 @@
 
             <div id="msgBox" class=""></div>
 
-            <div class="field" style="margin-top:16px">
-              <label>Access Token</label>
-              <div class="box"><pre id="tokenBox">(vacío)</pre></div>
+            <div class="split" style="margin-top:16px">
+              <div class="field">
+                <label>Access Token</label>
+                <div class="box"><pre id="tokenBox">(vacío)</pre></div>
+              </div>
+
+              <div class="field">
+                <label>Scopes</label>
+                <div class="box"><pre id="scopeBox">(vacío)</pre></div>
+              </div>
             </div>
 
-            <div class="field">
-              <label>Scopes</label>
-              <div class="box"><pre id="scopeBox">(vacío)</pre></div>
+            <div class="split">
+              <div class="field">
+                <label>Broadcaster ID (User ID numérico)</label>
+                <div class="box"><pre id="broadcasterBox">(sin resolver)</pre></div>
+                <div class="muted small">Este ID es el que se usa como <code>broadcaster_id</code> en Helix.</div>
+              </div>
+              <div class="field">
+                <label>Usuario</label>
+                <div class="box"><pre id="userBox">(sin resolver)</pre></div>
+                <div class="muted small">Se resuelve con <code>GET /helix/users</code> si hay token + Client ID.</div>
+              </div>
             </div>
 
             <div class="row">
               <button id="copyTokenBtn" class="btn full" type="button">Copiar token</button>
               <button id="copyScopesBtn" class="btn ghost full" type="button">Copiar scopes</button>
+              <button id="copyBroadcasterBtn" class="btn ghost full" type="button">Copiar broadcaster_id</button>
             </div>
 
             <div class="warn small">
@@ -199,13 +221,14 @@
             <div class="field">
               <label>Generador de URL OAuth (para probar)</label>
               <div class="muted small">
-                Para auto-título necesitas el scope <code>channel:manage:broadcast</code>.
+                Para auto-título necesitas el scope <code>channel:manage:broadcast</code>. :contentReference[oaicite:2]{index=2}
               </div>
             </div>
 
             <div class="field">
               <label>Client ID</label>
               <input id="clientId" type="text" placeholder="Pega tu Client ID aquí" autocomplete="off"/>
+              <div class="muted small">Se guarda en tu navegador para la próxima vez.</div>
             </div>
 
             <div class="field">
@@ -230,6 +253,10 @@
               Tip: si abres esto desde tu <code>control.html</code> en popup, cuando llegue el token
               se enviará por <code>postMessage</code> al panel automáticamente.
             </div>
+
+            <div class="muted small" style="margin-top:10px">
+              Nota: el implicit flow devuelve el token en el fragmento <code>#access_token=...</code>. :contentReference[oaicite:3]{index=3}
+            </div>
           </div>
         </div>
 
@@ -239,13 +266,19 @@
 
 <script>
 (() => {
+  "use strict";
+
   const pill = document.getElementById("pill");
   const msgBox = document.getElementById("msgBox");
   const tokenBox = document.getElementById("tokenBox");
   const scopeBox = document.getElementById("scopeBox");
+  const broadcasterBox = document.getElementById("broadcasterBox");
+  const userBox = document.getElementById("userBox");
+
   const closeBtn = document.getElementById("closeBtn");
   const copyTokenBtn = document.getElementById("copyTokenBtn");
   const copyScopesBtn = document.getElementById("copyScopesBtn");
+  const copyBroadcasterBtn = document.getElementById("copyBroadcasterBtn");
   const redirectBox = document.getElementById("redirectBox");
   const copyRedirectBtn = document.getElementById("copyRedirectBtn");
 
@@ -261,26 +294,43 @@
   const showGood = (html) => { msgBox.className = "good small"; msgBox.innerHTML = html; };
   const clearMsg = () => { msgBox.className = ""; msgBox.innerHTML = ""; };
 
+  const STORE = {
+    CLIENT_ID: "rlc_twitch_client_id_v1",
+    TOKEN: "twitch_oauth_access_token",
+    SCOPE: "twitch_oauth_scope",
+    TOKEN_TYPE: "twitch_oauth_token_type",
+    SAVED_AT: "twitch_oauth_saved_at",
+    EXPIRES_IN: "twitch_oauth_expires_in",
+    USER_ID: "twitch_oauth_user_id",
+    USER_LOGIN: "twitch_oauth_user_login",
+    USER_DISPLAY: "twitch_oauth_user_display"
+  };
+
   function cleanRedirectUri() {
-    // redirect_uri "estable": sin query, sin hash
+    // redirect_uri "estable": sin query, sin hash (debe coincidir EXACTO con el registrado)
     return location.origin + location.pathname;
   }
 
   redirectBox.value = cleanRedirectUri();
 
-  // Twitch devuelve token en fragment (#access_token=...)
+  // Query params (por si vienes desde un panel con ?key=...)
+  const qp = new URLSearchParams(location.search);
+  const incomingKey = (qp.get("key") || "").trim();
+
+  // Fragment (#access_token=...) (implicit flow)
   const hash = (location.hash || "").startsWith("#") ? location.hash.slice(1) : "";
   const hp = new URLSearchParams(hash);
 
+  // En algunos casos, errores también pueden venir en fragment
   const accessToken = hp.get("access_token") || "";
   const scope = hp.get("scope") || "";
   const state = hp.get("state") || "";
   const tokenType = hp.get("token_type") || "";
+  const expiresIn = hp.get("expires_in") || "";
 
-  // Errores pueden venir en query (?error=...)
-  const qp = new URLSearchParams(location.search);
-  const err = qp.get("error") || "";
-  const errDesc = qp.get("error_description") || "";
+  // Errores en query (?error=...) (o fragment en algunos flujos)
+  const err = qp.get("error") || hp.get("error") || "";
+  const errDesc = qp.get("error_description") || hp.get("error_description") || "";
 
   function safeDecode(s) {
     try { return decodeURIComponent(s || ""); } catch { return String(s || ""); }
@@ -305,17 +355,31 @@
     }
   }
 
+  function parseKeyFromState(st) {
+    // Soporta state tipo: "k:<KEY>|<uuid>" o "k=<KEY>&x=..."
+    const s = String(st || "");
+    const m1 = s.match(/(?:^|[|&])k:([^|&]+)/i);
+    if (m1 && m1[1]) return m1[1];
+    const m2 = s.match(/(?:^|[|&])k=([^|&]+)/i);
+    if (m2 && m2[1]) return m2[1];
+    return "";
+  }
+
   function buildAuthorizeUrl(clientId, scopes) {
     const cid = String(clientId || "").trim();
     const sc = String(scopes || "").trim();
     const redirect = cleanRedirectUri();
-    const st = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
+    const uuid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
 
-    // Guardamos state para el panel (si quieres verificar)
+    const keyForState = incomingKey || "";
+    const st = keyForState ? `k:${keyForState}|${uuid}` : uuid;
+
+    // Guardamos state por si quieres verificar
     try { sessionStorage.setItem("twitch_oauth_state", st); } catch (_) {}
 
     const u = new URL("https://id.twitch.tv/oauth2/authorize");
-    u.searchParams.set("response_type", "token"); // implicit
+    // Implicit grant: devuelve access_token en el fragment (#) :contentReference[oaicite:4]{index=4}
+    u.searchParams.set("response_type", "token");
     u.searchParams.set("client_id", cid);
     u.searchParams.set("redirect_uri", redirect);
     if (sc) u.searchParams.set("scope", sc);
@@ -327,8 +391,47 @@
   function clearTokenFromAddressBar() {
     // quita el fragmento con el token de la barra (seguridad)
     try {
+      // preserva query si la hubiera (por ejemplo ?key=...)
       history.replaceState(null, "", location.pathname + location.search);
     } catch (_) {}
+  }
+
+  async function fetchHelixMe(clientId, token) {
+    const cid = String(clientId || "").trim();
+    const t = String(token || "").trim();
+    if (!cid || !t) return null;
+
+    try {
+      const res = await fetch("https://api.twitch.tv/helix/users", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${t}`,
+          "Client-Id": cid
+        }
+      });
+      if (!res.ok) return null;
+      const j = await res.json();
+      const u = (j && j.data && j.data[0]) ? j.data[0] : null;
+      if (!u) return null;
+      return {
+        id: String(u.id || ""),
+        login: String(u.login || ""),
+        display_name: String(u.display_name || "")
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function postToOpener(payload) {
+    try {
+      if (window.opener && window.opener !== window) {
+        // Solo a mismo origin (seguro)
+        window.opener.postMessage(payload, location.origin);
+        return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   // UI handlers
@@ -350,17 +453,35 @@
     else showWarn("❌ No se pudo copiar. Copia manualmente.");
   });
 
+  copyBroadcasterBtn.addEventListener("click", async () => {
+    const ok = await copyText(broadcasterBox.textContent);
+    if (ok) showGood("✅ broadcaster_id copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
   closeBtn.addEventListener("click", () => {
-    // window.close solo funciona si se abrió con JS (popup)
     try { window.close(); } catch (_) {}
   });
+
+  function loadSavedClientId() {
+    try {
+      const v = localStorage.getItem(STORE.CLIENT_ID) || "";
+      if (v && !clientIdEl.value) clientIdEl.value = v;
+    } catch (_) {}
+  }
+
+  function saveClientId(cid) {
+    try { localStorage.setItem(STORE.CLIENT_ID, String(cid || "").trim()); } catch (_) {}
+  }
+
+  loadSavedClientId();
 
   openAuthBtn.addEventListener("click", () => {
     clearMsg();
     const cid = clientIdEl.value.trim();
     if (!cid) { showWarn("Pon tu <b>Client ID</b> primero."); return; }
+    saveClientId(cid);
     const url = buildAuthorizeUrl(cid, scopesEl.value);
-    // abre en esta pestaña o popup según prefieras
     location.href = url;
   });
 
@@ -368,6 +489,7 @@
     clearMsg();
     const cid = clientIdEl.value.trim();
     if (!cid) { showWarn("Pon tu <b>Client ID</b> primero."); return; }
+    saveClientId(cid);
     const url = buildAuthorizeUrl(cid, scopesEl.value);
     const ok = await copyText(url);
     if (ok) showGood("✅ URL de login copiada.");
@@ -375,51 +497,107 @@
   });
 
   // Mostrar estado principal
-  if (err) {
-    badPill("Error OAuth");
-    const desc = safeDecode(errDesc);
-    tokenBox.textContent = "(vacío)";
-    scopeBox.textContent = "(vacío)";
-    showWarn(`<b>Error OAuth:</b> <code>${err}</code>${desc ? ` — ${desc}` : ""}<br/><br/>
-      Si el error es <b>redirect_mismatch</b>, revisa que <b>redirect_uri</b> sea exactamente:<br/>
-      <code>${cleanRedirectUri()}</code><br/>
-      y que esté añadido en tu app → <b>OAuth Redirect URLs</b>.`);
-  } else if (accessToken) {
+  (async () => {
+    if (err) {
+      badPill("Error OAuth");
+      const desc = safeDecode(errDesc);
+      tokenBox.textContent = "(vacío)";
+      scopeBox.textContent = "(vacío)";
+      broadcasterBox.textContent = "(sin resolver)";
+      userBox.textContent = "(sin resolver)";
+      showWarn(`<b>Error OAuth:</b> <code>${err}</code>${desc ? ` — ${desc}` : ""}<br/><br/>
+        Si el error es <b>redirect_mismatch</b>, revisa que <b>redirect_uri</b> sea exactamente:<br/>
+        <code>${cleanRedirectUri()}</code><br/>
+        y que esté añadido en tu app → <b>OAuth Redirect URLs</b>.`);
+      return;
+    }
+
+    if (!accessToken) {
+      badPill("Sin token");
+      tokenBox.textContent = "(vacío)";
+      scopeBox.textContent = "(vacío)";
+      broadcasterBox.textContent = "(sin resolver)";
+      userBox.textContent = "(sin resolver)";
+      showWarn(`No llegó <code>access_token</code>.<br/><br/>
+        Asegúrate de que el login usa <code>response_type=token</code> (implicit) y que el <code>redirect_uri</code> coincide exactamente con el registrado.`);
+      return;
+    }
+
     okPill("Token recibido ✅");
     tokenBox.textContent = accessToken;
     scopeBox.textContent = safeDecode(scope || "(sin scope)");
-    showGood(`Token recibido (<code>${tokenType || "bearer"}</code>)${state ? ` · state=<code>${state}</code>` : ""}.`);
+
+    const keyFromState = parseKeyFromState(state);
+    const effectiveKey = keyFromState || incomingKey || "";
 
     // Guardado local (por si quieres recuperarlo sin el panel)
     try {
-      localStorage.setItem("twitch_oauth_access_token", accessToken);
-      localStorage.setItem("twitch_oauth_scope", scope || "");
-      localStorage.setItem("twitch_oauth_token_type", tokenType || "bearer");
-      localStorage.setItem("twitch_oauth_saved_at", String(Date.now()));
+      localStorage.setItem(STORE.TOKEN, accessToken);
+      localStorage.setItem(STORE.SCOPE, scope || "");
+      localStorage.setItem(STORE.TOKEN_TYPE, tokenType || "bearer");
+      localStorage.setItem(STORE.SAVED_AT, String(Date.now()));
+      if (expiresIn) localStorage.setItem(STORE.EXPIRES_IN, String(expiresIn));
     } catch (_) {}
 
-    // Devuelve al opener (tu control.html) si existe
-    try {
-      if (window.opener && window.opener !== window) {
-        window.opener.postMessage({
-          type: "TWITCH_OAUTH_TOKEN",
-          access_token: accessToken,
-          scope: safeDecode(scope || ""),
-          token_type: tokenType || "bearer",
-          state: state || ""
-        }, location.origin);
+    // Si tenemos client id, resolvemos /helix/users para sacar broadcaster_id
+    const cid = String(clientIdEl.value || "").trim() || (() => {
+      try { return localStorage.getItem(STORE.CLIENT_ID) || ""; } catch { return ""; }
+    })();
+
+    let me = null;
+    if (cid) {
+      me = await fetchHelixMe(cid, accessToken);
+      if (me && me.id) {
+        broadcasterBox.textContent = me.id;
+        userBox.textContent = `${me.display_name || "(sin display_name)"} @${me.login || "(sin login)"}`;
+        try {
+          localStorage.setItem(STORE.USER_ID, me.id);
+          localStorage.setItem(STORE.USER_LOGIN, me.login || "");
+          localStorage.setItem(STORE.USER_DISPLAY, me.display_name || "");
+        } catch (_) {}
+      } else {
+        broadcasterBox.textContent = "(no se pudo resolver — revisa Client ID)";
+        userBox.textContent = "(no se pudo resolver)";
       }
-    } catch (_) {}
+    } else {
+      broadcasterBox.textContent = "(pega Client ID para resolver)";
+      userBox.textContent = "(pega Client ID para resolver)";
+    }
+
+    showGood(
+      `Token recibido (<code>${tokenType || "bearer"}</code>)`
+      + (expiresIn ? ` · expira en <code>${expiresIn}</code>s` : "")
+      + (state ? ` · state=<code>${state}</code>` : "")
+      + (effectiveKey ? ` · key=<code>${effectiveKey}</code>` : "")
+      + `.`
+    );
+
+    // Devuelve al opener (tu control.html) si existe
+    const payload = {
+      type: "TWITCH_OAUTH_TOKEN",
+      access_token: accessToken,
+      scope: safeDecode(scope || ""),
+      token_type: tokenType || "bearer",
+      expires_in: expiresIn ? Number(expiresIn) : undefined,
+      state: state || "",
+      key: effectiveKey || "",
+      broadcaster_id: (me && me.id) ? me.id : "",
+      user_login: (me && me.login) ? me.login : "",
+      user_display_name: (me && me.display_name) ? me.display_name : ""
+    };
+
+    // También mandamos un alias por compat futura si lo prefieres
+    const payload2 = { ...payload, type: "RLC_TWITCH_OAUTH" };
+
+    const sent = postToOpener(payload) || postToOpener(payload2);
 
     // Limpia la URL para no dejar el token en el address bar
     clearTokenFromAddressBar();
-  } else {
-    badPill("Sin token");
-    tokenBox.textContent = "(vacío)";
-    scopeBox.textContent = "(vacío)";
-    showWarn(`No llegó <code>access_token</code>.<br/><br/>
-      Asegúrate de que el login usa <code>response_type=token</code> (implicit) y que el <code>redirect_uri</code> coincide exactamente con el registrado.`);
-  }
+
+    // Si se envió al opener, opcionalmente puedes autocerrar
+    // (dejo apagado para evitar cierres inesperados)
+    // if (sent) setTimeout(() => { try { window.close(); } catch(_){} }, 350);
+  })();
 })();
 </script>
 </body>
