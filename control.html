@@ -10,8 +10,45 @@
 
   <title>Random Live Cams — Control</title>
 
-  <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.3.1";</script>
+  <script>window.APP_VERSION = "2.3.2";</script>
+
+  <!-- ✅ Cache-bust -->
+  <link rel="stylesheet" href="./styles.css?v=2.3.2" />
+
+  <!-- ✅ REPAIR MODE: control.html?repair=1 -->
+  <script>
+    (() => {
+      try {
+        const u = new URL(location.href);
+        if (!u.searchParams.has("repair")) return;
+
+        const go = async () => {
+          try {
+            if ("serviceWorker" in navigator) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map(r => r.unregister()));
+            }
+          } catch (_) {}
+
+          try {
+            if (window.caches && caches.keys) {
+              const keys = await caches.keys();
+              await Promise.all(keys.map(k => caches.delete(k)));
+            }
+          } catch (_) {}
+
+          try { localStorage.clear(); } catch (_) {}
+          try { sessionStorage.clear(); } catch (_) {}
+
+          u.searchParams.delete("repair");
+          u.searchParams.set("v", window.APP_VERSION || "repair");
+          location.replace(u.toString());
+        };
+
+        go();
+      } catch (_) {}
+    })();
+  </script>
 
   <!-- ✅ Newsroom Skin (solo control.html) -->
   <style>
@@ -29,8 +66,8 @@
       --news-text: rgba(255,255,255,.92);
       --news-muted: rgba(255,255,255,.64);
 
-      --news-accent: #ff3b3b;   /* breaking red */
-      --news-accent2:#37d6ff;   /* cyan */
+      --news-accent: #ff3b3b;
+      --news-accent2:#37d6ff;
       --news-ok:#19e28a;
       --news-bad:#ff5a5a;
 
@@ -47,7 +84,6 @@
       overflow-x: hidden;
     }
 
-    /* Fondo TV: grid + scanlines suaves */
     body.mode-control::before{
       content:"";
       position: fixed;
@@ -94,10 +130,8 @@
       body.mode-control::after{ animation: none; }
     }
 
-    /* Eleva el panel por encima del fondo */
     .controlWrap{ position: relative; z-index: 1; }
 
-    /* Header estilo noticiero */
     .controlHeader{
       position: sticky;
       top: 0;
@@ -126,16 +160,9 @@
       border-radius: 999px;
     }
 
-    .controlTitle .kicker{
-      color: rgba(255,255,255,.75);
-      letter-spacing: .26em;
-    }
-    .controlTitle .name{
-      text-transform: uppercase;
-      letter-spacing: .06em;
-    }
+    .controlTitle .kicker{ color: rgba(255,255,255,.75); letter-spacing: .26em; }
+    .controlTitle .name{ text-transform: uppercase; letter-spacing: .06em; }
 
-    /* Cards más “broadcast” */
     .card{
       background: var(--news-panel);
       border: 1px solid var(--news-stroke);
@@ -159,7 +186,6 @@
       color: rgba(255,255,255,.86);
     }
 
-    /* Pills más claras */
     .pill{
       border: 1px solid var(--news-stroke2) !important;
       background: rgba(0,0,0,.28) !important;
@@ -175,7 +201,6 @@
       box-shadow: 0 0 0 1px rgba(255,90,90,.12) inset;
     }
 
-    /* Botones con look “news tech” */
     .btn{
       border-radius: 14px !important;
       border: 1px solid rgba(255,255,255,.14) !important;
@@ -192,7 +217,6 @@
       box-shadow: 0 14px 36px rgba(0,0,0,.38), 0 0 0 1px rgba(55,214,255,.08) inset;
     }
 
-    /* Inputs */
     .input, .select{
       border-radius: 14px !important;
       border: 1px solid rgba(255,255,255,.14) !important;
@@ -200,6 +224,12 @@
       color: rgba(255,255,255,.92) !important;
     }
     .hint{ color: var(--news-muted); }
+
+    /* ✅ FIX CLAVE: si tu styles.css oculta .full, aquí lo forzamos */
+    .btn.full{
+      display: block !important;
+      width: 100% !important;
+    }
   </style>
 </head>
 
@@ -212,6 +242,18 @@
       </div>
       <div class="pill mono" id="ctlStatus" aria-live="polite">Conectando…</div>
     </header>
+
+    <!-- ✅ DIAGNÓSTICO EN PANTALLA -->
+    <section id="ctlDiagCard" class="card" style="display:none; margin-top:12px">
+      <div class="cardTitle">Diagnóstico</div>
+      <div class="hint" style="margin:10px 0 8px">
+        Se detectó un error JS. Copia este texto y pégamelo.
+      </div>
+      <pre id="ctlDiagText" class="mono" style="white-space:pre-wrap; margin:0; opacity:.92"></pre>
+      <div class="hint" style="margin-top:10px">
+        Tip: prueba <b>control.html?repair=1</b> para limpiar cachés.
+      </div>
+    </section>
 
     <section class="controlGrid" aria-label="Panel de control">
       <!-- NOW -->
@@ -290,9 +332,7 @@
           </select>
         </label>
 
-        <!-- ✅ Nuevo: aplica Fit/HUD/Autoskip/Adfree de golpe -->
         <button id="ctlApplySettings" class="btn full" type="button">Aplicar ajustes</button>
-
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
@@ -519,7 +559,7 @@
         </button>
 
         <div class="hint">
-          Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b> (pone “ — ” solo si hay place).<br/>
+          Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b><br/>
           Necesita token de usuario con scope <b>channel:manage:broadcast</b>.
         </div>
       </div>
@@ -826,14 +866,45 @@
     </noscript>
   </main>
 
-  <script defer src="./cams.js"></script>
-  <script defer src="./music.js"></script>
+  <!-- ✅ Captura errores JS y los muestra en pantalla -->
+  <script>
+    (() => {
+      const qs = (s) => document.querySelector(s);
+      const showDiag = (msg) => {
+        const card = qs("#ctlDiagCard");
+        const pre  = qs("#ctlDiagText");
+        const st   = qs("#ctlStatus");
+        if (card) card.style.display = "block";
+        if (pre) pre.textContent = msg;
+        if (st) {
+          st.textContent = "Error";
+          st.classList.add("pill--bad");
+        }
+      };
 
-  <!-- Core control -->
-  <script defer src="./control.js"></script>
+      window.addEventListener("error", (e) => {
+        const lines = [
+          `[${new Date().toISOString()}] window.error`,
+          `message: ${String(e.message || "")}`,
+          `file: ${String(e.filename || "")}:${String(e.lineno || "")}:${String(e.colno || "")}`,
+          `stack: ${e.error && e.error.stack ? e.error.stack : "(no stack)"}`
+        ];
+        showDiag(lines.join("\n"));
+      });
 
-  <!-- Extra modules -->
-  <script defer src="./catalogControl.js"></script>
-  <script defer src="./newsTickerControl.js"></script>
+      window.addEventListener("unhandledrejection", (e) => {
+        const r = e.reason;
+        const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
+        showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
+      });
+    })();
+  </script>
+
+  <!-- ✅ Cache-bust scripts -->
+  <script defer src="./cams.js?v=2.3.2"></script>
+  <script defer src="./music.js?v=2.3.2"></script>
+  <script defer src="./control.js?v=2.3.2"></script>
+  <script defer src="./catalogControl.js?v=2.3.2"></script>
+  <script defer src="./newsTickerControl.js?v=2.3.2"></script>
 </body>
 </html>
