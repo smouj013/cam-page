@@ -11,7 +11,7 @@
   <title>Random Live Cams — Control</title>
 
   <link rel="stylesheet" href="./styles.css" />
-  <script>window.APP_VERSION = "2.3.0";</script>
+  <script>window.APP_VERSION = "2.3.1";</script>
 
   <!-- ✅ Newsroom Skin (solo control.html) -->
   <style>
@@ -290,6 +290,9 @@
           </select>
         </label>
 
+        <!-- ✅ Nuevo: aplica Fit/HUD/Autoskip/Adfree de golpe -->
+        <button id="ctlApplySettings" class="btn full" type="button">Aplicar ajustes</button>
+
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
@@ -329,7 +332,6 @@
           </label>
         </div>
 
-        <!-- ✅ Nuevos controles (opcionales) compatibles con catalogControl.js v1.2.0 -->
         <div class="row2">
           <label class="row" style="margin:0" for="ctlCatalogMode">
             <span>Modo</span>
@@ -457,7 +459,6 @@
           <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
         </div>
 
-        <!-- ✅ Botón extra (lo usaba tu JS anterior; ahora sí existe) -->
         <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">
           Copiar URL Stream (con ticker)
         </button>
@@ -503,7 +504,6 @@
                  value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
         </label>
 
-        <!-- ✅ Nuevo: cooldown -->
         <label class="row" for="ctlTitleCooldown">
           <span>Cooldown (s)</span>
           <input id="ctlTitleCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
