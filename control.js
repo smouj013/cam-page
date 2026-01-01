@@ -1,4 +1,4 @@
-/* control.js — RLC Control v2.3.2 (NEWSROOM + COMPAT FIX + APPLY BTN + HELIX TIMEOUT FIX)
+/* control.js — RLC Control v2.3.3 (OAUTH AUTO BROADCASTER ID + NEWSROOM + COMPAT FIX + APPLY BTN + HELIX TIMEOUT FIX)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
@@ -12,6 +12,9 @@
    ✅ Auto Twitch Title (Helix) — COMPAT con IDs ctlTitle* del HTML
    ✅ Botón “Aplicar ajustes” (si existe #ctlApplySettings)
    ✅ FIX: Helix Abort/Timeout muestra mensaje claro (no “signal aborted”)
+   ✅ NEW: OAuth AutoFill (Broadcaster ID / token / login / client_id) desde:
+           - localStorage keys "twitch_oauth_*" (oauth-return.html)
+           - window.postMessage {type:"TWITCH_OAUTH_TOKEN", ...} (popup)
 */
 
 (() => {
@@ -19,8 +22,8 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.2");
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V232";
+  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.3");
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V233";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Base keys / params
@@ -258,9 +261,14 @@
 
   function setPill(el, text, ok = true) {
     if (!el) return;
-    el.textContent = text;
-    el.classList.toggle("pill--ok", !!ok);
-    el.classList.toggle("pill--bad", !ok);
+    try { el.textContent = text; } catch (_) {}
+    // compat con estilos antiguos y nuevos
+    try {
+      el.classList.toggle("pill--ok", !!ok);
+      el.classList.toggle("pill--bad", !ok);
+      el.classList.toggle("ok", !!ok);
+      el.classList.toggle("bad", !ok);
+    } catch (_) {}
   }
 
   function setStatus(text, ok = true) { setPill(ctlStatus, text, ok); }
@@ -321,13 +329,14 @@
   }
 
   async function copyToClipboard(text) {
+    const t = String(text ?? "");
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(t);
       return true;
     } catch (_) {
       try {
         const ta = document.createElement("textarea");
-        ta.value = text;
+        ta.value = t;
         ta.style.position = "fixed";
         ta.style.opacity = "0";
         document.body.appendChild(ta);
@@ -512,6 +521,7 @@
     if (KEY) msg.key = KEY;
     busPost(msg);
 
+    // Player expects command too (compat)
     sendCmd("COUNTDOWN_SET", c);
     return c;
   }
@@ -762,7 +772,129 @@
     }
   }
 
-  // ───────────────────────── Bot IRC (igual que tu versión, sin cambios)
+  // ───────────────────────── OAuth AutoFill (Broadcaster ID / token / login / client_id)
+  function readOAuthCache() {
+    const o = {};
+    try { o.access_token = String(lsGet("twitch_oauth_access_token") || "").trim(); } catch (_) {}
+    try { o.token_type = String(lsGet("twitch_oauth_token_type") || "").trim(); } catch (_) {}
+    try { o.user_id = String(lsGet("twitch_oauth_user_id") || "").trim(); } catch (_) {}
+    try { o.broadcaster_id = String(lsGet("twitch_oauth_user_id") || lsGet("twitch_oauth_broadcaster_id") || "").trim(); } catch (_) {}
+    try { o.login = String(lsGet("twitch_oauth_login") || "").trim(); } catch (_) {}
+    try { o.client_id = String(lsGet("twitch_oauth_client_id") || "").trim(); } catch (_) {}
+    try { o.scope = String(lsGet("twitch_oauth_scope") || lsGet("twitch_oauth_scope_raw") || "").trim(); } catch (_) {}
+    return o;
+  }
+
+  function writeOAuthCacheFromMsg(data) {
+    try {
+      const tok = String(data?.access_token || "").trim();
+      const tt = String(data?.token_type || "").trim();
+      const uid = String(data?.user_id || data?.broadcaster_id || "").trim();
+      const login = String(data?.login || "").trim();
+      const cid = String(data?.client_id || "").trim();
+      const scope = String(data?.scope || "").trim();
+
+      if (tok) lsSet("twitch_oauth_access_token", tok);
+      if (tt) lsSet("twitch_oauth_token_type", tt);
+      if (uid) {
+        lsSet("twitch_oauth_user_id", uid);
+        lsSet("twitch_oauth_broadcaster_id", uid);
+      }
+      if (login) lsSet("twitch_oauth_login", login);
+      if (cid) lsSet("twitch_oauth_client_id", cid);
+      if (scope) lsSet("twitch_oauth_scope", scope);
+      lsSet("twitch_oauth_saved_at", String(Date.now()));
+    } catch (_) {}
+  }
+
+  function applyOAuthToUI({ access_token, token_type, user_id, broadcaster_id, login, client_id } = {}, { preferFillEmpty = true } = {}) {
+    const tok = String(access_token || "").trim();
+    const uid = String(broadcaster_id || user_id || "").trim();
+    const lg = String(login || "").trim().replace(/^@/, "");
+    const cid = String(client_id || "").trim();
+
+    // Twitch Channel (para vote/chat)
+    if (ctlTwitchChannel) {
+      const isEmpty = !String(ctlTwitchChannel.value || "").trim();
+      if (!preferFillEmpty || isEmpty) {
+        if (lg && !isEditing(ctlTwitchChannel)) ctlTwitchChannel.value = lg;
+      }
+    }
+
+    // Helix inputs
+    if (ctlTitleClientId) {
+      const isEmpty = !String(ctlTitleClientId.value || "").trim();
+      if (!preferFillEmpty || isEmpty) {
+        if (cid && !isEditing(ctlTitleClientId)) ctlTitleClientId.value = cid;
+      }
+    }
+
+    if (ctlTitleToken) {
+      const isEmpty = !String(ctlTitleToken.value || "").trim();
+      if (!preferFillEmpty || isEmpty) {
+        if (tok && !isEditing(ctlTitleToken)) ctlTitleToken.value = tok;
+      }
+    }
+
+    if (ctlTitleBroadcasterId) {
+      const isEmpty = !String(ctlTitleBroadcasterId.value || "").trim();
+      if (!preferFillEmpty || isEmpty) {
+        if (uid && !isEditing(ctlTitleBroadcasterId)) ctlTitleBroadcasterId.value = uid;
+      }
+    }
+
+    // Persist Helix cfg con lo nuevo (sin forzar enabled)
+    try {
+      const cur = loadHelixCfg();
+      const merged = Object.assign({}, cur, {
+        clientId: String(ctlTitleClientId?.value || cur.clientId || "").trim(),
+        token: String(ctlTitleToken?.value || cur.token || "").trim(),
+        broadcasterId: String(ctlTitleBroadcasterId?.value || cur.broadcasterId || "").trim(),
+      });
+      helixCfg = saveHelixCfg(normalizeHelixCfg(merged));
+      setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
+      helixResolvedBroadcasterId = "";
+      helixLastSig = "";
+      helixLastUpdateAt = 0;
+    } catch (_) {}
+  }
+
+  function tryAutoFillFromOAuthCache() {
+    const o = readOAuthCache();
+    const hasAnything = !!(o.access_token || o.user_id || o.broadcaster_id || o.login || o.client_id);
+    if (!hasAnything) return false;
+    applyOAuthToUI(o, { preferFillEmpty: true });
+    return true;
+  }
+
+  // acepta postMessage del oauth-return.html (misma origin)
+  window.addEventListener("message", (ev) => {
+    try {
+      if (!ev || !ev.data) return;
+      if (String(ev.origin || "") !== String(location.origin || "")) return;
+
+      const d = ev.data || {};
+      if (d.type !== "TWITCH_OAUTH_TOKEN") return;
+
+      writeOAuthCacheFromMsg(d);
+      applyOAuthToUI({
+        access_token: d.access_token,
+        token_type: d.token_type,
+        user_id: d.user_id || d.broadcaster_id,
+        broadcaster_id: d.broadcaster_id || d.user_id,
+        login: d.login,
+        client_id: d.client_id,
+      }, { preferFillEmpty: false }); // postMessage manda data fresca -> puede sobrescribir
+
+      setStatus("OAuth recibido ✅", true);
+      setTimeout(() => {
+        if (lastSeenAt) setStatus("Conectado", true);
+        else setStatus("Esperando player…", false);
+      }, 900);
+    } catch (_) {}
+  });
+
+  // ───────────────────────── Bot IRC
   class TwitchAuthIRC {
     constructor(getCfg, onStatus) {
       this.getCfg = getCfg;
@@ -1079,7 +1211,7 @@
     if (KEY) u.searchParams.set("key", KEY);
     else u.searchParams.delete("key");
 
-    // opcional: fuerza refresh en OBS/browser cacheado
+    // cache buster
     u.searchParams.set("v", APP_VERSION);
 
     return u.toString();
@@ -1318,6 +1450,12 @@
       try { syncHelixUIFromStore(); } catch (_) {}
       return;
     }
+
+    // oauth cache refresh
+    if (String(e.key || "").startsWith("twitch_oauth_")) {
+      try { tryAutoFillFromOAuthCache(); } catch (_) {}
+      return;
+    }
   });
 
   // Watchdog
@@ -1325,7 +1463,6 @@
     const now = Date.now();
 
     if (!lastSeenAt) {
-      // extra: si cams.js no cargó -> lista vacía
       if (!allCams.length) setStatus("Sin CAM_LIST (¿cams.js no cargó?)", false);
       else setStatus(KEY ? "Esperando player… (KEY)" : "Esperando player…", false);
       return;
@@ -1356,6 +1493,9 @@
     try { sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
 
     syncHelixUIFromStore();
+
+    // ✅ intenta autocompletar OAuth (token / broadcaster id / login / client_id)
+    try { tryAutoFillFromOAuthCache(); } catch (_) {}
 
     // defaults defensivos
     if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
