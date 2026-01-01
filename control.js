@@ -1,4 +1,4 @@
-/* control.js — RLC Control v2.3.3 (OAUTH AUTO BROADCASTER ID + NEWSROOM + COMPAT FIX + APPLY BTN + HELIX TIMEOUT FIX)
+/* control.js — RLC Control v2.3.4 (VERSION SYNC + TICKER DEDUPE SAFE + ADS DUR CFG + HOTKEYS SAFE + HELIX TIMEOUT FIX)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
@@ -7,14 +7,15 @@
    ✅ KEY namespace (BUS/CMD/STATE/EVT/BOT_STORE) + compat legacy (incluye fallback keyless)
    ✅ BOT_SAY desde Player (cmd) => Control lo envía al chat (anti-spam)
    ✅ Anuncio automático al chat cuando cambia la cámara (anti-spam)
-   ✅ News Ticker cfg (storage + BC)
+   ✅ News Ticker cfg (storage + BC) (integrado aquí)
    ✅ Countdown cfg + BC/LS + URL params
    ✅ Auto Twitch Title (Helix) — COMPAT con IDs ctlTitle* del HTML
    ✅ Botón “Aplicar ajustes” (si existe #ctlApplySettings)
    ✅ FIX: Helix Abort/Timeout muestra mensaje claro (no “signal aborted”)
-   ✅ NEW: OAuth AutoFill (Broadcaster ID / token / login / client_id) desde:
-           - localStorage keys "twitch_oauth_*" (oauth-return.html)
-           - window.postMessage {type:"TWITCH_OAUTH_TOKEN", ...} (popup)
+   ✅ NEW: ADS_SET incluye duración (adDurSec) + URL incluye adDur
+   ✅ NEW: Hotkeys no disparan escribiendo en inputs/selects/textarea
+   ✅ NEW: Version unificada con APP_VERSION (2.3.4)
+   ✅ NEW: Robustez extra (null-safe / guards)
 */
 
 (() => {
@@ -22,8 +23,8 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.3");
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V233";
+  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.4");
+  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V234";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Base keys / params
@@ -262,7 +263,6 @@
   function setPill(el, text, ok = true) {
     if (!el) return;
     try { el.textContent = text; } catch (_) {}
-    // compat con estilos antiguos y nuevos
     try {
       el.classList.toggle("pill--ok", !!ok);
       el.classList.toggle("pill--bad", !ok);
@@ -352,6 +352,17 @@
     if (!el) return false;
     try { return document.activeElement === el || el.matches(":focus"); }
     catch (_) { return document.activeElement === el; }
+  }
+
+  function isTextInputActive() {
+    const a = document.activeElement;
+    if (!a) return false;
+    const tag = String(a.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return true;
+    try {
+      if (a.isContentEditable) return true;
+    } catch (_) {}
+    return false;
   }
 
   function safeSetValue(el, v) {
@@ -807,13 +818,12 @@
     } catch (_) {}
   }
 
-  function applyOAuthToUI({ access_token, token_type, user_id, broadcaster_id, login, client_id } = {}, { preferFillEmpty = true } = {}) {
+  function applyOAuthToUI({ access_token, user_id, broadcaster_id, login, client_id } = {}, { preferFillEmpty = true } = {}) {
     const tok = String(access_token || "").trim();
     const uid = String(broadcaster_id || user_id || "").trim();
     const lg = String(login || "").trim().replace(/^@/, "");
     const cid = String(client_id || "").trim();
 
-    // Twitch Channel (para vote/chat)
     if (ctlTwitchChannel) {
       const isEmpty = !String(ctlTwitchChannel.value || "").trim();
       if (!preferFillEmpty || isEmpty) {
@@ -821,7 +831,6 @@
       }
     }
 
-    // Helix inputs
     if (ctlTitleClientId) {
       const isEmpty = !String(ctlTitleClientId.value || "").trim();
       if (!preferFillEmpty || isEmpty) {
@@ -843,7 +852,6 @@
       }
     }
 
-    // Persist Helix cfg con lo nuevo (sin forzar enabled)
     try {
       const cur = loadHelixCfg();
       const merged = Object.assign({}, cur, {
@@ -867,7 +875,6 @@
     return true;
   }
 
-  // acepta postMessage del oauth-return.html (misma origin)
   window.addEventListener("message", (ev) => {
     try {
       if (!ev || !ev.data) return;
@@ -879,12 +886,11 @@
       writeOAuthCacheFromMsg(d);
       applyOAuthToUI({
         access_token: d.access_token,
-        token_type: d.token_type,
         user_id: d.user_id || d.broadcaster_id,
         broadcaster_id: d.broadcaster_id || d.user_id,
         login: d.login,
         client_id: d.client_id,
-      }, { preferFillEmpty: false }); // postMessage manda data fresca -> puede sobrescribir
+      }, { preferFillEmpty: false });
 
       setStatus("OAuth recibido ✅", true);
       setTimeout(() => {
@@ -1183,6 +1189,8 @@
     else u.searchParams.set("ads", "0");
 
     if (ctlAdLead?.value != null) u.searchParams.set("adLead", String(clamp(parseInt(ctlAdLead.value || "30", 10) || 30, 0, 300)));
+    if (ctlAdDur?.value != null) u.searchParams.set("adDur", String(clamp(parseInt(ctlAdDur.value || "30", 10) || 30, 5, 600)));
+
     if (ctlAdShowDuring?.value === "off") u.searchParams.set("adShowDuring", "0");
     else u.searchParams.set("adShowDuring", "1");
 
@@ -1451,7 +1459,6 @@
       return;
     }
 
-    // oauth cache refresh
     if (String(e.key || "").startsWith("twitch_oauth_")) {
       try { tryAutoFillFromOAuthCache(); } catch (_) {}
       return;
@@ -1493,8 +1500,6 @@
     try { sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
 
     syncHelixUIFromStore();
-
-    // ✅ intenta autocompletar OAuth (token / broadcaster id / login / client_id)
     try { tryAutoFillFromOAuthCache(); } catch (_) {}
 
     // defaults defensivos
@@ -1705,6 +1710,7 @@
       sendCmd("ADS_SET", {
         enabled: (ctlAdsOn?.value === "on"),
         adLead: clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300),
+        adDurSec: clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 600),
         adShowDuring: (ctlAdShowDuring?.value !== "off"),
         adChatText: (ctlAdChatText?.value || "").trim(),
       });
@@ -1769,8 +1775,11 @@
       setTimeout(() => setBotStatus(bot.connected ? "Conectado (auth)" : "Bot listo", !!bot.connected), 900);
     });
 
-    // Teclas
+    // Teclas (safe: no escribir)
     window.addEventListener("keydown", (e) => {
+      if (!e) return;
+      if (isTextInputActive()) return;
+
       const k = (e.key || "").toLowerCase();
       if (k === " ") { e.preventDefault(); sendCmd("TOGGLE_PLAY"); }
       else if (k === "n") sendCmd("NEXT");

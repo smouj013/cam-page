@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#0b0f14" />
   <meta name="robots" content="noindex,nofollow" />
   <title>Twitch OAuth Return</title>
+
   <style>
     :root{
       --bg0:#05060b; --bg1:#070b14; --bg2:#0a1528;
@@ -40,7 +41,7 @@
     }
     .wrap{position:relative; z-index:1; padding:24px;}
     .card{
-      max-width: 1020px; margin: 0 auto;
+      max-width: 1120px; margin: 0 auto;
       background: var(--panel);
       border: 1px solid var(--stroke);
       border-radius: var(--r);
@@ -70,6 +71,7 @@
     .pill.bad{border-color: rgba(255,90,90,.40);}
     .body{padding: 18px;}
     .muted{color:var(--muted)}
+    .small{font-size:12px}
     .grid{
       display:grid;
       grid-template-columns: 1fr;
@@ -77,7 +79,7 @@
       margin-top: 12px;
     }
     @media (min-width: 980px){
-      .grid{grid-template-columns: 1.25fr .75fr;}
+      .grid{grid-template-columns: 1.35fr .65fr;}
     }
     .box{
       border: 1px solid var(--stroke);
@@ -107,7 +109,6 @@
     .btn:hover{transform: translateY(-1px); border-color: rgba(55,214,255,.25); filter: brightness(1.05);}
     .btn.ghost{background: rgba(0,0,0,.18);}
     .btn.full{flex:1 1 220px;}
-    .small{font-size:12px}
     .warn{
       margin-top: 12px;
       border-left: 3px solid rgba(255,90,90,.65);
@@ -122,12 +123,9 @@
       background: rgba(25,226,138,.08);
       border-radius: 12px;
     }
-    .field{
-      display:flex; flex-direction:column; gap:6px;
-      margin-top: 10px;
-    }
+    .field{display:flex; flex-direction:column; gap:6px; margin-top: 10px;}
     label{font-weight:950; letter-spacing:.02em; font-size:12px; opacity:.9}
-    input{
+    input, textarea, select{
       border-radius: 14px;
       border: 1px solid rgba(255,255,255,.14);
       background: rgba(0,0,0,.18);
@@ -136,6 +134,7 @@
       outline:none;
       font-family: var(--mono);
     }
+    textarea{min-height:110px; resize:vertical}
     .kv{
       display:grid;
       grid-template-columns: 160px 1fr;
@@ -144,27 +143,45 @@
     }
     .k{color: rgba(255,255,255,.78); font-weight:900; font-size:12px; letter-spacing:.02em}
     .v{font-family: var(--mono); color: rgba(255,255,255,.92)}
+    .chipRow{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
+    .chip{
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      padding: 8px 10px;
+      border-radius: 999px;
+      cursor:pointer;
+      font: 900 12px/1 var(--sans);
+      user-select:none;
+      transition: border-color .12s ease, transform .12s ease, filter .12s ease;
+    }
+    .chip:hover{transform: translateY(-1px); border-color: rgba(55,214,255,.25); filter: brightness(1.05);}
+    .chip.on{border-color: rgba(25,226,138,.35);}
+    .hr{height:1px; background: rgba(255,255,255,.10); margin:14px 0;}
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="card">
       <div class="topbar">
         <div class="title">
           <div class="kicker" id="kicker">OAUTH CALLBACK</div>
-          <h1 id="headline">✅ Twitch OAuth recibido</h1>
+          <h1 id="headline">Twitch OAuth</h1>
         </div>
         <div id="pill" class="pill">Leyendo respuesta…</div>
       </div>
 
       <div class="body">
         <p class="muted small" style="margin:0">
-          Esta página captura el token devuelto por Twitch (fragmento <code>#</code>) y además intenta
-          <b>validarlo</b> para obtener automáticamente tu <b>user_id</b> y <b>login</b>.
-          Si abriste esto desde tu panel, lo devuelve al <code>window.opener</code>.
+          Esta página sirve para:
+          <b>(1)</b> generar el link de login,
+          <b>(2)</b> capturar el <code>access_token</code> devuelto (en <code>#</code>),
+          <b>(3)</b> validarlo vía <code>/oauth2/validate</code>,
+          <b>(4)</b> darte <b>todos los valores listos</b> para Helix/IRC y para tu panel (<code>.env</code>/<code>JSON</code>).
         </p>
 
         <div class="grid">
+          <!-- IZQ: RESULTADO -->
           <div>
             <div class="field">
               <label>Redirect URI (este mismo)</label>
@@ -179,18 +196,30 @@
 
             <div id="msgBox" class=""></div>
 
-            <div class="field" style="margin-top:16px">
-              <label>Access Token</label>
+            <div class="hr"></div>
+
+            <div class="field">
+              <label>Access Token (Helix)</label>
               <div class="box"><pre id="tokenBox">(vacío)</pre></div>
+              <div class="muted small">
+                Helix usa: <code>Authorization: Bearer &lt;token&gt;</code> + <code>Client-Id: &lt;client_id&gt;</code>
+              </div>
             </div>
 
             <div class="field">
-              <label>Scopes</label>
+              <label>IRC PASS (para bot)</label>
+              <div class="box"><pre id="ircPassBox">(vacío)</pre></div>
+              <div class="muted small">IRC usa <code>PASS oauth:&lt;token&gt;</code> (prefijo <code>oauth:</code>).</div>
+            </div>
+
+            <div class="field">
+              <label>Scopes (permisos)</label>
               <div class="box"><pre id="scopeBox">(vacío)</pre></div>
             </div>
 
             <div class="row">
               <button id="copyTokenBtn" class="btn full" type="button">Copiar token</button>
+              <button id="copyIrcBtn" class="btn ghost full" type="button">Copiar IRC PASS</button>
               <button id="copyScopesBtn" class="btn ghost full" type="button">Copiar scopes</button>
             </div>
 
@@ -198,10 +227,11 @@
               <label>Datos (validate)</label>
               <div class="box">
                 <div class="kv">
-                  <div class="k">User ID</div><div class="v" id="broadcasterId">(—)</div>
-                  <div class="k">Login</div><div class="v" id="loginName">(—)</div>
-                  <div class="k">Client ID</div><div class="v" id="clientIdOut">(—)</div>
+                  <div class="k">User ID (canal)</div><div class="v" id="broadcasterId">(—)</div>
+                  <div class="k">Login (usuario)</div><div class="v" id="loginName">(—)</div>
+                  <div class="k">Client ID (app)</div><div class="v" id="clientIdOut">(—)</div>
                   <div class="k">Expira en</div><div class="v" id="expiresOut">(—)</div>
+                  <div class="k">State</div><div class="v" id="stateOut">(—)</div>
                 </div>
               </div>
             </div>
@@ -209,30 +239,60 @@
             <div class="row">
               <button id="copyBroadcasterBtn" class="btn full" type="button">Copiar User ID</button>
               <button id="copyLoginBtn" class="btn ghost full" type="button">Copiar login</button>
+              <button id="copyClientIdBtn" class="btn ghost full" type="button">Copiar Client ID</button>
+            </div>
+
+            <div class="field" style="margin-top:14px">
+              <label>Bloque “pegar en tu panel” (.env)</label>
+              <div class="box"><pre id="envBox">(vacío)</pre></div>
+            </div>
+
+            <div class="row">
+              <button id="copyEnvBtn" class="btn full" type="button">Copiar .env</button>
+              <button id="copyJsonBtn" class="btn ghost full" type="button">Copiar JSON</button>
             </div>
 
             <div class="warn small">
-              ⚠️ No publiques este token en GitHub. Guárdalo en local (localStorage / tu panel admin / config privada).
+              ⚠️ No publiques este token. Trátalo como contraseña. Guárdalo solo en local (tu panel admin / localStorage).
             </div>
           </div>
 
+          <!-- DER: GENERADOR -->
           <div>
             <div class="field">
-              <label>Generador de URL OAuth (para obtener token)</label>
-              <div class="muted small">
-                Puedes pasar <code>?scopes=...</code> y <code>?target=bot|title</code>. (El panel lo hace solo.)
+              <label>Modo / presets</label>
+              <div class="muted small">Elige un preset y te rellena scopes recomendados.</div>
+              <div class="chipRow" id="presetRow">
+                <div class="chip" data-preset="bot">BOT (chat)</div>
+                <div class="chip" data-preset="title">TÍTULO/CATEGORÍA</div>
+                <div class="chip" data-preset="ads">ADS / COMMERCIAL</div>
+                <div class="chip" data-preset="custom">CUSTOM</div>
               </div>
             </div>
 
             <div class="field">
               <label>Client ID (de tu app de Twitch)</label>
               <input id="clientId" type="text" placeholder="Pega tu Client ID aquí" autocomplete="off"/>
-              <div class="muted small">Solo se usa para construir el link de login.</div>
+              <div class="muted small">Esto es el ID de la app (Developer Console). No es tu user_id.</div>
             </div>
 
             <div class="field">
               <label>Scopes (separados por espacio)</label>
-              <input id="scopes" type="text" value="channel:manage:broadcast" autocomplete="off"/>
+              <input id="scopes" type="text" value="chat:read chat:edit" autocomplete="off"/>
+              <div class="muted small">
+                IRC: <code>chat:read chat:edit</code>. Título: <code>channel:manage:broadcast</code>.
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Opciones</label>
+              <div class="box">
+                <div class="small muted" style="line-height:1.45">
+                  <div><b>target</b>: etiqueta para tu panel (bot/title/ads/custom)</div>
+                  <div><b>autoclose</b>: si viene en <code>?autoclose=1</code> cierra tras capturar</div>
+                  <div><b>persist</b>: si viene <code>?persist=1</code> recuerda Client ID y preset en este navegador</div>
+                </div>
+              </div>
             </div>
 
             <div class="row">
@@ -240,16 +300,21 @@
               <button id="copyAuthBtn" class="btn ghost full" type="button">Copiar URL login</button>
             </div>
 
+            <div class="field">
+              <label>URL de login generada</label>
+              <div class="box"><pre id="authUrlBox">(vacío)</pre></div>
+            </div>
+
             <div class="good small">
-              Si te sale <b>redirect_mismatch</b>:
+              Si sale <b>redirect_mismatch</b>:
               <ul style="margin:8px 0 0; padding-left:18px">
-                <li>El <code>redirect_uri</code> del login debe ser EXACTAMENTE el de arriba (sin <code>?</code> ni <code>#</code>).</li>
-                <li>Añádelo tal cual en la app de Twitch → <b>OAuth Redirect URLs</b>.</li>
+                <li>El <code>redirect_uri</code> del login debe ser EXACTAMENTE <code id="redirMini"></code></li>
+                <li>Añádelo tal cual en la app → <b>OAuth Redirect URLs</b>.</li>
               </ul>
             </div>
 
             <div class="muted small" style="margin-top:10px">
-              Tip: si abres esto desde tu <code>control.html</code> en popup, cuando llegue el token
+              Si abriste esto desde <code>control.html</code> en popup, al llegar el token
               se enviará por <code>postMessage</code> al panel automáticamente.
             </div>
           </div>
@@ -261,32 +326,46 @@
 
 <script>
 (() => {
+  // ─────────────────────────────────────────────────────────────
+  // Twitch OAuth Helper (Implicit Flow) + Validate + Export
+  // ─────────────────────────────────────────────────────────────
   const pill = document.getElementById("pill");
   const msgBox = document.getElementById("msgBox");
 
   const tokenBox = document.getElementById("tokenBox");
+  const ircPassBox = document.getElementById("ircPassBox");
   const scopeBox = document.getElementById("scopeBox");
 
   const closeBtn = document.getElementById("closeBtn");
   const copyTokenBtn = document.getElementById("copyTokenBtn");
+  const copyIrcBtn = document.getElementById("copyIrcBtn");
   const copyScopesBtn = document.getElementById("copyScopesBtn");
 
   const redirectBox = document.getElementById("redirectBox");
+  const redirMini = document.getElementById("redirMini");
   const copyRedirectBtn = document.getElementById("copyRedirectBtn");
 
   const clientIdEl = document.getElementById("clientId");
   const scopesEl = document.getElementById("scopes");
   const openAuthBtn = document.getElementById("openAuthBtn");
   const copyAuthBtn = document.getElementById("copyAuthBtn");
+  const authUrlBox = document.getElementById("authUrlBox");
 
   const broadcasterIdEl = document.getElementById("broadcasterId");
   const loginNameEl = document.getElementById("loginName");
   const clientIdOutEl = document.getElementById("clientIdOut");
   const expiresOutEl = document.getElementById("expiresOut");
+  const stateOutEl = document.getElementById("stateOut");
 
   const copyBroadcasterBtn = document.getElementById("copyBroadcasterBtn");
   const copyLoginBtn = document.getElementById("copyLoginBtn");
+  const copyClientIdBtn = document.getElementById("copyClientIdBtn");
 
+  const envBox = document.getElementById("envBox");
+  const copyEnvBtn = document.getElementById("copyEnvBtn");
+  const copyJsonBtn = document.getElementById("copyJsonBtn");
+
+  const presetRow = document.getElementById("presetRow");
   const kickerEl = document.getElementById("kicker");
   const headlineEl = document.getElementById("headline");
 
@@ -298,45 +377,104 @@
   const clearMsg = () => { msgBox.className = ""; msgBox.innerHTML = ""; };
 
   const qp = new URLSearchParams(location.search);
-  const target = (qp.get("target") || qp.get("for") || "title").toLowerCase();
+
+  // target: etiqueta para tu panel (bot/title/ads/custom)
+  const target = (qp.get("target") || qp.get("for") || "custom").toLowerCase();
+
+  // Prefill opcional
   const preScopes = (qp.get("scopes") || "").trim();
   const preClientId = (qp.get("client_id") || "").trim();
+
+  // Autoclose: cierra el popup al capturar token
   const autoClose = (qp.get("autoclose") === "1");
 
-  // UI label según target
-  if (target === "bot") {
-    kickerEl.textContent = "OAUTH (BOT)";
-    headlineEl.textContent = "✅ OAuth del BOT recibido";
-    if (!preScopes) scopesEl.value = "chat:edit chat:read";
-  } else {
-    kickerEl.textContent = "OAUTH (TITLE)";
-    headlineEl.textContent = "✅ OAuth (auto-título) recibido";
-    if (!preScopes) scopesEl.value = "channel:manage:broadcast";
+  // Persist: recuerda ClientID/preset en local
+  const persist = (qp.get("persist") === "1");
+  const LS_KEY = "rlc_oauth_helper_v1";
+
+  function safeDecode(s) {
+    try { return decodeURIComponent(String(s || "")); }
+    catch { return String(s || ""); }
   }
-  if (preScopes) scopesEl.value = preScopes;
-  if (preClientId) clientIdEl.value = preClientId;
+  function decodeScopesLikeTwitch(s){
+    // Twitch puede devolver scope en fragmento con + o %20
+    const raw = String(s || "");
+    return safeDecode(raw.replace(/\+/g, " ")).trim();
+  }
 
   function cleanRedirectUri() {
     // redirect_uri estable: sin query, sin hash
     return location.origin + location.pathname;
   }
+
   redirectBox.value = cleanRedirectUri();
+  redirMini.textContent = cleanRedirectUri();
 
-  // Twitch devuelve token en fragment (#access_token=...)
-  const hash = (location.hash || "").startsWith("#") ? location.hash.slice(1) : "";
-  const hp = new URLSearchParams(hash);
+  // ───────────── Presets (puedes ampliarlos sin romper nada) ─────────────
+  const PRESETS = {
+    bot:   { label:"OAUTH (BOT)",   title:"✅ OAuth del BOT",   scopes:"chat:read chat:edit" },
+    title: { label:"OAUTH (TITLE)", title:"✅ OAuth (título)",  scopes:"channel:manage:broadcast" },
+    ads:   { label:"OAUTH (ADS)",   title:"✅ OAuth (ads)",     scopes:"channel:edit:commercial channel:manage:ads" },
+    custom:{ label:"OAUTH (CUSTOM)",title:"✅ OAuth (custom)",  scopes:"" }
+  };
 
-  const accessToken = hp.get("access_token") || "";
-  const scope = hp.get("scope") || "";
-  const state = hp.get("state") || "";
-  const tokenType = hp.get("token_type") || "bearer";
+  function setActivePreset(p){
+    const preset = PRESETS[p] ? p : "custom";
+    [...presetRow.querySelectorAll(".chip")].forEach(ch => {
+      ch.classList.toggle("on", (ch.dataset.preset === preset));
+    });
+    const info = PRESETS[preset];
+    kickerEl.textContent = info.label;
+    headlineEl.textContent = info.title;
 
-  // Errores pueden venir en query (?error=...)
-  const err = qp.get("error") || "";
-  const errDesc = qp.get("error_description") || "";
+    if (!preScopes) {
+      if (preset === "custom") {
+        // no pisar si ya escribió
+        if (!scopesEl.value.trim()) scopesEl.value = "chat:read chat:edit";
+      } else {
+        scopesEl.value = info.scopes;
+      }
+    }
 
-  function safeDecode(s) {
-    try { return decodeURIComponent(s || ""); } catch { return String(s || ""); }
+    // guardar preset si persist=1
+    if (persist) {
+      try {
+        const data = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+        data.preset = preset;
+        localStorage.setItem(LS_KEY, JSON.stringify(data));
+      } catch (_) {}
+    }
+  }
+
+  presetRow.addEventListener("click", (e) => {
+    const chip = e.target && e.target.closest ? e.target.closest(".chip") : null;
+    if (!chip) return;
+    setActivePreset(chip.dataset.preset || "custom");
+  });
+
+  // Restore persist
+  if (persist) {
+    try {
+      const data = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+      if (!preClientId && data.client_id) clientIdEl.value = String(data.client_id);
+      if (!preScopes && data.scopes) scopesEl.value = String(data.scopes);
+      if (data.preset) setActivePreset(String(data.preset));
+    } catch (_) {}
+  }
+
+  // Default preset por target
+  if (target === "bot") setActivePreset("bot");
+  else if (target === "title") setActivePreset("title");
+  else if (target === "ads") setActivePreset("ads");
+  else setActivePreset("custom");
+
+  // Pre-fill from query
+  if (preClientId) clientIdEl.value = preClientId;
+  if (preScopes) scopesEl.value = preScopes;
+
+  function randState(){
+    try { return (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2); }
+    catch { return String(Math.random()).slice(2); }
   }
 
   async function copyText(text) {
@@ -362,17 +500,22 @@
     const cid = String(clientId || "").trim();
     const sc = String(scopes || "").trim();
     const redirect = cleanRedirectUri();
-    const st = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
+    const st = randState();
 
     try { sessionStorage.setItem("twitch_oauth_state", st); } catch (_) {}
 
+    // Implicit flow (token en #)
     const u = new URL("https://id.twitch.tv/oauth2/authorize");
-    u.searchParams.set("response_type", "token"); // implicit
+    u.searchParams.set("response_type", "token");
     u.searchParams.set("client_id", cid);
     u.searchParams.set("redirect_uri", redirect);
     if (sc) u.searchParams.set("scope", sc);
     u.searchParams.set("state", st);
     u.searchParams.set("force_verify", "true");
+
+    // añadimos nuestro target para que el callback lo sepa incluso si viene “limpio”
+    u.searchParams.set("target", target);
+
     return u.toString();
   }
 
@@ -416,11 +559,36 @@
       return await r.json();
     };
 
-    try {
-      return await tryFetch(`Bearer ${t}`);
-    } catch (_) {
-      return await tryFetch(`OAuth ${t}`);
-    }
+    // Twitch acepta OAuth o Bearer
+    try { return await tryFetch(`OAuth ${t}`); }
+    catch (_) { return await tryFetch(`Bearer ${t}`); }
+  }
+
+  function buildEnvBlock({
+    access_token="", token_type="bearer", scopes="", client_id="", user_id="", login="", expires_in=0, target=""
+  }){
+    const sc = String(scopes || "").trim();
+    const irc = access_token ? `oauth:${access_token}` : "";
+    return [
+      `# Twitch OAuth export (${target || "custom"})`,
+      `TWITCH_TARGET=${target || ""}`,
+      `TWITCH_CLIENT_ID=${client_id || ""}`,
+      `TWITCH_LOGIN=${login || ""}`,
+      `TWITCH_USER_ID=${user_id || ""}`,
+      `TWITCH_ACCESS_TOKEN=${access_token || ""}`,
+      `TWITCH_TOKEN_TYPE=${token_type || "bearer"}`,
+      `TWITCH_SCOPES=${sc}`,
+      `TWITCH_EXPIRES_IN=${Number(expires_in || 0)}`,
+      `TWITCH_IRC_PASS=${irc}`,
+      ``,
+      `# Helix headers:`,
+      `# Authorization: Bearer ${access_token || "<token>"}`,
+      `# Client-Id: ${client_id || "<client_id>"}`
+    ].join("\n");
+  }
+
+  function buildJsonExport(o){
+    try { return JSON.stringify(o, null, 2); } catch { return "{}"; }
   }
 
   // UI handlers
@@ -433,6 +601,12 @@
   copyTokenBtn.addEventListener("click", async () => {
     const ok = await copyText(tokenBox.textContent);
     if (ok) showGood("✅ Token copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  copyIrcBtn.addEventListener("click", async () => {
+    const ok = await copyText(ircPassBox.textContent);
+    if (ok) showGood("✅ IRC PASS copiado.");
     else showWarn("❌ No se pudo copiar. Copia manualmente.");
   });
 
@@ -454,15 +628,61 @@
     else showWarn("❌ No se pudo copiar. Copia manualmente.");
   });
 
-  closeBtn.addEventListener("click", () => {
-    try { window.close(); } catch (_) {}
+  copyClientIdBtn.addEventListener("click", async () => {
+    const ok = await copyText(clientIdOutEl.textContent);
+    if (ok) showGood("✅ Client ID copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  copyEnvBtn.addEventListener("click", async () => {
+    const ok = await copyText(envBox.textContent);
+    if (ok) showGood("✅ .env copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  copyJsonBtn.addEventListener("click", async () => {
+    const obj = window.__RLC_OAUTH_EXPORT__ || null;
+    const ok = await copyText(buildJsonExport(obj || {}));
+    if (ok) showGood("✅ JSON copiado.");
+    else showWarn("❌ No se pudo copiar. Copia manualmente.");
+  });
+
+  closeBtn.addEventListener("click", () => { try { window.close(); } catch (_) {} });
+
+  function refreshAuthUrlBox(){
+    const cid = clientIdEl.value.trim();
+    const url = cid ? buildAuthorizeUrl(cid, scopesEl.value) : "";
+    authUrlBox.textContent = url || "(vacío)";
+    return url;
+  }
+
+  clientIdEl.addEventListener("input", () => {
+    if (persist) {
+      try {
+        const data = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+        data.client_id = clientIdEl.value.trim();
+        localStorage.setItem(LS_KEY, JSON.stringify(data));
+      } catch (_) {}
+    }
+    refreshAuthUrlBox();
+  });
+
+  scopesEl.addEventListener("input", () => {
+    if (persist) {
+      try {
+        const data = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+        data.scopes = scopesEl.value.trim();
+        localStorage.setItem(LS_KEY, JSON.stringify(data));
+      } catch (_) {}
+    }
+    refreshAuthUrlBox();
   });
 
   openAuthBtn.addEventListener("click", () => {
     clearMsg();
     const cid = clientIdEl.value.trim();
     if (!cid) { showWarn("Pon tu <b>Client ID</b> primero."); return; }
-    const url = buildAuthorizeUrl(cid, scopesEl.value);
+    const url = refreshAuthUrlBox();
     location.href = url;
   });
 
@@ -470,19 +690,38 @@
     clearMsg();
     const cid = clientIdEl.value.trim();
     if (!cid) { showWarn("Pon tu <b>Client ID</b> primero."); return; }
-    const url = buildAuthorizeUrl(cid, scopesEl.value);
+    const url = refreshAuthUrlBox();
     const ok = await copyText(url);
     if (ok) showGood("✅ URL de login copiada.");
     else showWarn("❌ No se pudo copiar. Copia manualmente.");
   });
 
+  // ───────────── Captura de fragment (#access_token=...) ─────────────
+  const hash = (location.hash || "").startsWith("#") ? location.hash.slice(1) : "";
+  const hp = new URLSearchParams(hash);
+
+  const accessToken = hp.get("access_token") || "";
+  const scopeFrag = hp.get("scope") || "";
+  const state = hp.get("state") || "";
+  const tokenType = hp.get("token_type") || "bearer";
+
+  // Errores pueden venir en query (?error=...&error_description=...)
+  const err = qp.get("error") || "";
+  const errDesc = qp.get("error_description") || "";
+
   // Estado principal
   (async () => {
+    // Genera URL de login si ya hay Client ID puesto
+    refreshAuthUrlBox();
+
+    stateOutEl.textContent = state ? String(state) : "(—)";
+
     if (err) {
       badPill("Error OAuth");
-      const desc = safeDecode(errDesc);
       tokenBox.textContent = "(vacío)";
+      ircPassBox.textContent = "(vacío)";
       scopeBox.textContent = "(vacío)";
+      const desc = safeDecode(errDesc);
       showWarn(`<b>Error OAuth:</b> <code>${err}</code>${desc ? ` — ${desc}` : ""}<br/><br/>
         Si el error es <b>redirect_mismatch</b>, revisa que <b>redirect_uri</b> sea exactamente:<br/>
         <code>${cleanRedirectUri()}</code><br/>
@@ -493,52 +732,108 @@
     if (!accessToken) {
       badPill("Sin token");
       tokenBox.textContent = "(vacío)";
+      ircPassBox.textContent = "(vacío)";
       scopeBox.textContent = "(vacío)";
+      clearMsg();
       showWarn(`No llegó <code>access_token</code>.<br/><br/>
-        Asegúrate de que el login usa <code>response_type=token</code> y que el <code>redirect_uri</code> coincide exactamente con el registrado.`);
+        Pulsa <b>Abrir login Twitch</b> (derecha), o pega tu Client ID y genera la URL.<br/>
+        Asegúrate de usar <code>response_type=token</code> y que el <code>redirect_uri</code> coincide EXACTO.`);
       return;
     }
 
     okPill("Token recibido ✅");
     tokenBox.textContent = accessToken;
-    scopeBox.textContent = safeDecode(scope || "(sin scope)");
+    ircPassBox.textContent = `oauth:${accessToken}`;
+    scopeBox.textContent = decodeScopesLikeTwitch(scopeFrag || "(sin scope)");
     clearMsg();
-    showGood(`Token recibido (<code>${tokenType || "bearer"}</code>)${state ? ` · state=<code>${state}</code>` : ""}.<br/>Validando…`);
+
+    // Check state si existe guardado
+    try {
+      const expected = sessionStorage.getItem("twitch_oauth_state") || "";
+      if (expected && state && expected !== state) {
+        showWarn(`⚠️ <b>State no coincide</b> (posible redirect viejo). Token capturado igualmente.`);
+      }
+    } catch (_) {}
+
+    showGood(`Token recibido (<code>${tokenType || "bearer"}</code>).<br/>Validando…`);
 
     let validated = null;
     try {
       validated = await validateToken(accessToken);
       setValidatedInfo(validated);
 
+      const sc = (validated && Array.isArray(validated.scopes)) ? validated.scopes.join(" ") : decodeScopesLikeTwitch(scopeFrag);
+      const env = buildEnvBlock({
+        access_token: accessToken,
+        token_type: tokenType,
+        scopes: sc,
+        client_id: validated.client_id || "",
+        user_id: validated.user_id || "",
+        login: validated.login || "",
+        expires_in: validated.expires_in || 0,
+        target
+      });
+      envBox.textContent = env;
+
+      // Export global para copiar JSON
+      window.__RLC_OAUTH_EXPORT__ = {
+        type: "TWITCH_OAUTH_TOKEN",
+        target,
+        access_token: accessToken,
+        token_type: tokenType || "bearer",
+        scopes: sc,
+        state: state || "",
+        user_id: validated.user_id ? String(validated.user_id) : "",
+        login: validated.login ? String(validated.login) : "",
+        client_id: validated.client_id ? String(validated.client_id) : "",
+        expires_in: validated.expires_in || 0,
+        irc_pass: `oauth:${accessToken}`,
+        helix_headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Client-Id": validated.client_id ? String(validated.client_id) : ""
+        }
+      };
+
       showGood(
         `✅ Token validado.<br/>
-         User ID: <code>${String(validated.user_id || "")}</code><br/>
-         Login: <code>${String(validated.login || "")}</code>`
+         <b>User ID</b>: <code>${String(validated.user_id || "")}</code><br/>
+         <b>Login</b>: <code>${String(validated.login || "")}</code><br/>
+         <b>Client ID</b>: <code>${String(validated.client_id || "")}</code>`
       );
     } catch (e) {
-      const msg = String(e?.message || e || "Error").slice(0, 220);
+      const msg = String(e?.message || e || "Error").slice(0, 240);
       showWarn(`Token recibido, pero <b>no se pudo validar</b>.<br/><code>${msg}</code><br/>
       Aun así puedes copiar el token y usarlo en tu panel.`);
+      // Export parcial
+      window.__RLC_OAUTH_EXPORT__ = {
+        type: "TWITCH_OAUTH_TOKEN",
+        target,
+        access_token: accessToken,
+        token_type: tokenType || "bearer",
+        scopes: decodeScopesLikeTwitch(scopeFrag),
+        state: state || "",
+        irc_pass: `oauth:${accessToken}`
+      };
+      envBox.textContent = buildEnvBlock({
+        access_token: accessToken,
+        token_type: tokenType,
+        scopes: decodeScopesLikeTwitch(scopeFrag),
+        client_id: "",
+        user_id: "",
+        login: "",
+        expires_in: 0,
+        target
+      });
     }
 
-    // Devuelve al opener (tu control.html) si existe
+    // Devuelve al opener (tu control.html) si existe (MISMO ORIGIN)
     try {
       if (window.opener && window.opener !== window) {
-        window.opener.postMessage({
-          type: "TWITCH_OAUTH_TOKEN",
-          target,
-          access_token: accessToken,
-          token_type: tokenType || "bearer",
-          scope: (validated && Array.isArray(validated.scopes)) ? validated.scopes.join(" ") : safeDecode(scope || ""),
-          state: state || "",
-          user_id: validated?.user_id ? String(validated.user_id) : "",
-          login: validated?.login ? String(validated.login) : "",
-          client_id: validated?.client_id ? String(validated.client_id) : ""
-        }, location.origin);
+        window.opener.postMessage(window.__RLC_OAUTH_EXPORT__, location.origin);
       }
     } catch (_) {}
 
-    // Limpia la URL para no dejar el token en el address bar
+    // Limpia el token de la barra
     clearTokenFromAddressBar();
 
     if (autoClose) {
