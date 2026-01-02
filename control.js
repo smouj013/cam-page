@@ -1,4 +1,4 @@
-/* control.js — RLC Control v2.3.4 (VERSION SYNC + TICKER DEDUPE SAFE + ADS DUR CFG + HOTKEYS SAFE + HELIX TIMEOUT FIX)
+/* control.js — RLC Control v2.3.4 (VERSION SYNC + TICKER DEDUPE SAFE + ADS DUR CFG + HOTKEYS SAFE + HELIX TIMEOUT FIX + HELIX 429 BACKOFF NO-SPAM)
    ✅ Controla el Player por BroadcastChannel/localStorage
    ✅ Copia URL del stream con params correctos (voteUi, ads, alerts, chat, ticker, countdown...)
    ✅ Bot IRC (OAuth) configurable desde el panel (manda mensajes al chat)
@@ -16,6 +16,7 @@
    ✅ NEW: Hotkeys no disparan escribiendo en inputs/selects/textarea
    ✅ NEW: Version unificada con APP_VERSION (2.3.4)
    ✅ NEW: Robustez extra (null-safe / guards)
+   ✅ PATCH: Helix 429 -> backoff real + anti-spam (no reintenta cada tick)
 */
 
 (() => {
@@ -23,7 +24,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.4");
+  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.5");
   const LOAD_GUARD = "__RLC_CONTROL_LOADED_V234";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
@@ -137,7 +138,7 @@
   // ADS
   const ctlAdsOn = qs("#ctlAdsOn");
   const ctlAdLead = qs("#ctlAdLead");
-  const ctlAdDur = qs("#ctlAdDur");
+  const ctlAdDur = qs("#ctlAdDur"); // ✅ duración default (para AD_BEGIN)
   const ctlAdShowDuring = qs("#ctlAdShowDuring");
   const ctlAdChatText = qs("#ctlAdChatText");
   const ctlAdNoticeBtn = qs("#ctlAdNoticeBtn");
@@ -250,6 +251,8 @@
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
   function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} }
 
+  function safeJson(raw, fallback = null) { try { return JSON.parse(raw); } catch (_) { return fallback; } }
+
   function sendCmd(cmd, payload = {}) {
     const msg = { type: "cmd", ts: Date.now(), cmd, payload: payload || {} };
     if (KEY) msg.key = KEY;
@@ -359,9 +362,7 @@
     if (!a) return false;
     const tag = String(a.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select") return true;
-    try {
-      if (a.isContentEditable) return true;
-    } catch (_) {}
+    try { if (a.isContentEditable) return true; } catch (_) {}
     return false;
   }
 
@@ -532,7 +533,7 @@
     if (KEY) msg.key = KEY;
     busPost(msg);
 
-    // Player expects command too (compat)
+    // compat: también como cmd
     sendCmd("COUNTDOWN_SET", c);
     return c;
   }
@@ -615,6 +616,12 @@
   let helixLastSig = "";
   let helixResolvedBroadcasterId = "";
 
+  // ✅ anti-spam 429 / retries
+  let helixLastAttemptAt = 0;
+  let helixLastAttemptSig = "";
+  let helixRetryAfterAt = 0;
+  let helixResolvedForLogin = "";
+
   function syncHelixUIFromStore() {
     helixCfg = loadHelixCfg();
     if (ctlTitleOn) ctlTitleOn.value = helixCfg.enabled ? "on" : "off";
@@ -623,7 +630,6 @@
     if (ctlTitleTemplate) ctlTitleTemplate.value = helixCfg.template || HELIX_DEFAULTS.template;
     if (ctlTitleCooldown) ctlTitleCooldown.value = String(helixCfg.cooldownSec || 20);
     if (ctlTitleBroadcasterId) ctlTitleBroadcasterId.value = helixCfg.broadcasterId || "";
-
     setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
   }
 
@@ -673,7 +679,20 @@
     return out;
   }
 
-  // ✅ FIX: Helix abort/timeout -> mensaje claro
+  function _parseHelixRetryMs(headers) {
+    try {
+      const ra = parseInt(headers?.get?.("Retry-After") || "", 10);
+      if (Number.isFinite(ra) && ra > 0) return clamp(ra * 1000, 1000, 180000);
+
+      const resetSec = parseInt(headers?.get?.("Ratelimit-Reset") || "", 10);
+      if (Number.isFinite(resetSec) && resetSec > 0) {
+        const ms = (resetSec * 1000) - Date.now();
+        return clamp(ms, 1000, 180000);
+      }
+    } catch (_) {}
+    return 15000;
+  }
+
   async function helixFetch(path, { method = "GET", clientId, token, body = null, timeoutMs = 20000 } = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -689,10 +708,21 @@
         body: body ? JSON.stringify(body) : null
       });
 
+      if (r.status === 429) {
+        let extra = "";
+        try { extra = await r.text(); } catch (_) {}
+        const e = new Error(`Helix HTTP 429${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+        e.status = 429;
+        e.retryMs = _parseHelixRetryMs(r.headers);
+        throw e;
+      }
+
       if (!r.ok) {
         let extra = "";
         try { extra = await r.text(); } catch (_) {}
-        throw new Error(`Helix HTTP ${r.status}${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+        const e = new Error(`Helix HTTP ${r.status}${extra ? ` — ${extra.slice(0, 180)}` : ""}`);
+        e.status = r.status;
+        throw e;
       }
 
       if (r.status === 204) return { ok: true, data: null };
@@ -701,7 +731,9 @@
     } catch (e) {
       const msg = String(e?.message || "");
       if (e?.name === "AbortError" || /aborted/i.test(msg)) {
-        throw new Error(`Helix timeout (${timeoutMs}ms)`);
+        const err = new Error(`Helix timeout (${timeoutMs}ms)`);
+        err.status = 0;
+        throw err;
       }
       throw e;
     } finally {
@@ -719,1076 +751,952 @@
 
   async function helixSetTitle(broadcasterId, title, clientId, token) {
     const bid = String(broadcasterId || "").trim();
-    const ttl = String(title || "").trim();
-    if (!bid || !ttl) throw new Error("broadcasterId/title vacío");
+    const t = String(title || "").trim();
+    if (!bid || !t) return { ok: false, error: "missing_bid_or_title" };
+
     await helixFetch(`channels?broadcaster_id=${encodeURIComponent(bid)}`, {
       method: "PATCH",
       clientId,
       token,
-      body: { title: ttl }
+      body: { title: t },
+      timeoutMs: 20000
     });
-    return true;
+
+    return { ok: true };
   }
 
-  async function maybeAutoUpdateTwitchTitleFromState(st, force = false) {
-    const cfg = helixCfg || loadHelixCfg();
-    const enabled = !!cfg.enabled && (ctlTitleOn ? (ctlTitleOn.value === "on") : true);
-    if (!enabled) return;
-
-    const channel = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-    if (!channel) { setTitleStatus("Auto título: falta canal", false); return; }
-
-    const clientId = String(cfg.clientId || "").trim();
-    const token = String(cfg.token || "").trim();
-    if (!clientId || !token) { setTitleStatus("Auto título: falta ClientId/Token", false); return; }
-
-    const title = buildTitleFromState(st, cfg.template);
-    if (!title) return;
-
+  function setHelixBackoff(err) {
     const now = Date.now();
-    const cool = (cfg.cooldownSec | 0) * 1000;
-    const sig = `${channel}|${title}`;
-
-    if (!force) {
-      if (sig === helixLastSig) return;
-      if ((now - helixLastUpdateAt) < cool) return;
-    }
-
-    try {
-      setTitleStatus("Actualizando título…", true);
-
-      let broadcasterId = String(cfg.broadcasterId || "").trim();
-      if (!broadcasterId) {
-        if (!helixResolvedBroadcasterId) {
-          helixResolvedBroadcasterId = await helixGetBroadcasterId(channel, clientId, token);
-        }
-        broadcasterId = helixResolvedBroadcasterId;
-      }
-
-      if (!broadcasterId) {
-        setTitleStatus("Helix: no broadcaster_id (ponlo o deja que lo resuelva)", false);
-        return;
-      }
-
-      await helixSetTitle(broadcasterId, title, clientId, token);
-
-      helixLastUpdateAt = now;
-      helixLastSig = sig;
-
-      setTitleStatus(`Título OK: “${title.slice(0, 46)}${title.length > 46 ? "…" : ""}”`, true);
-    } catch (e) {
-      const msg = String(e?.message || e || "Error").slice(0, 120);
-      setTitleStatus(`Helix error: ${msg}`, false);
-      helixResolvedBroadcasterId = "";
+    if (err && (err.status === 429) && err.retryMs) {
+      helixRetryAfterAt = now + clamp(err.retryMs | 0, 1000, 180000);
+      setTitleStatus(`Helix 429 · backoff ${Math.ceil((helixRetryAfterAt - now) / 1000)}s`, false);
+    } else if (err && err.status === 0) {
+      setTitleStatus(String(err.message || "Helix timeout"), false);
+    } else {
+      setTitleStatus(String(err?.message || "Helix error"), false);
     }
   }
 
-  // ───────────────────────── OAuth AutoFill (Broadcaster ID / token / login / client_id)
-  function readOAuthCache() {
-    const o = {};
-    try { o.access_token = String(lsGet("twitch_oauth_access_token") || "").trim(); } catch (_) {}
-    try { o.token_type = String(lsGet("twitch_oauth_token_type") || "").trim(); } catch (_) {}
-    try { o.user_id = String(lsGet("twitch_oauth_user_id") || "").trim(); } catch (_) {}
-    try { o.broadcaster_id = String(lsGet("twitch_oauth_user_id") || lsGet("twitch_oauth_broadcaster_id") || "").trim(); } catch (_) {}
-    try { o.login = String(lsGet("twitch_oauth_login") || "").trim(); } catch (_) {}
-    try { o.client_id = String(lsGet("twitch_oauth_client_id") || "").trim(); } catch (_) {}
-    try { o.scope = String(lsGet("twitch_oauth_scope") || lsGet("twitch_oauth_scope_raw") || "").trim(); } catch (_) {}
-    return o;
+  async function helixEnsureBroadcasterId(login, cfg) {
+    const c = cfg || helixCfg || loadHelixCfg();
+    if (c.broadcasterId) return c.broadcasterId;
+
+    const ch = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    if (!ch) return "";
+
+    if (helixResolvedBroadcasterId && helixResolvedForLogin === ch) return helixResolvedBroadcasterId;
+
+    const bid = await helixGetBroadcasterId(ch, c.clientId, c.token);
+    helixResolvedBroadcasterId = bid || "";
+    helixResolvedForLogin = ch;
+
+    // espejo en input (sin pisar si estás editando)
+    if (ctlTitleBroadcasterId && bid) safeSetValue(ctlTitleBroadcasterId, bid);
+
+    return bid || "";
   }
 
-  function writeOAuthCacheFromMsg(data) {
-    try {
-      const tok = String(data?.access_token || "").trim();
-      const tt = String(data?.token_type || "").trim();
-      const uid = String(data?.user_id || data?.broadcaster_id || "").trim();
-      const login = String(data?.login || "").trim();
-      const cid = String(data?.client_id || "").trim();
-      const scope = String(data?.scope || "").trim();
+  // ───────────────────────── Bot IRC (OAuth)
+  const BOT_DEFAULTS = {
+    enabled: false,
+    user: "",
+    token: "",
+    channel: ""
+  };
 
-      if (tok) lsSet("twitch_oauth_access_token", tok);
-      if (tt) lsSet("twitch_oauth_token_type", tt);
-      if (uid) {
-        lsSet("twitch_oauth_user_id", uid);
-        lsSet("twitch_oauth_broadcaster_id", uid);
-      }
-      if (login) lsSet("twitch_oauth_login", login);
-      if (cid) lsSet("twitch_oauth_client_id", cid);
-      if (scope) lsSet("twitch_oauth_scope", scope);
-      lsSet("twitch_oauth_saved_at", String(Date.now()));
-    } catch (_) {}
-  }
-
-  function applyOAuthToUI({ access_token, user_id, broadcaster_id, login, client_id } = {}, { preferFillEmpty = true } = {}) {
-    const tok = String(access_token || "").trim();
-    const uid = String(broadcaster_id || user_id || "").trim();
-    const lg = String(login || "").trim().replace(/^@/, "");
-    const cid = String(client_id || "").trim();
-
-    if (ctlTwitchChannel) {
-      const isEmpty = !String(ctlTwitchChannel.value || "").trim();
-      if (!preferFillEmpty || isEmpty) {
-        if (lg && !isEditing(ctlTwitchChannel)) ctlTwitchChannel.value = lg;
-      }
-    }
-
-    if (ctlTitleClientId) {
-      const isEmpty = !String(ctlTitleClientId.value || "").trim();
-      if (!preferFillEmpty || isEmpty) {
-        if (cid && !isEditing(ctlTitleClientId)) ctlTitleClientId.value = cid;
-      }
-    }
-
-    if (ctlTitleToken) {
-      const isEmpty = !String(ctlTitleToken.value || "").trim();
-      if (!preferFillEmpty || isEmpty) {
-        if (tok && !isEditing(ctlTitleToken)) ctlTitleToken.value = tok;
-      }
-    }
-
-    if (ctlTitleBroadcasterId) {
-      const isEmpty = !String(ctlTitleBroadcasterId.value || "").trim();
-      if (!preferFillEmpty || isEmpty) {
-        if (uid && !isEditing(ctlTitleBroadcasterId)) ctlTitleBroadcasterId.value = uid;
-      }
-    }
-
-    try {
-      const cur = loadHelixCfg();
-      const merged = Object.assign({}, cur, {
-        clientId: String(ctlTitleClientId?.value || cur.clientId || "").trim(),
-        token: String(ctlTitleToken?.value || cur.token || "").trim(),
-        broadcasterId: String(ctlTitleBroadcasterId?.value || cur.broadcasterId || "").trim(),
-      });
-      helixCfg = saveHelixCfg(normalizeHelixCfg(merged));
-      setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
-      helixResolvedBroadcasterId = "";
-      helixLastSig = "";
-      helixLastUpdateAt = 0;
-    } catch (_) {}
-  }
-
-  function tryAutoFillFromOAuthCache() {
-    const o = readOAuthCache();
-    const hasAnything = !!(o.access_token || o.user_id || o.broadcaster_id || o.login || o.client_id);
-    if (!hasAnything) return false;
-    applyOAuthToUI(o, { preferFillEmpty: true });
-    return true;
-  }
-
-  window.addEventListener("message", (ev) => {
-    try {
-      if (!ev || !ev.data) return;
-      if (String(ev.origin || "") !== String(location.origin || "")) return;
-
-      const d = ev.data || {};
-      if (d.type !== "TWITCH_OAUTH_TOKEN") return;
-
-      writeOAuthCacheFromMsg(d);
-      applyOAuthToUI({
-        access_token: d.access_token,
-        user_id: d.user_id || d.broadcaster_id,
-        broadcaster_id: d.broadcaster_id || d.user_id,
-        login: d.login,
-        client_id: d.client_id,
-      }, { preferFillEmpty: false });
-
-      setStatus("OAuth recibido ✅", true);
-      setTimeout(() => {
-        if (lastSeenAt) setStatus("Conectado", true);
-        else setStatus("Esperando player…", false);
-      }, 900);
-    } catch (_) {}
-  });
-
-  // ───────────────────────── Bot IRC
-  class TwitchAuthIRC {
-    constructor(getCfg, onStatus) {
-      this.getCfg = getCfg;
-      this.onStatus = onStatus || (() => {});
-      this.ws = null;
-      this.closed = true;
-      this.connected = false;
-      this.joinedChan = "";
-      this.backoff = 900;
-      this.timer = null;
-      this.queue = [];
-    }
-    _set(ok, msg) {
-      this.connected = !!ok;
-      try { this.onStatus(msg, !!ok); } catch (_) {}
-    }
-    _normalizeToken(tok) {
-      const t = String(tok || "").trim();
-      if (!t) return "";
-      return t.startsWith("oauth:") ? t : ("oauth:" + t);
-    }
-    connect() {
-      const cfg = this.getCfg();
-      if (!cfg || !cfg.on) { this.close(); this._set(false, "Bot OFF"); return; }
-
-      const user = String(cfg.user || "").trim();
-      const token = this._normalizeToken(cfg.token);
-      const chan = String(cfg.channel || "").trim().replace(/^#/, "").replace(/^@/, "").toLowerCase();
-
-      if (!user || !token || !chan) {
-        this._set(false, "Falta user/token/canal");
-        return;
-      }
-
-      this.closed = false;
-      this._set(false, "Conectando…");
-
-      try { this.ws?.close?.(); } catch (_) {}
-      this.ws = null;
-
-      let ws;
-      try { ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443"); }
-      catch (_) { this._set(false, "WebSocket no disponible"); return; }
-
-      this.ws = ws;
-
-      ws.onopen = () => {
-        this.backoff = 900;
-        this.joinedChan = "";
-        this._set(true, "Conectado (auth)");
-
-        ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
-        ws.send(`PASS ${token}\r\n`);
-        ws.send(`NICK ${user}\r\n`);
-        ws.send(`JOIN #${chan}\r\n`);
-      };
-
-      ws.onmessage = (ev) => {
-        const text = String(ev.data || "");
-        const lines = text.split("\r\n").filter(Boolean);
-        for (const line of lines) this._handleLine(line);
-      };
-
-      ws.onclose = () => {
-        this.connected = false;
-        if (this.closed) { this._set(false, "Desconectado"); return; }
-        this._set(false, "Reconectando…");
-        this._scheduleReconnect();
-      };
-
-      ws.onerror = () => {};
-    }
-    _scheduleReconnect() {
-      try { if (this.timer) clearTimeout(this.timer); } catch (_) {}
-      const wait = clamp(this.backoff | 0, 900, 12000);
-      this.backoff = Math.min(12000, (this.backoff * 1.5) | 0);
-      this.timer = setTimeout(() => {
-        if (this.closed) return;
-        this.connect();
-      }, wait);
-    }
-    _handleLine(line) {
-      if (!line) return;
-      if (line.startsWith("PING")) {
-        try { this.ws?.send?.("PONG :tmi.twitch.tv\r\n"); } catch (_) {}
-        return;
-      }
-      const mJoin = line.match(/ JOIN #([a-z0-9_]+)/i);
-      if (mJoin) {
-        this.joinedChan = (mJoin[1] || "").toLowerCase();
-        this._flush();
-        return;
-      }
-      if (line.includes("Login authentication failed")) {
-        this._set(false, "Auth fallida (token?)");
-        this.close();
-      }
-    }
-    close() {
-      this.closed = true;
-      this.connected = false;
-      try { if (this.timer) clearTimeout(this.timer); } catch (_) {}
-      this.timer = null;
-      try { this.ws?.close?.(); } catch (_) {}
-      this.ws = null;
-      this.queue = [];
-      this.joinedChan = "";
-    }
-    _flush() {
-      if (!this.ws || this.ws.readyState !== 1) return;
-      if (!this.joinedChan) return;
-      const max = 10;
-      let n = 0;
-      while (this.queue.length && n < max) {
-        const it = this.queue.shift();
-        try { this.ws.send(it); } catch (_) {}
-        n++;
-      }
-    }
-    say(message, channel) {
-      const cfg = this.getCfg();
-      const chan = String(channel || cfg.channel || "").trim().replace(/^#/, "").replace(/^@/, "").toLowerCase();
-      const msg = String(message || "").trim();
-      if (!cfg || !cfg.on) return false;
-      if (!chan || !msg) return false;
-
-      const line = `PRIVMSG #${chan} :${msg}\r\n`;
-
-      if (this.ws && this.ws.readyState === 1 && this.joinedChan) {
-        try { this.ws.send(line); return true; } catch (_) { return false; }
-      }
-
-      this.queue.push(line);
-      if (!this.ws || this.ws.readyState > 1) this.connect();
-      return true;
-    }
-  }
-
-  function loadJsonFirst(keys, fallbackVal = null) {
-    for (const k of keys) {
-      try {
-        const raw = lsGet(k);
-        if (!raw) continue;
-        return JSON.parse(raw);
-      } catch (_) {}
-    }
-    return fallbackVal;
+  function normalizeBotCfg(inCfg) {
+    const c = Object.assign({}, BOT_DEFAULTS, (inCfg || {}));
+    c.enabled = (c.enabled === true) || (c.enabled === 1) || (c.enabled === "on");
+    c.user = String(c.user || c.username || "").trim().replace(/^@/, "");
+    c.token = String(c.token || "").trim();
+    c.channel = String(c.channel || c.twitch || c.twitchChannel || "").trim().replace(/^@/, "");
+    c.sayOnAd = (inCfg && (inCfg.sayOnAd === false)) ? false : true;
+    return c;
   }
 
   function loadBotCfg() {
     try {
-      const o = loadJsonFirst([BOT_STORE_KEY, BOT_STORE_KEY_BASE], null);
-      if (!o || typeof o !== "object") return { on: false, user: "", token: "", sayOnAd: true };
-      return {
-        on: !!o.on,
-        user: String(o.user || ""),
-        token: String(o.token || ""),
-        sayOnAd: (typeof o.sayOnAd === "boolean") ? o.sayOnAd : true
-      };
-    } catch (_) {
-      return { on: false, user: "", token: "", sayOnAd: true };
-    }
+      const raw = lsGet(BOT_STORE_KEY);
+      if (raw) return normalizeBotCfg(JSON.parse(raw));
+    } catch (_) {}
+    try {
+      const raw = lsGet(BOT_STORE_KEY_BASE);
+      if (raw) return normalizeBotCfg(JSON.parse(raw));
+    } catch (_) {}
+    return normalizeBotCfg(BOT_DEFAULTS);
   }
 
   function saveBotCfg(cfg) {
-    try {
-      const raw = JSON.stringify(cfg || {});
-      lsSet(BOT_STORE_KEY, raw);
-      lsSet(BOT_STORE_KEY_BASE, raw);
-    } catch (_) {}
+    const c = normalizeBotCfg(cfg);
+    const raw = JSON.stringify(c);
+    lsSet(BOT_STORE_KEY, raw);
+    lsSet(BOT_STORE_KEY_BASE, raw);
+    return c;
   }
 
   let botCfg = loadBotCfg();
 
-  const bot = new TwitchAuthIRC(
-    () => ({
-      on: !!(ctlBotOn?.value === "on"),
-      user: (ctlBotUser?.value || botCfg.user || "").trim(),
-      token: (ctlBotToken?.value || botCfg.token || "").trim(),
-      channel: (ctlTwitchChannel?.value || "").trim().replace(/^@/, "")
-    }),
-    (msg, ok) => setBotStatus(msg, ok)
-  );
+  class TwitchOAuthBot {
+    constructor(cfg) {
+      this.cfg = cfg;
+      this.ws = null;
+      this.closed = false;
+      this.queue = [];
+      this.sending = false;
+      this.reconnectTimer = null;
+      this.lastSendAt = 0;
+      this.onStatus = null;
+    }
 
-  function syncBotUIFromStore() {
-    if (ctlBotOn) ctlBotOn.value = botCfg.on ? "on" : "off";
-    if (ctlBotUser) ctlBotUser.value = botCfg.user || "";
-    if (ctlBotToken) ctlBotToken.value = botCfg.token || "";
-    if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
-    setBotStatus(botCfg.on ? "Bot listo" : "Bot OFF", !!botCfg.on);
+    connect() {
+      const c = this.cfg;
+      const user = String(c.user || "").trim();
+      const tok = String(c.token || "").trim();
+      const ch = String(c.channel || "").trim();
+      if (!user || !tok || !ch) {
+        this._status("Bot: faltan credenciales", false);
+        return;
+      }
+
+      this.closed = false;
+
+      try { this.ws?.close?.(); } catch (_) {}
+      this.ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+
+      this.ws.onopen = () => {
+        this._status("Bot: conectando…", true);
+        try {
+          this.ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
+          this.ws.send(`PASS oauth:${tok.replace(/^oauth:/i, "")}\r\n`);
+          this.ws.send(`NICK ${user}\r\n`);
+          this.ws.send(`JOIN #${ch.toLowerCase()}\r\n`);
+        } catch (_) {}
+        this._flushSoon();
+      };
+
+      this.ws.onmessage = (ev) => {
+        const text = String(ev.data || "");
+        const lines = text.split("\r\n").filter(Boolean);
+        for (const line of lines) {
+          if (line.startsWith("PING")) {
+            try { this.ws?.send?.("PONG :tmi.twitch.tv\r\n"); } catch (_) {}
+          }
+          // si quieres, aquí puedes parsear NOTICEs
+        }
+      };
+
+      this.ws.onerror = () => {};
+
+      this.ws.onclose = () => {
+        if (this.closed) return;
+        this._status("Bot: desconectado (reintento)", false);
+        this._scheduleReconnect();
+      };
+    }
+
+    close() {
+      this.closed = true;
+      try { if (this.reconnectTimer) clearTimeout(this.reconnectTimer); } catch (_) {}
+      this.reconnectTimer = null;
+      this.queue = [];
+      this.sending = false;
+      try { this.ws?.close?.(); } catch (_) {}
+      this.ws = null;
+      this._status("Bot: OFF", false);
+    }
+
+    _scheduleReconnect() {
+      try { if (this.reconnectTimer) clearTimeout(this.reconnectTimer); } catch (_) {}
+      this.reconnectTimer = setTimeout(() => {
+        if (this.closed) return;
+        this.connect();
+      }, 2500);
+    }
+
+    _status(text, ok) {
+      try { this.onStatus?.(text, ok); } catch (_) {}
+    }
+
+    enqueueSay(text) {
+      const msg = String(text || "").trim();
+      if (!msg) return false;
+      this.queue.push(msg.slice(0, 480));
+      this._flushSoon();
+      return true;
+    }
+
+    _flushSoon() {
+      if (this.sending) return;
+      this.sending = true;
+      setTimeout(() => this._flushLoop(), 20);
+    }
+
+    _flushLoop() {
+      if (this.closed) { this.sending = false; return; }
+      const ws = this.ws;
+      if (!ws || ws.readyState !== 1) { this.sending = false; return; }
+
+      const now = Date.now();
+      const minGap = 1400; // anti-rate
+      const wait = Math.max(0, minGap - (now - this.lastSendAt));
+      if (wait > 0) {
+        setTimeout(() => this._flushLoop(), wait + 5);
+        return;
+      }
+
+      const msg = this.queue.shift();
+      if (!msg) { this.sending = false; return; }
+
+      try {
+        ws.send(`PRIVMSG #${String(this.cfg.channel).toLowerCase()} :${msg}\r\n`);
+        this.lastSendAt = Date.now();
+        this._status("Bot: OK", true);
+      } catch (_) {}
+
+      setTimeout(() => this._flushLoop(), 10);
+    }
   }
 
-  function persistBotUIToStore() {
-    botCfg = {
-      on: !!(ctlBotOn?.value === "on"),
-      user: String(ctlBotUser?.value || "").trim(),
-      token: String(ctlBotToken?.value || "").trim(),
-      sayOnAd: !!(ctlBotSayOnAd?.value !== "off")
-    };
-    saveBotCfg(botCfg);
+  let bot = null;
+
+  function botApplyCfgAndMaybeConnect() {
+    botCfg = loadBotCfg();
+    if (!botCfg.enabled) {
+      try { bot?.close?.(); } catch (_) {}
+      bot = null;
+      setBotStatus("Bot: OFF", false);
+      return;
+    }
+
+    if (!bot) {
+      bot = new TwitchOAuthBot(botCfg);
+      bot.onStatus = (t, ok) => setBotStatus(t, ok);
+      bot.connect();
+      return;
+    }
+
+    // si existe, actualiza cfg y reconecta
+    bot.cfg = botCfg;
+    bot.connect();
   }
 
-  function botSayIfEnabled(text) {
-    const botOn = (ctlBotOn?.value === "on");
-    const sayOnAd = (ctlBotSayOnAd?.value !== "off");
-    if (!botOn || !sayOnAd) return false;
-
-    const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-    if (!ch) return false;
+  function botSay(text) {
+    if (!botCfg?.enabled) return false;
+    if (!bot || !bot.ws || bot.ws.readyState !== 1) return false;
 
     const msg = String(text || "").trim();
     if (!msg) return false;
 
     const now = Date.now();
-    const s = sigOf(msg);
+    const sig = sigOf(msg);
+
+    // anti spam básico
     if ((now - lastBotSayAt) < 1200) return false;
-    if (s && s === lastBotSaySig && (now - lastBotSayAt) < 12000) return false;
+    if (sig && sig === lastBotSaySig && (now - lastBotSayAt) < 15000) return false;
 
     lastBotSayAt = now;
-    lastBotSaySig = s;
+    lastBotSaySig = sig;
 
-    return bot.say(msg, ch);
+    bot.enqueueSay(msg);
+    return true;
   }
 
-  // ───────────────────────── URL builder
-  function streamUrlFromHere() {
+  // ───────────────────────── URL builder (player)
+  function boolParam(v) { return v ? "1" : "0"; }
+
+  function getBasePlayerUrl() {
+    // asume que player está en index.html del mismo repo.
+    // si tú usas otro nombre, cámbialo aquí.
     const u = new URL(location.href);
-    u.pathname = u.pathname.replace(/control\.html$/i, "index.html");
+    u.pathname = u.pathname.replace(/\/control\.html?$/i, "/index.html");
+    u.search = "";
+    u.hash = "";
+    return u;
+  }
 
-    const minsVal = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
-    u.searchParams.set("mins", String(minsVal));
-    u.searchParams.set("fit", ctlFit?.value || "cover");
-    u.searchParams.set("hud", (ctlHud?.value === "off") ? "0" : "1");
+  function buildStreamUrlFromUI() {
+    const u = getBasePlayerUrl();
 
-    if (ctlAdfree?.value === "on") u.searchParams.set("mode", "adfree");
-    else u.searchParams.delete("mode");
+    // base
+    const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
+    const fit = String(ctlFit?.value || "cover").toLowerCase() === "contain" ? "contain" : "cover";
+    const hud = (ctlHud ? (ctlHud.value !== "off") : true);
+    const hudDetails = (ctlHudDetails ? (ctlHudDetails.value !== "off") : true);
+    const autoskip = (ctlAutoskip ? (ctlAutoskip.value !== "off") : true);
+    const adfree = (ctlAdfree ? (ctlAdfree.value !== "off") : false);
 
-    if (ctlAutoskip?.value === "off") u.searchParams.set("autoskip", "0");
-    else u.searchParams.delete("autoskip");
+    // twitch/vote
+    const twitch = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+    const voteOn = (ctlVoteOn ? (ctlVoteOn.value !== "off") : false);
+    const voteOverlay = (ctlVoteOverlay ? (ctlVoteOverlay.value !== "off") : true);
+    const voteWindow = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
+    const voteAt = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
+    const voteLead = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
+    const voteCmd = String(ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim();
 
-    // Voto
-    if (ctlVoteOn?.value === "on") u.searchParams.set("vote", "1");
-    else u.searchParams.delete("vote");
-
-    const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-    if (ch) u.searchParams.set("twitch", ch);
-    else u.searchParams.delete("twitch");
-
-    const { voteAtSec, windowSec, leadSec, uiSec } = computeVoteTiming();
-
-    u.searchParams.set("voteOverlay", (ctlVoteOverlay?.value === "off") ? "0" : "1");
-    u.searchParams.set("voteWindow", String(windowSec));
-    u.searchParams.set("voteLead", String(leadSec));
-    u.searchParams.set("voteAt", String(voteAtSec));
-    u.searchParams.set("voteUi", String(uiSec));
-
-    if (ctlVoteCmd?.value) u.searchParams.set("voteCmd", ctlVoteCmd.value.trim());
-
-    if (ctlStayMins) {
-      const sm = clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120);
-      u.searchParams.set("stayMins", String(sm));
-    }
-
-    if (ctlYtCookies) {
-      const v = String(ctlYtCookies.value || "off").toLowerCase();
-      u.searchParams.set("ytCookies", (v === "on") ? "1" : "0");
-    }
-
-    // BGM
-    if (ctlBgmOn?.value === "on") u.searchParams.set("bgm", "1");
-    else u.searchParams.delete("bgm");
-    if (ctlBgmVol?.value != null) u.searchParams.set("bgmVol", String(ctlBgmVol.value));
+    const stayMins = clamp(parseInt(ctlStayMins?.value || "5", 10) || 5, 1, 120);
+    const ytCookies = (ctlYtCookies ? (ctlYtCookies.value !== "off") : true);
 
     // chat/alerts
-    if (ctlChatOn?.value === "on") u.searchParams.set("chat", "1");
-    else u.searchParams.delete("chat");
+    const chatOn = (ctlChatOn ? (ctlChatOn.value !== "off") : true);
+    const chatHide = (ctlChatHideCmd ? (ctlChatHideCmd.value !== "off") : true);
+    const alertsOn = (ctlAlertsOn ? (ctlAlertsOn.value !== "off") : true);
 
-    if (ctlChatHideCmd?.value === "off") u.searchParams.set("chatHideCommands", "0");
-    else u.searchParams.delete("chatHideCommands");
+    // ads
+    const adsOn = (ctlAdsOn ? (ctlAdsOn.value !== "off") : true);
+    const adLead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
+    const adDur = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 3600);
+    const adShowDuring = (ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true);
+    const adChatText = String(ctlAdChatText?.value || "").trim();
 
-    if (ctlAlertsOn?.value === "on") u.searchParams.set("alerts", "1");
-    else u.searchParams.delete("alerts");
+    // ticker cfg (en URL para overlays)
+    const tcfg = readTickerUI();
+    const ccfg = readCountdownUI();
 
-    // ads overlay
-    if (ctlAdsOn?.value === "on") u.searchParams.set("ads", "1");
-    else u.searchParams.set("ads", "0");
+    // params
+    u.searchParams.set("mins", String(mins));
+    u.searchParams.set("fit", fit);
+    u.searchParams.set("hud", boolParam(hud));
+    // (hudDetails no existe en player, pero no molesta si lo quieres usar en CSS/HTML)
+    u.searchParams.set("hudDetails", boolParam(hudDetails));
 
-    if (ctlAdLead?.value != null) u.searchParams.set("adLead", String(clamp(parseInt(ctlAdLead.value || "30", 10) || 30, 0, 300)));
-    if (ctlAdDur?.value != null) u.searchParams.set("adDur", String(clamp(parseInt(ctlAdDur.value || "30", 10) || 30, 5, 600)));
+    u.searchParams.set("autoskip", boolParam(autoskip));
+    if (adfree) u.searchParams.set("mode", "adfree");
 
-    if (ctlAdShowDuring?.value === "off") u.searchParams.set("adShowDuring", "0");
-    else u.searchParams.set("adShowDuring", "1");
-
-    if (ctlAdChatText?.value) u.searchParams.set("adChatText", ctlAdChatText.value.trim());
-
-    // ticker params
-    const tc = normalizeTickerCfg(readTickerUI());
-    if (!tc.enabled) u.searchParams.set("ticker", "0");
-    else u.searchParams.delete("ticker");
-
-    u.searchParams.set("tickerLang", tc.lang);
-    u.searchParams.set("tickerSpeed", String(tc.speedPxPerSec));
-    u.searchParams.set("tickerRefresh", String(tc.refreshMins));
-    u.searchParams.set("tickerTop", String(tc.topPx));
-    if (!tc.hideOnVote) u.searchParams.set("tickerHideOnVote", "0");
-    else u.searchParams.delete("tickerHideOnVote");
-    if (tc.timespan) u.searchParams.set("tickerSpan", String(tc.timespan));
-
-    // countdown params
-    const cc = readCountdownUI();
-    u.searchParams.set("countdown", cc.enabled ? "1" : "0");
-    if (cc.targetMs) u.searchParams.set("countdownTo", String(cc.targetMs | 0));
-    if (cc.label) u.searchParams.set("countdownLabel", cc.label);
-
-    // key
     if (KEY) u.searchParams.set("key", KEY);
-    else u.searchParams.delete("key");
 
-    // cache buster
-    u.searchParams.set("v", APP_VERSION);
+    if (twitch) u.searchParams.set("twitch", twitch);
+
+    u.searchParams.set("vote", boolParam(!!voteOn));
+    u.searchParams.set("voteOverlay", boolParam(!!voteOverlay));
+    u.searchParams.set("voteWindow", String(voteWindow));
+    u.searchParams.set("voteAt", String(voteAt));
+    u.searchParams.set("voteLead", String(voteLead));
+    if (voteCmd) u.searchParams.set("voteCmd", voteCmd);
+    u.searchParams.set("stayMins", String(stayMins));
+
+    u.searchParams.set("ytCookies", boolParam(!!ytCookies));
+
+    u.searchParams.set("chat", boolParam(!!chatOn));
+    u.searchParams.set("chatHideCommands", boolParam(!!chatHide));
+    u.searchParams.set("alerts", boolParam(!!alertsOn));
+
+    u.searchParams.set("ads", boolParam(!!adsOn));
+    u.searchParams.set("adLead", String(adLead));
+    u.searchParams.set("adDur", String(adDur)); // ✅ (aunque player no lo use, queda en URL)
+    u.searchParams.set("adShowDuring", boolParam(!!adShowDuring));
+    if (adChatText) u.searchParams.set("adChatText", adChatText);
+
+    // ticker / countdown (si tu player los usa via otro script, ya queda listo)
+    u.searchParams.set("ticker", boolParam(!!tcfg.enabled));
+    u.searchParams.set("tickerLang", String(tcfg.lang || "auto"));
+    u.searchParams.set("tickerSpeed", String(tcfg.speedPxPerSec || 55));
+    u.searchParams.set("tickerRefresh", String(tcfg.refreshMins || 12));
+    u.searchParams.set("tickerTop", String(tcfg.topPx || 10));
+    u.searchParams.set("tickerHideOnVote", boolParam(!!tcfg.hideOnVote));
+    u.searchParams.set("tickerSpan", String(tcfg.timespan || "1d"));
+
+    u.searchParams.set("countdown", boolParam(!!ccfg.enabled));
+    u.searchParams.set("countdownLabel", String(ccfg.label || "Fin de año"));
+    u.searchParams.set("countdownTarget", String(ccfg.targetMs || 0));
 
     return u.toString();
   }
 
-  function getRemainingFromState(st) {
-    if (!st) return 0;
-    const r =
-      (typeof st.remaining === "number") ? st.remaining :
-      (typeof st.remainingSec === "number") ? st.remainingSec :
-      (typeof st.remain === "number") ? st.remain :
-      0;
-    return r | 0;
-  }
-
-  // ───────────────────────── apply state
-  function applyState(st, isMainChannel = true) {
+  // ───────────────────────── Incoming state/events/cmd (BOT_SAY)
+  function applyState(st) {
+    if (!st || typeof st !== "object") return;
     lastState = st;
     lastSeenAt = Date.now();
-    lastAnyMsgAt = lastSeenAt;
-    if (isMainChannel) lastMainMsgAt = lastSeenAt;
 
-    setStatus("Conectado", true);
-
-    const cam = st?.cam || st?.currentCam || {};
-    if (ctlNowTitle) ctlNowTitle.textContent = cam?.title || "—";
-    if (ctlNowPlace) ctlNowPlace.textContent = cam?.place || "—";
-    if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS(getRemainingFromState(st));
+    const cam = st.cam || {};
+    if (ctlNowTitle) ctlNowTitle.textContent = String(cam.title || "—");
+    if (ctlNowPlace) ctlNowPlace.textContent = String(cam.place || "—");
+    if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS(st.remaining || 0);
 
     if (ctlOrigin) {
-      ctlOrigin.href = cam?.originUrl || "#";
-      ctlOrigin.style.pointerEvents = cam?.originUrl ? "auto" : "none";
-      ctlOrigin.style.opacity = cam?.originUrl ? "1" : ".65";
+      const url = String(cam.originUrl || "");
+      ctlOrigin.href = url || "#";
+      ctlOrigin.style.pointerEvents = url ? "auto" : "none";
+      ctlOrigin.style.opacity = url ? "1" : ".6";
     }
 
-    if (ctlPlay) {
-      const playing = (typeof st?.playing === "boolean") ? st.playing : !(st?.paused === true);
-      ctlPlay.textContent = playing ? "⏸" : "▶";
+    // status pill
+    setStatus(`Conectado · v${String(st.version || "?")} · ${String(st.owner ? "OWNER" : "VIEW")}`, true);
+
+    // auto announce cam (si bot ON)
+    tryAutoAnnounceCam(st);
+
+    // refleja UI sin pisar si editas (básico)
+    safeSetValue(ctlMins, st.mins ?? "");
+    if (ctlFit && !isEditing(ctlFit)) ctlFit.value = (st.fit === "contain") ? "contain" : "cover";
+    if (ctlAutoskip && !isEditing(ctlAutoskip)) ctlAutoskip.value = st.autoskip ? "on" : "off";
+    if (ctlAdfree && !isEditing(ctlAdfree)) ctlAdfree.value = st.adfree ? "on" : "off";
+    if (ctlHud && !isEditing(ctlHud)) ctlHud.value = st.hudHidden ? "off" : "on";
+
+    if (ctlYtCookies && !isEditing(ctlYtCookies)) ctlYtCookies.value = st.ytCookies ? "on" : "off";
+
+    // chat/alerts/vote/ads reflect
+    if (st.vote && typeof st.vote === "object") {
+      if (ctlTwitchChannel && !isEditing(ctlTwitchChannel) && st.vote.channel) ctlTwitchChannel.value = st.vote.channel;
+      if (ctlVoteOn && !isEditing(ctlVoteOn)) ctlVoteOn.value = st.vote.enabled ? "on" : "off";
+      if (ctlVoteOverlay && !isEditing(ctlVoteOverlay)) ctlVoteOverlay.value = st.vote.overlay ? "on" : "off";
     }
 
-    if (ctlMins && typeof st?.mins === "number") safeSetValue(ctlMins, st.mins);
-    if (ctlFit && st?.fit && !isEditing(ctlFit)) ctlFit.value = st.fit;
-    if (ctlHud && !isEditing(ctlHud)) ctlHud.value = st?.hudHidden ? "off" : "on";
-    if (ctlHudDetails && !isEditing(ctlHudDetails)) ctlHudDetails.value = st?.hudCollapsed ? "collapsed" : "expanded";
-    if (ctlAutoskip && !isEditing(ctlAutoskip)) ctlAutoskip.value = st?.autoskip ? "on" : "off";
-    if (ctlAdfree && !isEditing(ctlAdfree)) ctlAdfree.value = st?.adfree ? "on" : "off";
-
-    // BGM
-    if (ctlBgmOn && !isEditing(ctlBgmOn)) ctlBgmOn.value = st?.bgm?.enabled ? "on" : "off";
-    if (ctlBgmVol && typeof st?.bgm?.vol === "number") safeSetValue(ctlBgmVol, st.bgm.vol);
-    if (ctlBgmTrack && st?.bgm?.idx != null && !isEditing(ctlBgmTrack)) ctlBgmTrack.value = String(st.bgm.idx | 0);
-    if (ctlBgmNow) {
-      const name = st?.bgm?.track || "";
-      ctlBgmNow.textContent = name ? `Now: ${name} · ${st?.bgm?.playing ? "playing" : "paused"}` : "—";
-    }
-
-    // Vote state
-    const vote = st?.vote || {};
-    if (ctlTwitchChannel && typeof vote?.channel === "string") {
-      if (!ctlTwitchChannel.value || !isEditing(ctlTwitchChannel)) safeSetValue(ctlTwitchChannel, vote.channel);
-    }
-    if (ctlVoteOn && !isEditing(ctlVoteOn)) ctlVoteOn.value = vote?.enabled ? "on" : "off";
-    if (ctlVoteOverlay && !isEditing(ctlVoteOverlay)) ctlVoteOverlay.value = vote?.overlay ? "on" : "off";
-    if (ctlVoteWindow && vote?.windowSec != null) safeSetValue(ctlVoteWindow, (vote.windowSec | 0));
-    if (ctlVoteAt && vote?.voteAtSec != null) safeSetValue(ctlVoteAt, (vote.voteAtSec | 0));
-    if (ctlVoteLead && vote?.leadSec != null) safeSetValue(ctlVoteLead, clamp((vote.leadSec | 0), 0, 30));
-    if (ctlVoteCmd && typeof vote?.cmd === "string") {
-      if (!isEditing(ctlVoteCmd)) ctlVoteCmd.value = vote.cmd || ctlVoteCmd.value;
-    }
-    if (ctlStayMins) {
-      const sm =
-        (vote?.stayMins != null) ? (vote.stayMins | 0)
-        : (vote?.staySec != null) ? Math.max(1, Math.round((vote.staySec | 0) / 60))
-        : null;
-      if (sm != null) safeSetValue(ctlStayMins, clamp(sm, 1, 120));
-    }
-
-    if (ctlYtCookies && st?.ytCookies != null && !isEditing(ctlYtCookies)) {
-      ctlYtCookies.value = st.ytCookies ? "on" : "off";
-    }
-
-    // Chat/Alerts/Ads
-    if (ctlChatOn && st?.chat?.enabled != null && !isEditing(ctlChatOn)) ctlChatOn.value = st.chat.enabled ? "on" : "off";
-    if (ctlChatHideCmd && st?.chat?.hideCommands != null && !isEditing(ctlChatHideCmd)) ctlChatHideCmd.value = st.chat.hideCommands ? "on" : "off";
-    if (ctlAlertsOn && st?.alertsEnabled != null && !isEditing(ctlAlertsOn)) ctlAlertsOn.value = st.alertsEnabled ? "on" : "off";
-    if (ctlAdsOn && st?.ads?.enabled != null && !isEditing(ctlAdsOn)) ctlAdsOn.value = st.ads.enabled ? "on" : "off";
-
-    // Auto announce cam al chat
-    try {
-      const camId = String(cam?.id || "");
-      const chan = String(vote?.channel || ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-      const botOn = (ctlBotOn?.value === "on");
-      if (camId && camId !== lastAnnouncedCamId && chan && botOn) {
-        const now = Date.now();
-        if ((now - lastAnnounceAt) > 4500) {
-          lastAnnounceAt = now;
-          lastAnnouncedCamId = camId;
-
-          const t = String(cam?.title || "Live Cam").trim();
-          const p = String(cam?.place || "").trim();
-          const src = String(cam?.source || "").trim();
-          const line = `🌍 Ahora: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}  |  🆘 !help  🎲 !tagvote  🗳️ !callvote`;
-          botSayIfEnabled(line);
-        }
-      }
-    } catch (_) {}
-
-    // Auto title (Helix) cuando cambia la cam
-    try {
-      const camId = String(cam?.id || "");
-      if (camId) {
-        helixCfg = readHelixUI();
-        saveHelixCfg(helixCfg);
-        maybeAutoUpdateTwitchTitleFromState(st, false);
-      }
-    } catch (_) {}
+    // preview
+    syncPreviewUrl();
   }
 
-  // ───────────────────────── Events from player
-  function handleEvent(evt, isMainChannel) {
-    if (!evt || evt.type !== "event") return;
-    if (!keyOk(evt, isMainChannel)) return;
+  function applyEvent(ev) {
+    if (!ev || typeof ev !== "object") return;
+    const ts = (ev.ts | 0) || 0;
+    if (ts && ts <= lastEventTs) return;
+    if (ts) lastEventTs = ts;
 
-    const ts = evt.ts | 0;
-    if (ts && ts <= (lastEventTs | 0)) return;
-    lastEventTs = ts || Date.now();
-
-    const name = String(evt.name || "").toUpperCase();
-    const payload = evt.payload || {};
-
-    if (name === "AD_AUTO_NOTICE") {
-      const leadSec = (payload.leadSec | 0) || 0;
-      const msg = (ctlAdChatText?.value || "").trim() || `⚠️ Anuncio en ${leadSec || 30}s… ¡gracias por apoyar el canal! 💜`;
-      botSayIfEnabled(msg);
-      return;
+    // bridge ads -> bot (si está activado)
+    if (String(ev.name || "") === "AD_AUTO_NOTICE") {
+      if (botCfg?.enabled && botCfg?.sayOnAd) {
+        botSay("⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜");
+      }
     }
-
-    if (name === "AD_AUTO_BEGIN") {
-      const dur = (payload.durationSec | 0) || (parseInt(ctlAdDur?.value || "30", 10) || 30);
-      const msg = `⏳ Anuncio en curso (${dur}s)… 💜`;
-      botSayIfEnabled(msg);
-      return;
+    if (String(ev.name || "") === "AD_AUTO_BEGIN") {
+      if (botCfg?.enabled && botCfg?.sayOnAd) {
+        // si en UI hay texto custom, úsalo
+        const txt = String(ctlAdChatText?.value || "").trim();
+        if (txt) botSay(txt);
+      }
     }
   }
 
-  function handleCmdFromPlayer(msg, isMainChannel) {
-    if (!msg || msg.type !== "cmd") return;
-    if (!keyOk(msg, isMainChannel)) return;
+  function applyIncomingCmd(msg) {
+    // solo nos interesa BOT_SAY desde el player
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type !== "cmd") return;
 
     const cmd = String(msg.cmd || "");
-    const payload = msg.payload || {};
+    if (cmd !== "BOT_SAY") return;
 
-    if (cmd === "BOT_SAY") {
-      const text = String(payload.text || payload.message || "").trim();
-      if (!text) return;
-      botSayIfEnabled(text);
-    }
+    const p = msg.payload || {};
+    const text = String(p.text || "").trim();
+    if (!text) return;
+
+    botSay(text);
   }
 
-  function onBusMessage(msg, isMainChannel) {
-    if (!msg) return;
-    lastAnyMsgAt = Date.now();
-    if (isMainChannel) lastMainMsgAt = lastAnyMsgAt;
-
-    if (msg.type === "state") { if (keyOk(msg, isMainChannel)) applyState(msg, isMainChannel); return; }
-    if (msg.type === "event") { handleEvent(msg, isMainChannel); return; }
-    if (msg.type === "cmd") { handleCmdFromPlayer(msg, isMainChannel); return; }
+  function readStateFromLS() {
+    const raw = lsGet(STATE_KEY) || lsGet(STATE_KEY_LEGACY);
+    const st = safeJson(raw, null);
+    if (st && typeof st === "object") applyState(st);
   }
 
-  if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
-  if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
+  function readEventFromLS() {
+    const raw = lsGet(EVT_KEY) || lsGet(EVT_KEY_LEGACY);
+    const ev = safeJson(raw, null);
+    if (ev && typeof ev === "object") applyEvent(ev);
+  }
 
-  // Fallback polling: state
-  setInterval(() => {
-    try {
-      const rawMain = lsGet(STATE_KEY);
-      const rawLegacy = rawMain ? null : lsGet(STATE_KEY_LEGACY);
-      const raw = rawMain || rawLegacy;
-      if (!raw) return;
+  function readCmdFromLS() {
+    const raw = lsGet(CMD_KEY) || lsGet(CMD_KEY_LEGACY);
+    const msg = safeJson(raw, null);
+    if (msg && typeof msg === "object") applyIncomingCmd(msg);
+  }
 
-      const st = JSON.parse(raw);
-      if (!st || st.type !== "state") return;
+  // ───────────────────────── Auto announce cam (anti-spam)
+  function tryAutoAnnounceCam(st) {
+    if (!botCfg?.enabled) return;
 
-      const isMain = !!rawMain;
-      if (!keyOk(st, isMain)) return;
+    const cam = st?.cam || {};
+    const id = String(cam.id || "");
+    if (!id) return;
 
-      applyState(st, isMain);
-    } catch (_) {}
-  }, 500);
-
-  // Fallback polling: events
-  setInterval(() => {
-    try {
-      const rawMain = lsGet(EVT_KEY);
-      const rawLegacy = rawMain ? null : lsGet(EVT_KEY_LEGACY);
-      const raw = rawMain || rawLegacy;
-      if (!raw) return;
-
-      const evt = JSON.parse(raw);
-      if (!evt || evt.type !== "event") return;
-
-      const isMain = !!rawMain;
-      handleEvent(evt, isMain);
-    } catch (_) {}
-  }, 650);
-
-  // Storage events
-  window.addEventListener("storage", (e) => {
-    if (!e || !e.key) return;
-
-    if (e.key === EVT_KEY || e.key === EVT_KEY_LEGACY) {
-      try { if (e.newValue) handleEvent(JSON.parse(e.newValue), e.key === EVT_KEY); } catch (_) {}
-      return;
-    }
-
-    if (e.key === STATE_KEY || e.key === STATE_KEY_LEGACY) {
-      try {
-        if (!e.newValue) return;
-        const st = JSON.parse(e.newValue);
-        if (st && st.type === "state" && keyOk(st, e.key === STATE_KEY)) applyState(st, e.key === STATE_KEY);
-      } catch (_) {}
-      return;
-    }
-
-    if (e.key === TICKER_CFG_KEY || e.key === TICKER_CFG_KEY_BASE) {
-      try { syncTickerUIFromStore(); } catch (_) {}
-      return;
-    }
-
-    if (e.key === COUNTDOWN_CFG_KEY || e.key === COUNTDOWN_CFG_KEY_BASE) {
-      try { syncCountdownUIFromStore(); } catch (_) {}
-      return;
-    }
-
-    if (e.key === HELIX_CFG_KEY || e.key === HELIX_CFG_KEY_BASE) {
-      try { syncHelixUIFromStore(); } catch (_) {}
-      return;
-    }
-
-    if (String(e.key || "").startsWith("twitch_oauth_")) {
-      try { tryAutoFillFromOAuthCache(); } catch (_) {}
-      return;
-    }
-  });
-
-  // Watchdog
-  setInterval(() => {
     const now = Date.now();
+    if (id === lastAnnouncedCamId && (now - lastAnnounceAt) < 60000) return;
+    if ((now - lastAnnounceAt) < 9000) return;
 
-    if (!lastSeenAt) {
-      if (!allCams.length) setStatus("Sin CAM_LIST (¿cams.js no cargó?)", false);
-      else setStatus(KEY ? "Esperando player… (KEY)" : "Esperando player…", false);
-      return;
+    // solo cuando realmente cambia la cam
+    if (lastAnnouncedCamId && id === lastAnnouncedCamId) return;
+
+    const title = String(cam.title || "Live Cam").trim();
+    const place = String(cam.place || "").trim();
+    const src = String(cam.source || "").trim();
+
+    lastAnnouncedCamId = id;
+    lastAnnounceAt = now;
+
+    const msg = `🌍 Ahora: ${title}${place ? ` — ${place}` : ""}${src ? ` · ${src}` : ""}`;
+    botSay(msg);
+  }
+
+  // ───────────────────────── UI actions
+  function syncPreviewUrl() {
+    if (!ctlPreviewOn || !ctlPreviewWrap || !ctlPreview) return;
+    const on = (ctlPreviewOn.value !== "off");
+    ctlPreviewWrap.style.display = on ? "" : "none";
+    if (!on) return;
+
+    const url = buildStreamUrlFromUI();
+    try { ctlPreview.src = url; } catch (_) {}
+  }
+
+  function applyBasicSettings() {
+    // mins
+    const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
+    sendCmd("SET_MINS", { mins });
+
+    // fit
+    const fit = String(ctlFit?.value || "cover").toLowerCase();
+    sendCmd("SET_FIT", { fit });
+
+    // hud (en player: doble click oculta, aquí: on/off -> hidden)
+    if (ctlHud) sendCmd("HUD", { hidden: (ctlHud.value === "off") });
+
+    // autoskip / adfree
+    if (ctlAutoskip) sendCmd("SET_AUTOSKIP", { enabled: (ctlAutoskip.value !== "off") });
+    if (ctlAdfree) sendCmd("SET_MODE", { mode: (ctlAdfree.value !== "off") ? "adfree" : "" });
+
+    // yt cookies
+    if (ctlYtCookies) sendCmd("YT_COOKIES", { enabled: (ctlYtCookies.value !== "off") });
+
+    syncPreviewUrl();
+  }
+
+  function applyVoteSettings() {
+    const twitch = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+    if (twitch) sendCmd("SET_TWITCH", { channel: twitch });
+
+    const voteEnabled = ctlVoteOn ? (ctlVoteOn.value !== "off") : false;
+    const overlay = ctlVoteOverlay ? (ctlVoteOverlay.value !== "off") : true;
+
+    const timing = computeVoteTiming();
+
+    const cmdStr = String(ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim();
+    const stayMins = clamp(parseInt(ctlStayMins?.value || "5", 10) || 5, 1, 120);
+
+    sendCmd("SET_VOTE", {
+      enabled: voteEnabled,
+      overlay,
+      windowSec: timing.windowSec,
+      voteAtSec: timing.voteAtSec,
+      leadSec: timing.leadSec,
+      uiSec: timing.uiSec,
+      stayMins,
+      cmd: cmdStr
+    });
+
+    syncPreviewUrl();
+  }
+
+  function applyChatAlertsSettings() {
+    if (ctlChatOn) sendCmd("SET_CHAT", { enabled: (ctlChatOn.value !== "off") });
+    if (ctlChatHideCmd) sendCmd("SET_CHAT", { hideCommands: (ctlChatHideCmd.value !== "off") });
+    if (ctlAlertsOn) sendCmd("SET_ALERTS", { enabled: (ctlAlertsOn.value !== "off") });
+  }
+
+  function applyAdsSettings() {
+    const enabled = ctlAdsOn ? (ctlAdsOn.value !== "off") : true;
+    const adLead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
+    const adDurSec = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 3600);
+    const showDuring = ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true;
+    const chatText = String(ctlAdChatText?.value || "").trim();
+
+    // player no usa adDurSec dentro de SET_ADS, pero lo guardamos para botones y URL
+    sendCmd("SET_ADS", { enabled, adLead, showDuring, chatText });
+
+    // guardamos “duración” en un store simple (no rompe nada)
+    try { lsSet((KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1"), JSON.stringify({ adDurSec })); } catch (_) {}
+
+    syncPreviewUrl();
+  }
+
+  function loadAdDurStore() {
+    try {
+      const raw = lsGet(KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1");
+      const j = raw ? JSON.parse(raw) : null;
+      const d = clamp(parseInt(String(j?.adDurSec || "0"), 10) || 0, 5, 3600);
+      return d || 30;
+    } catch (_) { return 30; }
+  }
+
+  function adNoticeNow() {
+    const sec = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 3600);
+    sendCmd("AD_NOTICE", { leadSec: sec });
+  }
+
+  function adBeginNow() {
+    const d = clamp(parseInt(ctlAdDur?.value || String(loadAdDurStore()), 10) || 30, 5, 3600);
+    sendCmd("AD_BEGIN", { durationSec: d });
+    // si tienes texto, lo manda el player con BOT_SAY, pero por si acaso:
+    const txt = String(ctlAdChatText?.value || "").trim();
+    if (txt) botSay(txt);
+  }
+
+  function adClearNow() {
+    sendCmd("AD_CLEAR", {});
+  }
+
+  function doGoSelected() {
+    const id = ctlSelect?.value;
+    if (!id) return;
+    sendCmd("GOTO", { id });
+  }
+
+  function doBanSelectedOrCurrent() {
+    const id = ctlSelect?.value;
+    if (id) sendCmd("BAN", { id });
+    else sendCmd("BAN_CURRENT", {});
+  }
+
+  function doReset() {
+    sendCmd("RESET", {});
+  }
+
+  function syncBotUIFromStore() {
+    botCfg = loadBotCfg();
+    if (ctlBotOn) ctlBotOn.value = botCfg.enabled ? "on" : "off";
+    if (ctlBotUser) ctlBotUser.value = botCfg.user || "";
+    if (ctlBotToken) ctlBotToken.value = botCfg.token ? "********" : ""; // no re-muestres token real
+    if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
+    setBotStatus(botCfg.enabled ? "Bot: listo" : "Bot: OFF", !!botCfg.enabled);
+  }
+
+  function readBotUIAndSave() {
+    const enabled = ctlBotOn ? (ctlBotOn.value !== "off") : false;
+    const user = String(ctlBotUser?.value || "").trim().replace(/^@/, "");
+    const chan = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+
+    // token: si hay "********" no lo tocamos
+    let token = String(botCfg.token || "");
+    const tokenUI = String(ctlBotToken?.value || "").trim();
+    if (tokenUI && tokenUI !== "********") token = tokenUI.replace(/^oauth:/i, "");
+    const sayOnAd = ctlBotSayOnAd ? (ctlBotSayOnAd.value !== "off") : true;
+
+    botCfg = saveBotCfg({ enabled, user, token, channel: chan, sayOnAd });
+    syncBotUIFromStore();
+    botApplyCfgAndMaybeConnect();
+
+    // importante: que el player pueda leer canal desde BOT_STORE (OWNER_MODE)
+    try { lsSet(BOT_STORE_KEY, JSON.stringify(botCfg)); lsSet(BOT_STORE_KEY_BASE, JSON.stringify(botCfg)); } catch (_) {}
+
+    // también empuja twitch al player
+    if (chan) sendCmd("SET_TWITCH", { channel: chan });
+    syncPreviewUrl();
+  }
+
+  function readTickerReset() {
+    tickerCfg = saveTickerCfg(TICKER_DEFAULTS);
+    syncTickerUIFromStore();
+    sendTickerCfg(tickerCfg, true);
+    syncPreviewUrl();
+  }
+
+  function applyTickerNow() {
+    const cfg = readTickerUI();
+    tickerCfg = saveTickerCfg(cfg);
+    setTickerStatusFromCfg(tickerCfg);
+    sendTickerCfg(tickerCfg, true);
+    syncPreviewUrl();
+  }
+
+  function readCountdownReset() {
+    countdownCfg = saveCountdownCfg(COUNTDOWN_DEFAULTS);
+    syncCountdownUIFromStore();
+    sendCountdownCfg(countdownCfg, true);
+    syncPreviewUrl();
+  }
+
+  function applyCountdownNow() {
+    const cfg = readCountdownUI();
+    countdownCfg = saveCountdownCfg(cfg);
+    setCountdownStatusFromCfg(countdownCfg);
+    sendCountdownCfg(countdownCfg, true);
+    syncPreviewUrl();
+  }
+
+  // ───────────────────────── Helix auto title runner
+  function helixCanRun(c) {
+    const cfg = c || helixCfg;
+    if (!cfg?.enabled) return false;
+    if (!cfg.clientId || !cfg.token) return false;
+    // broadcasterId puede resolverse por login si no está
+    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || "").trim();
+    return !!login;
+  }
+
+  async function helixTick(force = false) {
+    const cfg = helixCfg || loadHelixCfg();
+    if (!helixCanRun(cfg)) return;
+
+    const now = Date.now();
+    if (!force) {
+      if (now < helixRetryAfterAt) return;
+      if ((now - helixLastUpdateAt) < (cfg.cooldownSec * 1000)) return;
     }
 
-    const age = now - lastSeenAt;
-    if (age > 2500) {
-      if (KEY && (now - lastMainMsgAt) > 2500 && (now - lastAnyMsgAt) > 2500) {
-        setStatus("Sin señal (¿player legacy sin KEY?)", false);
-      } else {
-        setStatus("Sin señal (¿stream abierto?)", false);
-      }
-    }
-  }, 700);
+    if (!lastState) return;
+    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || "").trim().replace(/^@/, "");
+    if (!login) return;
 
-  // ───────────────────────── UI wire
-  function wire() {
+    const title = buildTitleFromState(lastState, cfg.template);
+    const sig = sigOf(`${login}|${title}`);
+
+    // anti-spam: no intentar cada tick lo mismo
+    if (!force) {
+      if (sig === helixLastSig && (now - helixLastUpdateAt) < (cfg.cooldownSec * 1000)) return;
+      if (sig === helixLastAttemptSig && (now - helixLastAttemptAt) < 6000) return;
+    }
+
+    helixLastAttemptAt = now;
+    helixLastAttemptSig = sig;
+
+    try {
+      const bid = cfg.broadcasterId || await helixEnsureBroadcasterId(login, cfg);
+      if (!bid) { setTitleStatus("Helix: falta broadcaster_id", false); return; }
+
+      await helixSetTitle(bid, title, cfg.clientId, cfg.token);
+
+      helixLastUpdateAt = Date.now();
+      helixLastSig = sig;
+      setTitleStatus("Auto título: OK", true);
+    } catch (e) {
+      setHelixBackoff(e);
+    }
+  }
+
+  function helixApplyFromUI() {
+    helixCfg = saveHelixCfg(readHelixUI());
+    syncHelixUIFromStore();
+    // reset backoff si lo activas
+    helixRetryAfterAt = 0;
+    helixTick(true);
+  }
+
+  function helixResetUI() {
+    helixCfg = saveHelixCfg(HELIX_DEFAULTS);
+    helixResolvedBroadcasterId = "";
+    helixResolvedForLogin = "";
+    helixRetryAfterAt = 0;
+    syncHelixUIFromStore();
+  }
+
+  function helixTestOnce() {
+    helixCfg = saveHelixCfg(readHelixUI());
+    syncHelixUIFromStore();
+    helixTick(true);
+  }
+
+  // ───────────────────────── Hotkeys (safe)
+  function bindHotkeys() {
+    window.addEventListener("keydown", (e) => {
+      if (isTextInputActive()) return;
+
+      const k = String(e.key || "");
+      if (k === "ArrowRight") { e.preventDefault(); sendCmd("NEXT", {}); }
+      else if (k === "ArrowLeft") { e.preventDefault(); sendCmd("PREV", {}); }
+      else if (k === " ") { e.preventDefault(); sendCmd("TOGGLE_PLAY", {}); }
+      else if (k.toLowerCase() === "r") { e.preventDefault(); sendCmd("RESHUFFLE", {}); }
+      else if (k.toLowerCase() === "b") { e.preventDefault(); sendCmd("BAN_CURRENT", {}); }
+    }, { passive: false });
+  }
+
+  // ───────────────────────── Boot + listeners
+  function bindUi() {
+    // list
     syncList("");
     syncBgmTracks();
-    syncBotUIFromStore();
 
-    if (ctlBusName) ctlBusName.textContent = `Canal: ${BUS}`;
+    // search
+    if (ctlSearch) ctlSearch.addEventListener("input", debounce(() => syncList(ctlSearch.value), 120));
 
-    syncTickerUIFromStore();
-    try { sendTickerCfg(loadTickerCfg(), false); } catch (_) {}
-
-    syncCountdownUIFromStore();
-    try { sendCountdownCfg(loadCountdownCfg(), false); } catch (_) {}
-
-    syncHelixUIFromStore();
-    try { tryAutoFillFromOAuthCache(); } catch (_) {}
-
-    // defaults defensivos
-    if (ctlVoteAt && !ctlVoteAt.value) ctlVoteAt.value = "60";
-    if (ctlVoteWindow && !ctlVoteWindow.value) ctlVoteWindow.value = "60";
-    if (ctlVoteLead && !ctlVoteLead.value) ctlVoteLead.value = "0";
-    if (ctlStayMins && !ctlStayMins.value) ctlStayMins.value = "5";
-    if (ctlYtCookies && !ctlYtCookies.value) ctlYtCookies.value = "on";
-
-    if (ctlChatOn && !ctlChatOn.value) ctlChatOn.value = "on";
-    if (ctlChatHideCmd && !ctlChatHideCmd.value) ctlChatHideCmd.value = "on";
-    if (ctlAlertsOn && !ctlAlertsOn.value) ctlAlertsOn.value = "on";
-
-    if (ctlAdsOn && !ctlAdsOn.value) ctlAdsOn.value = "on";
-    if (ctlAdLead && !ctlAdLead.value) ctlAdLead.value = "30";
-    if (ctlAdDur && !ctlAdDur.value) ctlAdDur.value = "30";
-    if (ctlAdShowDuring && !ctlAdShowDuring.value) ctlAdShowDuring.value = "on";
-    if (ctlAdChatText && !ctlAdChatText.value) ctlAdChatText.value = "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜";
-
-    if (ctlSearch) ctlSearch.addEventListener("input", () => syncList(ctlSearch.value));
-
-    if (ctlPrev) ctlPrev.addEventListener("click", () => sendCmd("PREV"));
-    if (ctlNext) ctlNext.addEventListener("click", () => sendCmd("NEXT"));
-    if (ctlPlay) ctlPlay.addEventListener("click", () => sendCmd("TOGGLE_PLAY"));
-    if (ctlShuffle) ctlShuffle.addEventListener("click", () => sendCmd("SHUFFLE"));
+    // nav
+    if (ctlPrev) ctlPrev.addEventListener("click", () => sendCmd("PREV", {}));
+    if (ctlPlay) ctlPlay.addEventListener("click", () => sendCmd("TOGGLE_PLAY", {}));
+    if (ctlNext) ctlNext.addEventListener("click", () => sendCmd("NEXT", {}));
+    if (ctlShuffle) ctlShuffle.addEventListener("click", () => sendCmd("RESHUFFLE", {}));
 
     if (ctlApplyMins) ctlApplyMins.addEventListener("click", () => {
       const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
       sendCmd("SET_MINS", { mins });
-      try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+      syncPreviewUrl();
     });
 
-    if (ctlApplySettings) ctlApplySettings.addEventListener("click", () => {
-      const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
-      sendCmd("SET_MINS", { mins });
-      if (ctlFit) sendCmd("SET_FIT", { fit: ctlFit.value || "cover" });
-      if (ctlHud) sendCmd("SET_HUD", { on: ctlHud.value !== "off" });
-      if (ctlHudDetails) sendCmd("SET_HUD_DETAILS", { collapsed: ctlHudDetails.value === "collapsed" });
-      if (ctlAutoskip) sendCmd("SET_AUTOSKIP", { on: ctlAutoskip.value === "on" });
-      if (ctlAdfree) sendCmd("SET_ADFREE", { on: ctlAdfree.value === "on" });
-      try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
+    if (ctlApplySettings) ctlApplySettings.addEventListener("click", applyBasicSettings);
+
+    // go/ban/reset
+    if (ctlGo) ctlGo.addEventListener("click", doGoSelected);
+    if (ctlBan) ctlBan.addEventListener("click", doBanSelectedOrCurrent);
+    if (ctlReset) ctlReset.addEventListener("click", doReset);
+
+    // preview
+    if (ctlPreviewOn) ctlPreviewOn.addEventListener("change", syncPreviewUrl);
+
+    // url copy
+    if (ctlCopyStreamUrl) ctlCopyStreamUrl.addEventListener("click", async () => {
+      const url = buildStreamUrlFromUI();
+      const ok = await copyToClipboard(url);
+      setStatus(ok ? "URL copiada ✅" : "No se pudo copiar ❌", ok);
     });
 
-    if (ctlFit) ctlFit.addEventListener("change", () => sendCmd("SET_FIT", { fit: ctlFit.value }));
-    if (ctlHud) ctlHud.addEventListener("change", () => sendCmd("SET_HUD", { on: ctlHud.value !== "off" }));
-    if (ctlHudDetails) ctlHudDetails.addEventListener("change", () => sendCmd("SET_HUD_DETAILS", { collapsed: ctlHudDetails.value === "collapsed" }));
-    if (ctlAutoskip) ctlAutoskip.addEventListener("change", () => sendCmd("SET_AUTOSKIP", { on: ctlAutoskip.value === "on" }));
-    if (ctlAdfree) ctlAdfree.addEventListener("change", () => sendCmd("SET_ADFREE", { on: ctlAdfree.value === "on" }));
-    if (ctlReset) ctlReset.addEventListener("click", () => sendCmd("RESET"));
-
-    if (ctlGo) ctlGo.addEventListener("click", () => {
-      const id = ctlSelect?.value;
-      if (id) sendCmd("GOTO_ID", { id });
-    });
-
-    if (ctlSelect) {
-      ctlSelect.addEventListener("dblclick", () => {
-        const id = ctlSelect.value;
-        if (id) sendCmd("GOTO_ID", { id });
-      });
-    }
-
-    if (ctlBan) ctlBan.addEventListener("click", () => {
-      const id = ctlSelect?.value || lastState?.cam?.id;
-      if (id) sendCmd("BAN_ID", { id });
-    });
-
-    if (ctlPreviewOn) {
-      ctlPreviewOn.addEventListener("change", () => {
-        const on = ctlPreviewOn.value === "on";
-        if (ctlPreviewWrap) ctlPreviewWrap.classList.toggle("hidden", !on);
-        if (on && ctlPreview) ctlPreview.src = streamUrlFromHere();
-        else if (ctlPreview) ctlPreview.src = "about:blank";
-      });
-    }
-
-    if (ctlCopyStreamUrl) {
-      ctlCopyStreamUrl.addEventListener("click", async () => {
-        const url = streamUrlFromHere();
-        const ok = await copyToClipboard(url);
-        ctlCopyStreamUrl.textContent = ok ? "✅ Copiado" : "❌";
-        setTimeout(() => (ctlCopyStreamUrl.textContent = "Copiar URL stream"), 900);
-      });
-    }
-
-    // Ticker
-    if (ctlTickerApply) {
-      ctlTickerApply.addEventListener("click", () => {
-        const cfg = readTickerUI();
-        tickerCfg = sendTickerCfg(cfg, true);
-        setTickerStatusFromCfg(tickerCfg);
-        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
-      });
-    }
-    if (ctlTickerReset) {
-      ctlTickerReset.addEventListener("click", () => {
-        lsDel(TICKER_CFG_KEY);
-        lsDel(TICKER_CFG_KEY_BASE);
-        tickerCfg = sendTickerCfg(TICKER_DEFAULTS, true);
-        syncTickerUIFromStore();
-        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
-      });
-    }
-    if (ctlTickerCopyUrl) {
-      ctlTickerCopyUrl.addEventListener("click", async () => {
-        const url = streamUrlFromHere();
-        const ok = await copyToClipboard(url);
-        ctlTickerCopyUrl.textContent = ok ? "✅ Copiado" : "❌";
-        setTimeout(() => (ctlTickerCopyUrl.textContent = "Copiar URL Stream (con ticker)"), 900);
-      });
-    }
-
-    // Countdown
-    if (ctlCountdownApply) {
-      ctlCountdownApply.addEventListener("click", () => {
-        const cfg = readCountdownUI();
-        countdownCfg = sendCountdownCfg(cfg, true);
-        setCountdownStatusFromCfg(countdownCfg);
-        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
-      });
-    }
-    if (ctlCountdownReset) {
-      ctlCountdownReset.addEventListener("click", () => {
-        lsDel(COUNTDOWN_CFG_KEY);
-        lsDel(COUNTDOWN_CFG_KEY_BASE);
-        countdownCfg = sendCountdownCfg(COUNTDOWN_DEFAULTS, true);
-        syncCountdownUIFromStore();
-        try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
-      });
-    }
-
-    // Helix auto title
-    function titleApplyAndPersist() {
-      helixCfg = readHelixUI();
-      saveHelixCfg(helixCfg);
-      helixResolvedBroadcasterId = "";
-      helixLastSig = "";
-      helixLastUpdateAt = 0;
-      setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
-    }
-
-    if (ctlTitleApply) {
-      ctlTitleApply.addEventListener("click", () => {
-        titleApplyAndPersist();
-        if (lastState) maybeAutoUpdateTwitchTitleFromState(lastState, true);
-      });
-    }
-
-    if (ctlTitleTest) {
-      ctlTitleTest.addEventListener("click", () => {
-        titleApplyAndPersist();
-        if (lastState) maybeAutoUpdateTwitchTitleFromState(lastState, true);
-        else setTitleStatus("Abre el player para tener state", false);
-      });
-    }
-
-    if (ctlTitleReset) {
-      ctlTitleReset.addEventListener("click", () => {
-        lsDel(HELIX_CFG_KEY);
-        lsDel(HELIX_CFG_KEY_BASE);
-        helixCfg = loadHelixCfg();
-        syncHelixUIFromStore();
-        setTitleStatus("Auto título: OFF", false);
-      });
-    }
-
-    const helixInputs = [ctlTitleOn, ctlTitleClientId, ctlTitleToken, ctlTitleTemplate, ctlTitleCooldown, ctlTitleBroadcasterId].filter(Boolean);
-    const helixPersistDebounced = debounce(() => {
-      helixCfg = readHelixUI();
-      saveHelixCfg(helixCfg);
-      setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
-    }, 220);
-
-    for (const el of helixInputs) {
-      el.addEventListener("change", helixPersistDebounced);
-      el.addEventListener("input", helixPersistDebounced);
-    }
-
-    // BGM
-    if (ctlBgmOn) ctlBgmOn.addEventListener("change", () => sendCmd("BGM_ENABLE", { on: ctlBgmOn.value === "on" }));
-    if (ctlBgmVol) ctlBgmVol.addEventListener("input", () => sendCmd("BGM_VOL", { vol: num(ctlBgmVol.value, 0) }));
-    if (ctlBgmTrack) ctlBgmTrack.addEventListener("change", () => sendCmd("BGM_TRACK", { index: parseInt(ctlBgmTrack.value || "0", 10) || 0 }));
-    if (ctlBgmPrev) ctlBgmPrev.addEventListener("click", () => sendCmd("BGM_PREV"));
-    if (ctlBgmPlay) ctlBgmPlay.addEventListener("click", () => sendCmd("BGM_PLAYPAUSE"));
-    if (ctlBgmNext) ctlBgmNext.addEventListener("click", () => sendCmd("BGM_NEXT"));
-    if (ctlBgmShuffle) ctlBgmShuffle.addEventListener("click", () => sendCmd("BGM_SHUFFLE"));
-
-    // Vote apply
-    function voteApply() {
-      const { voteAtSec, windowSec, leadSec, uiSec } = computeVoteTiming();
-      const stayMins = ctlStayMins ? clamp(parseInt(ctlStayMins.value || "5", 10) || 5, 1, 120) : undefined;
-
-      sendCmd("TWITCH_SET", {
-        channel: (ctlTwitchChannel?.value || "").trim().replace(/^@/, ""),
-        enabled: (ctlVoteOn?.value === "on"),
-        overlay: (ctlVoteOverlay?.value !== "off"),
-        windowSec,
-        voteAtSec,
-        leadSec,
-        uiSec,
-        cmd: (ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim(),
-        stayMins,
-        chat: (ctlChatOn?.value === "on"),
-        chatHideCommands: (ctlChatHideCmd?.value !== "off"),
-        alerts: (ctlAlertsOn?.value === "on"),
-      });
-
-      sendCmd("ADS_SET", {
-        enabled: (ctlAdsOn?.value === "on"),
-        adLead: clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300),
-        adDurSec: clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 600),
-        adShowDuring: (ctlAdShowDuring?.value !== "off"),
-        adChatText: (ctlAdChatText?.value || "").trim(),
-      });
-
-      countdownCfg = sendCountdownCfg(readCountdownUI(), true);
-      setCountdownStatusFromCfg(countdownCfg);
-
-      titleApplyAndPersist();
-
-      try { if (ctlPreviewOn?.value === "on" && ctlPreview) ctlPreview.src = streamUrlFromHere(); } catch (_) {}
-    }
-
-    if (ctlVoteApply) ctlVoteApply.addEventListener("click", voteApply);
-
+    // vote
+    if (ctlVoteApply) ctlVoteApply.addEventListener("click", applyVoteSettings);
     if (ctlVoteStart) ctlVoteStart.addEventListener("click", () => {
-      const { windowSec, leadSec, uiSec } = computeVoteTiming();
-      sendCmd("VOTE_START", { windowSec, leadSec, uiSec });
+      const timing = computeVoteTiming();
+      sendCmd("START_VOTE", { windowSec: timing.windowSec, leadSec: timing.leadSec });
     });
 
-    // ADS buttons + bot
-    if (ctlAdNoticeBtn) ctlAdNoticeBtn.addEventListener("click", () => {
-      const lead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
-      sendCmd("AD_NOTICE", { leadSec: lead });
-      const msg = (ctlAdChatText?.value || "").trim();
-      if (lead > 0) botSayIfEnabled(msg || `⚠️ Anuncio en ${lead}s…`);
-      else botSayIfEnabled(msg || "⚠️ Anuncio en breve…");
+    // chat/alerts
+    if (ctlChatOn) ctlChatOn.addEventListener("change", applyChatAlertsSettings);
+    if (ctlChatHideCmd) ctlChatHideCmd.addEventListener("change", applyChatAlertsSettings);
+    if (ctlAlertsOn) ctlAlertsOn.addEventListener("change", applyChatAlertsSettings);
+
+    // ads
+    if (ctlAdsOn) ctlAdsOn.addEventListener("change", applyAdsSettings);
+    if (ctlAdLead) ctlAdLead.addEventListener("change", applyAdsSettings);
+    if (ctlAdDur) ctlAdDur.addEventListener("change", applyAdsSettings);
+    if (ctlAdShowDuring) ctlAdShowDuring.addEventListener("change", applyAdsSettings);
+    if (ctlAdChatText) ctlAdChatText.addEventListener("change", debounce(applyAdsSettings, 250));
+
+    if (ctlAdNoticeBtn) ctlAdNoticeBtn.addEventListener("click", adNoticeNow);
+    if (ctlAdBeginBtn) ctlAdBeginBtn.addEventListener("click", adBeginNow);
+    if (ctlAdClearBtn) ctlAdClearBtn.addEventListener("click", adClearNow);
+
+    // ticker
+    if (ctlTickerApply) ctlTickerApply.addEventListener("click", applyTickerNow);
+    if (ctlTickerReset) ctlTickerReset.addEventListener("click", readTickerReset);
+    if (ctlTickerCopyUrl) ctlTickerCopyUrl.addEventListener("click", async () => {
+      const url = buildStreamUrlFromUI();
+      const ok = await copyToClipboard(url);
+      setPill(ctlTickerStatus, ok ? "Ticker URL copiada ✅" : "No se pudo copiar ❌", ok);
     });
 
-    if (ctlAdBeginBtn) ctlAdBeginBtn.addEventListener("click", () => {
-      const dur = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 600);
-      sendCmd("AD_BEGIN", { durationSec: dur });
-      botSayIfEnabled(`⏳ Anuncio en curso (${dur}s)…`);
-    });
+    // countdown
+    if (ctlCountdownApply) ctlCountdownApply.addEventListener("click", applyCountdownNow);
+    if (ctlCountdownReset) ctlCountdownReset.addEventListener("click", readCountdownReset);
 
-    if (ctlAdClearBtn) ctlAdClearBtn.addEventListener("click", () => sendCmd("AD_CLEAR", {}));
+    // helix
+    if (ctlTitleApply) ctlTitleApply.addEventListener("click", helixApplyFromUI);
+    if (ctlTitleTest) ctlTitleTest.addEventListener("click", helixTestOnce);
+    if (ctlTitleReset) ctlTitleReset.addEventListener("click", helixResetUI);
 
-    // BOT UI
-    function onBotCfgChange() {
-      persistBotUIToStore();
-      if (ctlBotOn?.value === "on") bot.connect();
-      else bot.close();
-    }
-
-    if (ctlBotOn) ctlBotOn.addEventListener("change", onBotCfgChange);
-    if (ctlBotUser) ctlBotUser.addEventListener("input", () => { persistBotUIToStore(); });
-    if (ctlBotToken) ctlBotToken.addEventListener("input", () => { persistBotUIToStore(); });
-    if (ctlBotSayOnAd) ctlBotSayOnAd.addEventListener("change", () => { persistBotUIToStore(); });
-
-    if (ctlBotConnect) ctlBotConnect.addEventListener("click", () => {
-      persistBotUIToStore();
-      if (ctlBotOn?.value !== "on") { ctlBotOn.value = "on"; persistBotUIToStore(); }
-      bot.connect();
-    });
+    // bot
+    if (ctlBotConnect) ctlBotConnect.addEventListener("click", readBotUIAndSave);
+    if (ctlBotOn) ctlBotOn.addEventListener("change", readBotUIAndSave);
+    if (ctlBotSayOnAd) ctlBotSayOnAd.addEventListener("change", readBotUIAndSave);
 
     if (ctlBotTestSend) ctlBotTestSend.addEventListener("click", () => {
-      persistBotUIToStore();
-      const ch = (ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-      const msg = (ctlBotTestText?.value || "✅ Bot OK").trim();
-      if (!ch) { setBotStatus("Pon canal primero", false); return; }
-      const ok = bot.say(msg, ch);
-      setBotStatus(ok ? "Enviado" : "No enviado", ok);
-      setTimeout(() => setBotStatus(bot.connected ? "Conectado (auth)" : "Bot listo", !!bot.connected), 900);
+      const txt = String(ctlBotTestText?.value || "✅ Bot test").trim();
+      botSay(txt);
     });
 
-    // Teclas (safe: no escribir)
-    window.addEventListener("keydown", (e) => {
-      if (!e) return;
-      if (isTextInputActive()) return;
-
-      const k = (e.key || "").toLowerCase();
-      if (k === " ") { e.preventDefault(); sendCmd("TOGGLE_PLAY"); }
-      else if (k === "n") sendCmd("NEXT");
-      else if (k === "p") sendCmd("PREV");
+    // BGM controls (si tu player los implementa como cmd)
+    if (ctlBgmOn) ctlBgmOn.addEventListener("change", () => sendCmd("SET_BGM", { enabled: (ctlBgmOn.value !== "off") }));
+    if (ctlBgmVol) ctlBgmVol.addEventListener("input", debounce(() => sendCmd("SET_BGM_VOL", { vol: parseFloat(ctlBgmVol.value || "0.22") || 0.22 }), 120));
+    if (ctlBgmPrev) ctlBgmPrev.addEventListener("click", () => sendCmd("BGM_PREV", {}));
+    if (ctlBgmPlay) ctlBgmPlay.addEventListener("click", () => sendCmd("BGM_PLAYPAUSE", {}));
+    if (ctlBgmNext) ctlBgmNext.addEventListener("click", () => sendCmd("BGM_NEXT", {}));
+    if (ctlBgmShuffle) ctlBgmShuffle.addEventListener("click", () => sendCmd("BGM_SHUFFLE", {}));
+    if (ctlBgmTrack) ctlBgmTrack.addEventListener("change", () => {
+      const idx = parseInt(ctlBgmTrack.value || "0", 10) || 0;
+      // tu player usa índice interno (BGM_TRACK si lo tienes), si no, ignora:
+      sendCmd("BGM_TRACK", { idx });
     });
 
-    setStatus(`Esperando player… (${APP_VERSION})`, false);
+    // live preview auto refresh on any UI change (ligero)
+    const autoSync = debounce(syncPreviewUrl, 160);
+    [
+      ctlMins, ctlFit, ctlHud, ctlAutoskip, ctlAdfree, ctlTwitchChannel,
+      ctlVoteOn, ctlVoteOverlay, ctlVoteWindow, ctlVoteAt, ctlVoteLead, ctlVoteCmd, ctlStayMins,
+      ctlChatOn, ctlChatHideCmd, ctlAlertsOn,
+      ctlAdsOn, ctlAdLead, ctlAdDur, ctlAdShowDuring, ctlAdChatText,
+      ctlTickerOn, ctlTickerLang, ctlTickerSpeed, ctlTickerRefresh, ctlTickerTop, ctlTickerHideOnVote, ctlTickerSpan,
+      ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget
+    ].forEach(el => { try { el?.addEventListener?.("change", autoSync); } catch (_) {} });
+
+    syncPreviewUrl();
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire, { once: true });
-  else wire();
+  function bindBus() {
+    // BC
+    try {
+      if (bcMain) bcMain.onmessage = (ev) => {
+        const msg = ev?.data;
+        lastAnyMsgAt = Date.now();
+        lastMainMsgAt = Date.now();
+        if (!keyOk(msg, true)) return;
+
+        if (msg?.type === "state") applyState(msg);
+        else if (msg?.type === "event") applyEvent(msg);
+        else if (msg?.type === "cmd") applyIncomingCmd(msg);
+        else if (msg?.type === "TICKER_CFG") { /* opcional: podrías reflejar */ }
+        else if (msg?.type === "COUNTDOWN_CFG") { /* opcional */ }
+      };
+    } catch (_) {}
+
+    try {
+      if (bcLegacy) bcLegacy.onmessage = (ev) => {
+        const msg = ev?.data;
+        lastAnyMsgAt = Date.now();
+        if (!keyOk(msg, false)) return;
+
+        if (msg?.type === "state") applyState(msg);
+        else if (msg?.type === "event") applyEvent(msg);
+        else if (msg?.type === "cmd") applyIncomingCmd(msg);
+      };
+    } catch (_) {}
+
+    // storage fallback
+    window.addEventListener("storage", (e) => {
+      const k = String(e.key || "");
+      if (!k) return;
+
+      if (k === STATE_KEY || k === STATE_KEY_LEGACY) readStateFromLS();
+      if (k === EVT_KEY || k === EVT_KEY_LEGACY) readEventFromLS();
+      if (k === CMD_KEY || k === CMD_KEY_LEGACY) readCmdFromLS();
+
+      if (k === TICKER_CFG_KEY || k === TICKER_CFG_KEY_BASE) syncTickerUIFromStore();
+      if (k === COUNTDOWN_CFG_KEY || k === COUNTDOWN_CFG_KEY_BASE) syncCountdownUIFromStore();
+      if (k === HELIX_CFG_KEY || k === HELIX_CFG_KEY_BASE) syncHelixUIFromStore();
+      if (k === BOT_STORE_KEY || k === BOT_STORE_KEY_BASE) { syncBotUIFromStore(); botApplyCfgAndMaybeConnect(); }
+    });
+  }
+
+  function heartbeat() {
+    // si no vemos estado reciente, marca desconectado suave
+    const now = Date.now();
+    const age = now - (lastSeenAt || 0);
+
+    if (age > 3500) setStatus("Sin señal… (abre el player)", false);
+
+    // tick helix
+    helixTick(false);
+  }
+
+  function boot() {
+    // header info
+    if (ctlBusName) ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS;
+
+    // stores -> UI
+    syncTickerUIFromStore();
+    syncCountdownUIFromStore();
+    syncHelixUIFromStore();
+    syncBotUIFromStore();
+
+    // bot connect si procede
+    botApplyCfgAndMaybeConnect();
+
+    bindUi();
+    bindHotkeys();
+    bindBus();
+
+    // leer estado inicial
+    readStateFromLS();
+    readEventFromLS();
+    readCmdFromLS();
+
+    // arranca heartbeat
+    setInterval(heartbeat, 900);
+
+    setStatus(`Control listo · v${APP_VERSION}`, true);
+  }
+
+  boot();
 })();
