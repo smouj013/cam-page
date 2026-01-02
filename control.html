@@ -10,10 +10,10 @@
 
   <title>Random Live Cams — Control</title>
 
-  <script>window.APP_VERSION = "2.3.5";</script>
+  <script>window.APP_VERSION = "2.3.4";</script>
 
   <!-- ✅ Cache-bust -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.5" />
+  <link rel="stylesheet" href="./styles.css?v=2.3.4" />
 
   <!-- ✅ REPAIR MODE: control.html?repair=1 -->
   <script>
@@ -84,6 +84,7 @@
       overflow-x: hidden;
     }
 
+    /* Backplates (muy sutil) */
     body.mode-control::before{
       content:"";
       position: fixed;
@@ -130,12 +131,14 @@
       body.mode-control::after{ animation: none; }
     }
 
+    /* Fallback si no hay blend */
     @supports not (mix-blend-mode: screen){
       body.mode-control::before{ mix-blend-mode: normal; opacity: .28; }
     }
 
     .controlWrap{ position: relative; z-index: 1; }
 
+    /* Header sticky bien “broadcast” */
     .controlHeader{
       position: sticky;
       top: 0;
@@ -152,10 +155,12 @@
       border-radius: var(--news-radius);
       overflow: hidden;
 
+      /* Asegura padding aunque el base lo cambie */
       padding: 14px 14px 12px;
       margin-bottom: 14px;
     }
 
+    /* Si tu styles base mete una línea “after” debajo, aquí la hacemos elegante */
     .controlHeader::after{
       content:"";
       position:absolute;
@@ -182,6 +187,7 @@
     .controlTitle .kicker{ color: rgba(255,255,255,.75); letter-spacing: .26em; }
     .controlTitle .name{ text-transform: uppercase; letter-spacing: .06em; }
 
+    /* Cards: estilo “panel de realización” */
     .card{
       background: var(--news-panel);
       border: 1px solid var(--news-stroke);
@@ -244,6 +250,7 @@
     }
     .hint{ color: var(--news-muted); }
 
+    /* Select grande (lista cams) más usable */
     #ctlSelect.select{
       padding: 8px !important;
       border-radius: 14px !important;
@@ -259,6 +266,7 @@
       background: rgba(55,214,255,.22);
     }
 
+    /* Diagnóstico: pre con “panel” */
     #ctlDiagCard pre{
       border: 1px solid rgba(255,255,255,.12);
       background: rgba(0,0,0,.22);
@@ -266,11 +274,13 @@
       padding: 10px 12px;
     }
 
+    /* ✅ FIX CLAVE: si tu styles.css oculta .full, aquí lo forzamos */
     .btn.full{
       display: block !important;
       width: 100% !important;
     }
 
+    /* Fallback si no hay blur */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
       .controlHeader, .pill{
         backdrop-filter: none !important;
@@ -384,110 +394,9 @@
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
-      <!-- ✅ PUNTOS (NUEVO) -->
-      <div class="card" id="ctlPtsCard">
-        <div class="cardTitle">Puntos (overlay)</div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlPtsOn">
-            <span>Puntos</span>
-            <select id="ctlPtsOn" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
-          </label>
-
-          <label class="row" style="margin:0" for="ctlPtsPos">
-            <span>Posición</span>
-            <select id="ctlPtsPos" class="select">
-              <option value="tl">Top-Left</option>
-              <option value="tr">Top-Right</option>
-              <option value="bl">Bottom-Left</option>
-              <option value="br">Bottom-Right</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlPtsName">
-            <span>Nombre</span>
-            <input id="ctlPtsName" class="input" type="text" value="Crystal" autocomplete="off" />
-          </label>
-
-          <label class="row" style="margin:0" for="ctlPtsIcon">
-            <span>Icono</span>
-            <input id="ctlPtsIcon" class="input" type="text" value="💎" autocomplete="off" />
-          </label>
-        </div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlPtsValue">
-            <span>Valor</span>
-            <input id="ctlPtsValue" class="input" type="number" min="0" step="1" value="0" inputmode="numeric" />
-          </label>
-
-          <label class="row" style="margin:0" for="ctlPtsGoal">
-            <span>Goal</span>
-            <input id="ctlPtsGoal" class="input" type="number" min="0" step="1" value="0" inputmode="numeric" />
-          </label>
-        </div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlPtsShowGoal">
-            <span>Mostrar goal</span>
-            <select id="ctlPtsShowGoal" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
-          </label>
-
-          <label class="row" style="margin:0" for="ctlPtsShowDelta">
-            <span>Mostrar delta</span>
-            <select id="ctlPtsShowDelta" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
-          </label>
-        </div>
-
-        <label class="row" for="ctlPtsScale">
-          <span>Escala (0.6–1.8)</span>
-          <input id="ctlPtsScale" class="input" type="number" min="0.6" max="1.8" step="0.05" value="1" inputmode="decimal" />
-        </label>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlPtsDelta">
-            <span>Delta</span>
-            <input id="ctlPtsDelta" class="input" type="number" min="1" max="999999" step="1" value="10" inputmode="numeric" />
-          </label>
-          <div class="row" style="margin:0">
-            <span>&nbsp;</span>
-            <div class="row2" style="margin:0">
-              <button id="ctlPtsSub" class="btn ghost" type="button">−</button>
-              <button id="ctlPtsAdd" class="btn" type="button">+</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="row2">
-          <button id="ctlPtsApply" class="btn full" type="button">Aplicar puntos</button>
-          <button id="ctlPtsReset" class="btn ghost full" type="button">Reset puntos</button>
-        </div>
-
-        <button id="ctlPtsCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">
-          Copiar URL overlay
-        </button>
-
-        <div class="hint">
-          ✅ OBS Browser Source: usa la URL copiada (incluye <b>pts=1</b> y <b>ptsOnly=1</b>).<br/>
-          ⚙️ Importante: control, player y overlay deben tener el mismo <b>?key=...</b>
-        </div>
-      </div>
-
       <!-- ✅ CATALOG MODE (4 cams) -->
       <div class="card">
         <div class="cardTitle">Modo catálogo (CCTV)</div>
-        <!-- (resto igual que tu archivo) -->
 
         <div class="row2">
           <label class="row" style="margin:0" for="ctlCatalogOn">
@@ -589,8 +498,416 @@
         </div>
       </div>
 
-      <!-- (TODO lo demás de tu control.html sigue igual: ticker, helix, countdown, vote, ads, bot, etc.) -->
-      <!-- No te lo recorto: si quieres que te lo pegue 100% entero con TODAS las cards, dímelo y lo divido en 2 mensajes para que no se corte. -->
+      <!-- ✅ NEWS TICKER (CONFIG) -->
+      <div class="card card--ticker">
+        <div class="cardTitle">Noticias (ticker)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickerOn">
+            <span>Ticker</span>
+            <select id="ctlTickerOn" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlTickerStatus" aria-live="polite">Ticker: —</div>
+        </div>
+
+        <label class="row" for="ctlTickerLang">
+          <span>Idioma</span>
+          <select id="ctlTickerLang" class="select">
+            <option value="auto">AUTO</option>
+            <option value="es">ES</option>
+            <option value="en">EN</option>
+          </select>
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickerSpeed">
+            <span>Velocidad (px/s)</span>
+            <input id="ctlTickerSpeed" class="input" type="number" min="20" max="140" step="1" value="55" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlTickerRefresh">
+            <span>Refresh (min)</span>
+            <input id="ctlTickerRefresh" class="input" type="number" min="3" max="60" step="1" value="12" inputmode="numeric" />
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickerTop">
+            <span>Offset top (px)</span>
+            <input id="ctlTickerTop" class="input" type="number" min="0" max="120" step="1" value="10" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlTickerHideOnVote">
+            <span>Ocultar en voto</span>
+            <select id="ctlTickerHideOnVote" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="row" for="ctlTickerSpan">
+          <span>Timespan</span>
+          <input id="ctlTickerSpan" class="input" type="text" value="1d" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlTickerApply" class="btn full" type="button">Aplicar ticker</button>
+          <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
+        </div>
+
+        <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">
+          Copiar URL Stream (con ticker)
+        </button>
+
+        <div class="hint">
+          ✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>.
+        </div>
+      </div>
+
+      <!-- ✅ AUTO TITLE (STREAM) -->
+      <div class="card">
+        <div class="cardTitle">Twitch: Título automático</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTitleOn">
+            <span>Auto-título</span>
+            <select id="ctlTitleOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlTitleStatus" aria-live="polite">Título: —</div>
+        </div>
+
+        <label class="row" for="ctlTitleClientId">
+          <span>Client ID</span>
+          <input id="ctlTitleClientId" class="input" type="text" placeholder="Twitch App Client ID" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlTitleBroadcasterId">
+          <span>Broadcaster ID</span>
+          <input id="ctlTitleBroadcasterId" class="input" type="text" placeholder="ID numérico del canal (opcional)" inputmode="numeric" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlTitleToken">
+          <span>User Token (scope)</span>
+          <input id="ctlTitleToken" class="input" type="password" placeholder="Bearer token con channel:manage:broadcast" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlTitleTemplate">
+          <span>Plantilla</span>
+          <input id="ctlTitleTemplate" class="input" type="text"
+                 value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlTitleCooldown">
+          <span>Cooldown (s)</span>
+          <input id="ctlTitleCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlTitleApply" class="btn full" type="button">Aplicar</button>
+          <button id="ctlTitleTest" class="btn ghost full" type="button">Test ahora</button>
+        </div>
+
+        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">
+          Reset auto-título
+        </button>
+
+        <div class="hint">
+          Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b><br/>
+          Necesita token de usuario con scope <b>channel:manage:broadcast</b>.
+        </div>
+      </div>
+
+      <!-- ✅ COUNTDOWN OVERLAY -->
+      <div class="card">
+        <div class="cardTitle">Countdown (overlay en stream)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCountdownOn">
+            <span>Countdown</span>
+            <select id="ctlCountdownOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Countdown: —</div>
+        </div>
+
+        <label class="row" for="ctlCountdownLabel">
+          <span>Texto</span>
+          <input id="ctlCountdownLabel" class="input" type="text" value="FIN DE AÑO" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlCountdownTarget">
+          <span>Objetivo</span>
+          <input id="ctlCountdownTarget" class="input" type="datetime-local" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar countdown</button>
+          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset countdown</button>
+        </div>
+
+        <div class="hint">
+          ✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).
+        </div>
+      </div>
+
+      <!-- CAM SELECT -->
+      <div class="card">
+        <div class="cardTitle">Cambiar cámara</div>
+        <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" autocomplete="off" />
+        <select id="ctlSelect" class="select" size="10" aria-label="Lista de cámaras"></select>
+        <div class="row2">
+          <button id="ctlGo" class="btn full" type="button">Ir</button>
+          <button id="ctlBan" class="btn ghost full" type="button">Excluir esta (solo local)</button>
+        </div>
+        <div class="hint">Doble click en la lista = Ir.</div>
+      </div>
+
+      <!-- PREVIEW -->
+      <div class="card">
+        <div class="cardTitle">Preview (opcional)</div>
+        <label class="row" for="ctlPreviewOn">
+          <span>Mostrar</span>
+          <select id="ctlPreviewOn" class="select">
+            <option value="off">OFF</option>
+            <option value="on">ON</option>
+          </select>
+        </label>
+        <div id="ctlPreviewWrap" class="previewWrap hidden">
+          <iframe
+            id="ctlPreview"
+            class="previewFrame"
+            title="Preview stream"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allow="autoplay; encrypted-media; picture-in-picture"
+          ></iframe>
+        </div>
+        <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
+      </div>
+
+      <!-- BGM -->
+      <div class="card">
+        <div class="cardTitle">Música ambiente (BGM)</div>
+
+        <label class="row" for="ctlBgmOn">
+          <span>Enable</span>
+          <select id="ctlBgmOn" class="select">
+            <option value="off">OFF</option>
+            <option value="on">ON</option>
+          </select>
+        </label>
+
+        <label class="row" for="ctlBgmVol">
+          <span>Volumen</span>
+          <input id="ctlBgmVol" class="input" type="range" min="0" max="1" step="0.01" value="0.25" />
+        </label>
+
+        <label class="row" for="ctlBgmTrack">
+          <span>Track</span>
+          <select id="ctlBgmTrack" class="select" aria-label="Track BGM"></select>
+        </label>
+
+        <div class="controls3">
+          <button class="btn" id="ctlBgmPrev" type="button" aria-label="Track anterior">⏮</button>
+          <button class="btn" id="ctlBgmPlay" type="button" aria-label="Play/Pausa BGM">▶/⏸</button>
+          <button class="btn" id="ctlBgmNext" type="button" aria-label="Siguiente track">⏭</button>
+        </div>
+        <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
+
+        <div class="hint" id="ctlBgmNow">—</div>
+      </div>
+
+      <!-- TWITCH VOTE + CHAT + ALERTS -->
+      <div class="card">
+        <div class="cardTitle">Twitch (votos / chat / alerts)</div>
+
+        <label class="row" for="ctlTwitchChannel">
+          <span>Canal</span>
+          <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlVoteOn">
+            <span>Votos</span>
+            <select id="ctlVoteOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0" for="ctlVoteOverlay">
+            <span>Overlay voto</span>
+            <select id="ctlVoteOverlay" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlChatOn">
+            <span>Chat overlay</span>
+            <select id="ctlChatOn" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0" for="ctlChatHideCmd">
+            <span>Ocultar cmds</span>
+            <select id="ctlChatHideCmd" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="row" for="ctlAlertsOn">
+          <span>Alerts Twitch</span>
+          <select id="ctlAlertsOn" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <label class="row" for="ctlVoteWindow">
+          <span>Duración voto (s)</span>
+          <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="60" inputmode="numeric" />
+        </label>
+
+        <label class="row" for="ctlVoteAt">
+          <span>Auto (a falta)</span>
+          <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" inputmode="numeric" />
+        </label>
+
+        <label class="row" for="ctlVoteLead">
+          <span>Pre-aviso (s)</span>
+          <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" inputmode="numeric" />
+        </label>
+
+        <label class="row" for="ctlStayMins">
+          <span>STAY → re-voto (min)</span>
+          <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
+        </label>
+
+        <label class="row" for="ctlYtCookies">
+          <span>YouTube cookies</span>
+          <select id="ctlYtCookies" class="select">
+            <option value="on">ON (sesión)</option>
+            <option value="off">OFF (nocookie)</option>
+          </select>
+        </label>
+
+        <label class="row" for="ctlVoteCmd">
+          <span>Cmds voto</span>
+          <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlVoteStart" class="btn full" type="button">🗳️ Lanzar voto</button>
+          <button id="ctlVoteApply" class="btn ghost full" type="button">Aplicar</button>
+        </div>
+
+        <div class="hint">
+          ✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)
+        </div>
+      </div>
+
+      <!-- ADS OVERLAY -->
+      <div class="card">
+        <div class="cardTitle">Anuncios (overlay en stream)</div>
+
+        <label class="row" for="ctlAdsOn">
+          <span>Ads overlay</span>
+          <select id="ctlAdsOn" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlAdLead">
+            <span>Lead (s)</span>
+            <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlAdDur">
+            <span>Duración (s)</span>
+            <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" inputmode="numeric" />
+          </label>
+        </div>
+
+        <label class="row" for="ctlAdShowDuring">
+          <span>Mostrar durante</span>
+          <select id="ctlAdShowDuring" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <label class="row" for="ctlAdChatText">
+          <span>Msg chat (lead)</span>
+          <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlAdNoticeBtn" class="btn full" type="button">⏳ Aviso (AD_NOTICE)</button>
+          <button id="ctlAdBeginBtn" class="btn full" type="button">▶️ En curso (AD_BEGIN)</button>
+        </div>
+        <button id="ctlAdClearBtn" class="btn ghost full" type="button" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
+
+        <div class="hint">
+          Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.
+        </div>
+      </div>
+
+      <!-- BOT IRC -->
+      <div class="card">
+        <div class="cardTitle">Bot (manda mensajes al chat)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlBotOn">
+            <span>Bot</span>
+            <select id="ctlBotOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlBotStatus" aria-live="polite">Bot OFF</div>
+        </div>
+
+        <label class="row" for="ctlBotUser">
+          <span>Usuario bot</span>
+          <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" autocomplete="username" />
+        </label>
+
+        <label class="row" for="ctlBotToken">
+          <span>OAuth token</span>
+          <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" autocomplete="current-password" />
+        </label>
+
+        <label class="row" for="ctlBotSayOnAd">
+          <span>Escribir en Ads</span>
+          <select id="ctlBotSayOnAd" class="select">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+
+        <button id="ctlBotConnect" class="btn full" type="button">🔌 Conectar bot</button>
+
+        <div class="row2" style="margin-top:10px">
+          <input id="ctlBotTestText" class="input" type="text" value="✅ Bot online" autocomplete="off" />
+          <button id="ctlBotTestSend" class="btn" type="button">Enviar test</button>
+        </div>
+
+        <div class="hint">
+          ✅ Esto solo funciona en tu panel (no en el player). No se expone el token en la URL.
+        </div>
+      </div>
     </section>
 
     <footer class="controlFooter" aria-label="Ayuda rápida">
@@ -642,12 +959,11 @@
   </script>
 
   <!-- ✅ Cache-bust scripts -->
-  <script defer src="./cams.js?v=2.3.5"></script>
-  <script defer src="./music.js?v=2.3.5"></script>
-  <script defer src="./control.js?v=2.3.5"></script>
-  <script defer src="./catalogControl.js?v=2.3.5"></script>
-  <script defer src="./pointsControl.js?v=2.3.5"></script>
-  <script src="./econTickerControl.js"></script>
-
+  <script defer src="./cams.js?v=2.3.4"></script>
+  <script defer src="./music.js?v=2.3.4"></script>
+  <script defer src="./control.js?v=2.3.4"></script>
+  <script defer src="./catalogControl.js?v=2.3.4"></script>
+  <script defer src="./pointsControl.js?v=2.3.4"></script>
+  <!-- ℹ️ newsTickerControl.js eliminado: el ticker ya lo gestiona control.js -->
 </body>
 </html>

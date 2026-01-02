@@ -24,7 +24,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.5");
+  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.4");
   const LOAD_GUARD = "__RLC_CONTROL_LOADED_V234";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 

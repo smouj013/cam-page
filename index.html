@@ -1,13 +1,13 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.5 (NEWSROOM/BROADCAST + TICKER HARDEN + CATALOG SAFE)
+<!-- index.html — Random Live Cams (PLAYER) v2.3.4 (NEWSROOM/BROADCAST + TICKER HARDEN + CATALOG SAFE)
   ✅ Compatible con:
     - styles.css (Neo-Atlas)
     - cams.js, music.js
-    - weatherClock.js, newsTicker.js, econTicker.js, catalogView.js, app.js
+    - weatherClock.js, newsTicker.js, catalogView.js, app.js
   ✅ FIX/HARDEN:
     - Stacking/layers blindados (isolation + z-index)
     - NewsTicker SIEMPRE fixed (no lo “come” overflow/stacking context)
     - Placeholder #rlcCatalog en DOM (catalogView.js puede montarlo sin depender de creación)
-    - Cache-bust por APP_VERSION en assets locales (para forzar update real en OBS/navegadores)
+    - Cache-bust opcional por APP_VERSION en assets locales
     - REPAIR MODE: index.html?repair=1 (limpia SW + caches + storage)
 -->
 <!doctype html>
@@ -23,11 +23,10 @@
   <title>Random Live Cams</title>
   <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts, ads notice, ticker y modo catálogo." />
 
-  <!-- ✅ Bump para forzar cache-bust -->
-  <script>window.APP_VERSION = "2.3.5";</script>
+  <script>window.APP_VERSION = "2.3.4";</script>
 
   <!-- ✅ Cache-bust -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.5" />
+  <link rel="stylesheet" href="./styles.css?v=2.3.4" />
 
   <!-- ✅ REPAIR MODE: index.html?repair=1 -->
   <script>
@@ -64,7 +63,7 @@
     })();
   </script>
 
-  <!-- (Opcional) Preconnect: acelera GDELT/MyMemory/Proxies si los usas -->
+  <!-- (Opcional) Preconnect: acelera GDELT/MyMemory si los usas -->
   <link rel="preconnect" href="https://api.gdeltproject.org" crossorigin>
   <link rel="preconnect" href="https://api.mymemory.translated.net" crossorigin>
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin>
@@ -101,10 +100,7 @@
       display:none;
       pointer-events:none;
     }
-    #rlcCatalog.on{
-      display:block;
-      pointer-events:auto; /* por si el catálogo es interactivo */
-    }
+    #rlcCatalog.on{ display:block; }
   </style>
 
   <!-- ✅ Countdown styles mínimos (el resto ya va en styles.css) -->
@@ -329,23 +325,22 @@
   </main>
 
   <!-- Base data -->
-  <script defer src="./cams.js?v=2.3.5"></script>
-  <script defer src="./music.js?v=2.3.5"></script>
+  <script defer src="./cams.js?v=2.3.4"></script>
+  <script defer src="./music.js?v=2.3.4"></script>
 
   <!-- ✅ Weather + hora local por cam -->
-  <script defer src="./weatherClock.js?v=2.3.5"></script>
+  <script defer src="./weatherClock.js?v=2.3.4"></script>
 
   <!-- ✅ Ticker de noticias -->
-  <script defer src="./newsTicker.js?v=2.3.5"></script>
-
-  <!-- ✅ Econ ticker (ANTES estaba sin defer y sin cache-bust) -->
-  <script defer src="./econTicker.js?v=2.3.5"></script>
+  <script defer src="./newsTicker.js?v=2.3.4"></script>
+  
+  <script src="./econTicker.js"></script>
 
   <!-- ✅ Catálogo CCTV -->
-  <script defer src="./catalogView.js?v=2.3.5"></script>
+  <script defer src="./catalogView.js?v=2.3.4"></script>
 
   <!-- Main player logic -->
-  <script defer src="./app.js?v=2.3.5"></script>
+  <script defer src="./app.js?v=2.3.4"></script>
 
   <!-- ✅ Countdown bootstrap (BC + localStorage + URL params) + hide HUD when catalog ON -->
   <script>
