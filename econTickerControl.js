@@ -1,8 +1,11 @@
-/* econTickerControl.js — RLC Econ Ticker Control v1.0.0 (HARDENED KEY+LEGACY + MULTI-BUS + COPY URL)
+/* econTickerControl.js — RLC Econ Ticker Control v1.1.0 (COMPAT HARDENED: KEY+LEGACY + MULTI-BUS + COPY URL)
    ✅ Solo para control.html
    ✅ Guarda config en localStorage (por key y legacy)
-   ✅ Emite config por BroadcastChannel (namespaced + legacy + base) + postMessage fallback
+   ✅ Emite config por BroadcastChannel (namespaced + legacy/base) + postMessage fallback
    ✅ Soporta #ctlEconCopyUrl para generar URL del player con params del econ ticker
+   ✅ Compat EXACTA con econTicker.js v1.0.0 (ECON_CFG + campos cfg)
+   ✅ Sin duplicar BroadcastChannel base (antes se abría 2 veces el mismo)
+   ✅ Soporta opcionalmente textarea JSON de clocks: #ctlEconClocksJson (si existe)
 */
 
 (() => {
@@ -10,7 +13,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_ECON_TICKER_CONTROL_LOADED_V100";
+  const LOAD_GUARD = "__RLC_ECON_TICKER_CONTROL_LOADED_V110";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -32,24 +35,23 @@
   const P = parseParams();
   const KEY = P.key;
 
+  // ✅ Buses
   const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-  const BUS_LEGACY = BUS_BASE;
-  const BUS_BASE_ONLY = BUS_BASE;
-
   const bcNs = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
-  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-  const bcBase = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE_ONLY) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE) : null;
 
+  // ✅ Storage keys
   const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
   const CFG_KEY_LEGACY = CFG_KEY_BASE;
 
+  // ✅ Defaults (deben casar con econTicker.js)
   const DEFAULTS = {
     enabled: true,
-    speedPxPerSec: 60,
-    refreshMins: 2,
-    topPx: 10,
+    speedPxPerSec: 60,   // 20..140
+    refreshMins: 2,      // 1..20
+    topPx: 10,           // 0..120
     hideOnVote: true,
-    mode: "daily",     // daily|sinceLast
+    mode: "daily",       // daily|sinceLast
     showClocks: true,
     clocks: [
       { label: "MAD", country: "ES", tz: "Europe/Madrid" },
@@ -68,7 +70,44 @@
 
   function normalizeMode(v) {
     const s = safeStr(v).toLowerCase();
-    return (s === "sinceLast") ? "sinceLast" : "daily";
+    return (s === "sincelast") ? "sinceLast" : (s === "sinceLast") ? "sinceLast" : "daily";
+  }
+
+  function normalizeClocks(list) {
+    const arr = Array.isArray(list) ? list : [];
+    const out = [];
+    for (const c of arr) {
+      const label = safeStr(c?.label).slice(0, 8) || "CLK";
+      const country = safeStr(c?.country).toUpperCase() || "UN";
+      const tz = safeStr(c?.tz) || "UTC";
+      if (!tz) continue;
+      out.push({ label, country, tz });
+    }
+    return out.length ? out : DEFAULTS.clocks.slice();
+  }
+
+  function normalizeItems(list) {
+    const arr = Array.isArray(list) ? list : [];
+    const out = [];
+    for (const it of arr) {
+      const stooq = safeStr(it?.stooq);
+      if (!stooq) continue;
+
+      out.push({
+        id: safeStr(it?.id) || stooq,
+        label: safeStr(it?.label) || stooq.toUpperCase(),
+        stooq,
+        kind: safeStr(it?.kind) || "asset",
+        currency: safeStr(it?.currency).toUpperCase() || "USD",
+        decimals: clamp(num(it?.decimals, 2), 0, 8),
+        country: safeStr(it?.country).toUpperCase() || "UN",
+        tz: safeStr(it?.tz) || "UTC",
+        iconSlug: safeStr(it?.iconSlug) || "",
+        domain: safeStr(it?.domain) || "",
+        glyph: safeStr(it?.glyph) || ""
+      });
+    }
+    return out.length ? out : DEFAULTS.items.slice();
   }
 
   function normalizeCfg(inCfg) {
@@ -81,8 +120,8 @@
     c.mode = normalizeMode(c.mode);
     c.showClocks = (c.showClocks !== false);
 
-    if (!Array.isArray(c.items)) c.items = DEFAULTS.items.slice();
-    if (!Array.isArray(c.clocks)) c.clocks = DEFAULTS.clocks.slice();
+    c.clocks = normalizeClocks(c.clocks);
+    c.items = normalizeItems(c.items);
 
     return c;
   }
@@ -120,8 +159,8 @@
 
     try { bcNs && bcNs.postMessage(msg); } catch (_) {}
     try { bcLegacy && bcLegacy.postMessage(msg); } catch (_) {}
-    try { bcBase && bcBase.postMessage(msg); } catch (_) {}
 
+    // Fallbacks
     try { window.postMessage(msg, "*"); } catch (_) {}
     try { localStorage.setItem("__rlc_econ_ping", String(Date.now())); } catch (_) {}
   }
@@ -143,8 +182,9 @@
     const top = qs("#ctlEconTop");
     const hideOnVote = qs("#ctlEconHideOnVote");
     const mode = qs("#ctlEconMode");
-    const clocks = qs("#ctlEconClocks");
+    const clocksOnOff = qs("#ctlEconClocks");
     const itemsTa = qs("#ctlEconItems");
+    const clocksTa = qs("#ctlEconClocksJson"); // ✅ opcional
 
     if (on) on.value = (c.enabled ? "on" : "off");
     if (speed) speed.value = String(c.speedPxPerSec);
@@ -152,9 +192,10 @@
     if (top) top.value = String(c.topPx);
     if (hideOnVote) hideOnVote.value = (c.hideOnVote ? "on" : "off");
     if (mode) mode.value = c.mode;
-    if (clocks) clocks.value = (c.showClocks ? "on" : "off");
+    if (clocksOnOff) clocksOnOff.value = (c.showClocks ? "on" : "off");
 
     if (itemsTa) itemsTa.value = JSON.stringify(c.items, null, 2);
+    if (clocksTa) clocksTa.value = JSON.stringify(c.clocks, null, 2);
 
     const where = KEY ? `KEY:${KEY}` : "SIN KEY";
     setStatus(c.enabled ? `Econ: ON · ${where}` : `Econ: OFF · ${where}`, c.enabled);
@@ -176,11 +217,20 @@
     const mode = safeStr(qs("#ctlEconMode")?.value || DEFAULTS.mode);
     const showClocks = (qs("#ctlEconClocks")?.value || "on") !== "off";
 
+    // items JSON
+    let items;
     const itemsTa = qs("#ctlEconItems");
-    let items = undefined;
     if (itemsTa) {
       const parsed = safeJsonParse(itemsTa.value, null);
       if (Array.isArray(parsed)) items = parsed;
+    }
+
+    // clocks JSON (opcional)
+    let clocks;
+    const clocksTa = qs("#ctlEconClocksJson");
+    if (clocksTa) {
+      const parsed = safeJsonParse(clocksTa.value, null);
+      if (Array.isArray(parsed)) clocks = parsed;
     }
 
     return normalizeCfg({
@@ -191,7 +241,8 @@
       hideOnVote,
       mode,
       showClocks,
-      ...(Array.isArray(items) ? { items } : {})
+      ...(Array.isArray(items) ? { items } : {}),
+      ...(Array.isArray(clocks) ? { clocks } : {})
     });
   }
 
@@ -222,6 +273,7 @@
 
     if (KEY) u.searchParams.set("key", KEY);
 
+    // ✅ Params EXACTOS econTicker.js
     u.searchParams.set("econ", cfg.enabled ? "1" : "0");
     u.searchParams.set("econSpeed", String(cfg.speedPxPerSec));
     u.searchParams.set("econRefresh", String(cfg.refreshMins));
@@ -233,6 +285,7 @@
     return u.toString();
   }
 
+  // Debounce simple
   let tDeb = 0;
   function debounce(fn, ms = 160) {
     return () => {
@@ -242,6 +295,7 @@
   }
 
   function boot() {
+    // Si no existe el bloque econ, salimos sin romper nada
     if (!qs("#ctlEconApply") || !qs("#ctlEconOn")) return;
 
     const saved = normalizeCfg(readCfgFirst() || DEFAULTS);
@@ -281,7 +335,8 @@
       "#ctlEconHideOnVote",
       "#ctlEconMode",
       "#ctlEconClocks",
-      "#ctlEconItems"
+      "#ctlEconItems",
+      "#ctlEconClocksJson"
     ];
 
     const applyDebounced = debounce(() => doApply(true), 180);
@@ -294,6 +349,7 @@
       el.addEventListener("input", () => applyDebounced());
     }
 
+    // Reflejar UI si cambia en otra pestaña
     window.addEventListener("storage", (e) => {
       if (!e || !e.key) return;
       if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
@@ -302,6 +358,7 @@
       }
     });
 
+    // Sync inicial
     try { sendCfg(saved); } catch (_) {}
   }
 

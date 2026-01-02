@@ -1,9 +1,11 @@
-/* econTicker.js — RLC Global Econ Ticker v1.0.0 (FREE + KEY NAMESPACE + FLAGS + CLOCKS)
+/* econTicker.js — RLC Global Econ Ticker v1.0.1 (FREE + KEY NAMESPACE + FLAGS + CLOCKS + UI BARS FIX)
    ✅ KEY namespace (bus + storage + cache): rlc_bus_v1:{key}, rlc_econ_cfg_v1:{key}, rlc_econ_cache_v1:{key}
    ✅ Fuente FREE: Stooq (CSV) + robust fetch (direct -> AllOrigins -> r.jina.ai)
    ✅ Iconos FREE: Simple Icons (CDN) + favicon domain fallback + glyph fallback
    ✅ Hora + bandera por activo (timeZone + country)
-   ✅ Hide on vote (#voteBox) + mismas CSS vars de tu ticker: --rlcTickerTop / --rlcTickerH
+   ✅ Hide on vote (#voteBox)
+   ✅ Stack correcto con News/Econ: RLCUiBars (fallback incluido)
+   ✅ No pisa --rlcTickerH a mano (se calcula según barras activas)
 
    URL params:
      - ?econ=0 (OFF)
@@ -21,7 +23,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_ECON_TICKER_LOADED_V100";
+  const LOAD_GUARD = "__RLC_ECON_TICKER_LOADED_V101";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -89,17 +91,83 @@
     return !!(msg && msg.key === KEY);
   }
 
+  // ───────────────────────────────────────── RLCUiBars fallback (stack de barras)
+  function ensureUiBars() {
+    if (g.RLCUiBars && typeof g.RLCUiBars.set === "function") return;
+
+    const bars = new Map();
+    const cssNum = (varName, fb) => {
+      try {
+        const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : fb;
+      } catch (_) { return fb; }
+    };
+    const setVar = (name, val) => {
+      try { document.documentElement.style.setProperty(name, val); } catch (_) {}
+    };
+
+    const API = {
+      set(id, cfg) {
+        const c = Object.assign({}, cfg || {});
+        c.enabled = !!c.enabled;
+        c.height = Number.isFinite(+c.height) ? +c.height : 0;
+        c.wantTop = Number.isFinite(+c.wantTop) ? +c.wantTop : 10;
+        c.cssTopVar = safeStr(c.cssTopVar) || "";
+        c.priority = Number.isFinite(+c.priority) ? +c.priority : 999;
+        bars.set(String(id), c);
+        API.recalc();
+      },
+      remove(id) {
+        bars.delete(String(id));
+        API.recalc();
+      },
+      recalc() {
+        const gap = cssNum("--rlcTickerGap", 10);
+        // si no existe, lo seteamos a default
+        const gapRaw = (() => {
+          try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
+          catch (_) { return ""; }
+        })();
+        if (!gapRaw) setVar("--rlcTickerGap", `${gap}px`);
+
+        const enabled = Array.from(bars.entries())
+          .map(([id, c]) => ({ id, ...c }))
+          .filter(b => b.enabled);
+
+        const baseTop = enabled.length
+          ? Math.min(...enabled.map(b => Number.isFinite(b.wantTop) ? b.wantTop : 10))
+          : cssNum("--rlcTickerTop", 10);
+
+        enabled.sort((a, b) => (a.priority - b.priority) || String(a.id).localeCompare(String(b.id)));
+
+        let y = 0;
+        for (const b of enabled) {
+          const top = baseTop + y;
+          if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
+          y += b.height + gap;
+        }
+
+        const totalH = enabled.length ? Math.max(0, y - gap) : 0;
+
+        setVar("--rlcTickerTop", `${baseTop}px`);
+        setVar("--rlcTickerH", `${totalH}px`);
+      }
+    };
+
+    g.RLCUiBars = API;
+  }
+
   // ───────────────────────────────────────── Defaults
   const DEFAULTS = {
     enabled: true,
     speedPxPerSec: 60,   // 20..140
-    refreshMins: 2,      // 1..20 (Stooq + proxies: no spamear)
+    refreshMins: 2,      // 1..20
     topPx: 10,           // 0..120
     hideOnVote: true,
     mode: "daily",       // daily | sinceLast
     showClocks: true,
 
-    // “market clocks” opcionales (chips a la izquierda)
     clocks: [
       { label: "MAD", country: "ES", tz: "Europe/Madrid" },
       { label: "NY",  country: "US", tz: "America/New_York" },
@@ -107,13 +175,6 @@
       { label: "TYO", country: "JP", tz: "Asia/Tokyo" }
     ],
 
-    // Watchlist (Stooq symbols)
-    // Tipos comunes:
-    // - Stocks USA: aapl.us, tsla.us, msft.us...
-    // - FX: eurusd, usdjpy...
-    // - Crypto: btcusd, ethusd...
-    // - Index (a veces): ^spx
-    // - Futuros (a veces): gc.f
     items: [
       { id:"btc",  label:"BTC/USD", stooq:"btcusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"bitcoin" },
       { id:"eth",  label:"ETH/USD", stooq:"ethusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"ethereum" },
@@ -130,7 +191,8 @@
 
   function normalizeMode(v) {
     const s = safeStr(v).toLowerCase();
-    return (s === "sinceLast") ? "sinceLast" : "daily";
+    // ✅ FIX: antes comparaba con "sinceLast" y nunca entraba
+    return (s === "sincelast" || s === "since_last" || s === "since-last") ? "sinceLast" : "daily";
   }
 
   function normalizeClocks(list) {
@@ -222,7 +284,7 @@
   position: absolute;
   left: 10px;
   right: 10px;
-  top: var(--rlcTickerTop, 10px);
+  top: var(--rlcEconTop, var(--rlcTickerTop, 10px));
   height: 34px;
   z-index: 999999;
   display:flex;
@@ -305,10 +367,13 @@
   opacity: .92;
 }
 #rlcEconTicker .item:hover{ opacity: 1; text-decoration: underline; }
+
 #rlcEconTicker .sep{
   width: 5px; height: 5px; border-radius:999px;
   background: rgba(255,255,255,.28);
   box-shadow: 0 0 0 3px rgba(255,255,255,.06);
+  display:inline-block;
+  flex: 0 0 auto;
 }
 
 #rlcEconTicker .ico{
@@ -348,17 +413,13 @@
   #rlcEconTicker .track{ animation: none !important; transform:none !important; }
 }
 
-/* Compat total con tu sistema: usa la MISMA altura/offset del ticker */
-:root{
-  --rlcTickerH: 34px;
-  --rlcTickerGap: 10px;
+/* Compat: empuja vote/ads por debajo de TODAS las barras (news/econ/...) */
+#voteBox, .vote{
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
 }
-#voteBox,
-.vote{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
-}
-#adsBox, #adBox, #adsNotice, #adNotice, #rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
+#adsBox, #adBox, #adsNotice, #adNotice,
+#rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
 }
 `.trim();
 
@@ -371,6 +432,7 @@
 
   function ensureUI() {
     injectStyles();
+    ensureUiBars();
 
     let root = qs("#rlcEconTicker");
     if (root) return root;
@@ -396,6 +458,10 @@
     `.trim();
 
     host.insertBefore(root, host.firstChild);
+
+    // ✅ fallback de iconos (captura), funciona aunque se clonen nodos
+    installImgFallback(root);
+
     return root;
   }
 
@@ -405,14 +471,16 @@
 
     root.classList.toggle("hidden", !on);
 
-    // IMPORTANTE: mismo contrato que tu news ticker (para offsets)
-    if (!on) {
-      root.style.setProperty("--rlcTickerH", `0px`);
-      document.documentElement.style.setProperty("--rlcTickerH", `0px`);
-    } else {
-      root.style.setProperty("--rlcTickerH", `34px`);
-      document.documentElement.style.setProperty("--rlcTickerH", `34px`);
-    }
+    // registrar barra en el stack
+    try {
+      g.RLCUiBars && g.RLCUiBars.set("econ", {
+        enabled: !!on,
+        wantTop: CFG.topPx,
+        height: 34,
+        cssTopVar: "--rlcEconTop",
+        priority: 20
+      });
+    } catch (_) {}
   }
 
   // ───────────────────────────────────────── Fetch robusto (igual filosofía)
@@ -506,14 +574,6 @@
     if (!d) return "";
     return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64`;
   }
-  function iconFor(it) {
-    const slug = safeStr(it.iconSlug);
-    if (slug) return { type: "img", url: simpleIconUrl(slug) };
-    const dom = safeStr(it.domain);
-    if (dom) return { type: "img", url: faviconUrl(dom) };
-    const glyph = safeStr(it.glyph) || guessGlyph(it.kind);
-    return { type: "glyph", glyph };
-  }
   function guessGlyph(kind) {
     const k = safeStr(kind).toLowerCase();
     if (k === "crypto") return "🪙";
@@ -523,16 +583,47 @@
     if (k === "commodity") return "⛏️";
     return "•";
   }
+  function iconFor(it) {
+    const slug = safeStr(it.iconSlug);
+    if (slug) return { type: "img", url: simpleIconUrl(slug) };
+    const dom = safeStr(it.domain);
+    if (dom) return { type: "img", url: faviconUrl(dom) };
+    const glyph = safeStr(it.glyph) || guessGlyph(it.kind);
+    return { type: "glyph", glyph };
+  }
+
+  // ✅ Fallback de iconos por error en captura (sobrevive a clones)
+  function installImgFallback(root) {
+    if (!root || root.__rlcImgFallbackInstalled) return;
+    root.__rlcImgFallbackInstalled = true;
+
+    root.addEventListener("error", (ev) => {
+      const img = ev?.target;
+      if (!img || img.tagName !== "IMG") return;
+      if (!root.contains(img)) return;
+
+      const ico = img.closest(".ico");
+      if (!ico) return;
+
+      const hostItem = img.closest(".item");
+      const kind = safeStr(hostItem?.getAttribute("data-kind") || "");
+      const fallbackGlyph = safeStr(hostItem?.getAttribute("data-glyph") || "") || guessGlyph(kind);
+
+      try { img.remove(); } catch (_) {}
+      try {
+        const sp = document.createElement("span");
+        sp.className = "glyph";
+        sp.textContent = fallbackGlyph;
+        ico.appendChild(sp);
+      } catch (_) {}
+    }, true);
+  }
 
   // ───────────────────────────────────────── Stooq fetch
   function stooqLastUrl(sym) {
-    // Devuelve 1 fila con Close:
-    // Symbol,Date,Time,Open,High,Low,Close,Volume
-    // AAPL.US,2026-01-02,22:00:10,...,Close,...
     return `https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`;
   }
   function stooqDailyUrl(sym) {
-    // Serie diaria (para prev close)
     return `https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`;
   }
 
@@ -571,25 +662,37 @@
     const lines = csvLineSplit(txt);
     if (lines.length < 3) return null;
 
-    // Date,Open,High,Low,Close,Volume
     const head = csvSplitRow(lines[0]);
     const idxClose = head.findIndex(h => h.toLowerCase() === "close");
+    const idxDate = head.findIndex(h => h.toLowerCase() === "date");
     if (idxClose < 0) return null;
 
-    const row1 = csvSplitRow(lines[1]);
-    const row2 = csvSplitRow(lines[2]);
+    // filas de datos
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const r = csvSplitRow(lines[i]);
+      const close = toNum(r[idxClose]);
+      const date = safeStr(r[idxDate] || "");
+      if (Number.isFinite(close) && date) rows.push({ date, close });
+    }
+    if (rows.length < 2) return null;
 
-    const close1 = toNum(row1[idxClose]);
-    const close2 = toNum(row2[idxClose]);
-    if (!Number.isFinite(close1)) return null;
+    // detecta si viene ASC o DESC por fecha
+    const first = rows[0].date;
+    const last = rows[rows.length - 1].date;
+    const isDesc = (first > last); // YYYY-MM-DD lexicográfico ok
 
-    // prev close es el close del día anterior si existe, si no, el mismo
-    return Number.isFinite(close2) ? close2 : close1;
+    if (isDesc) {
+      // rows[0] latest, rows[1] prev
+      return Number.isFinite(rows[1]?.close) ? rows[1].close : rows[0].close;
+    } else {
+      // rows[last] latest, rows[last-1] prev
+      return Number.isFinite(rows[rows.length - 2]?.close) ? rows[rows.length - 2].close : rows[rows.length - 1].close;
+    }
   }
 
   // ───────────────────────────────────────── Cache
   function cacheKey() {
-    // cambia si cambia modo/lista
     const list = (CFG.items || []).map(x => safeStr(x.stooq)).join(",");
     return `m=${CFG.mode}|list=${list}`;
   }
@@ -613,124 +716,137 @@
     return t;
   }
 
-  function buildItemsDOM(model) {
-    // model: { items: [...], clocks: [...] }
-    const frag = document.createDocumentFragment();
+  function makeSep() {
+    const sep = document.createElement("span");
+    sep.className = "sep";
+    sep.setAttribute("aria-hidden", "true");
+    return sep;
+  }
 
-    const addSepDot = () => {
-      const sep = document.createElement("span");
-      sep.className = "sep";
-      sep.setAttribute("aria-hidden", "true");
-      return sep;
+  function buildClockNode(c) {
+    const wrap = document.createElement("span");
+    wrap.className = "item";
+    wrap.setAttribute("role", "text");
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+
+    const flag = document.createElement("span");
+    flag.className = "flag";
+    flag.textContent = flagEmoji(c.country);
+
+    const clk = document.createElement("span");
+    clk.className = "clk";
+    clk.textContent = `${c.label} ${fmtTime(c.tz)}`;
+
+    meta.appendChild(flag);
+    meta.appendChild(clk);
+    wrap.appendChild(meta);
+    return wrap;
+  }
+
+  function buildAssetNode(it) {
+    const a = document.createElement("a");
+    a.className = "item";
+    a.href = `https://stooq.com/q/?s=${encodeURIComponent(it.stooq)}`;
+    a.target = "_blank";
+    a.rel = "noreferrer noopener";
+    a.setAttribute("data-kind", safeStr(it.kind));
+    a.setAttribute("data-glyph", safeStr(it.glyph) || "");
+
+    const icoWrap = document.createElement("span");
+    icoWrap.className = "ico";
+    const ic = iconFor(it);
+
+    if (ic.type === "img") {
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      img.src = ic.url;
+      img.alt = "";
+      icoWrap.appendChild(img);
+    } else {
+      const sp = document.createElement("span");
+      sp.className = "glyph";
+      sp.textContent = ic.glyph;
+      icoWrap.appendChild(sp);
+    }
+
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = clampLen(it.label || it.stooq.toUpperCase(), 18);
+
+    const px = document.createElement("span");
+    px.className = "px";
+    px.textContent = it.priceText || "—";
+
+    const chg = document.createElement("span");
+    chg.className = "chg";
+    if (it.changeText) {
+      chg.textContent = it.changeText;
+      if (it.changeDir === "up") chg.classList.add("up");
+      else if (it.changeDir === "down") chg.classList.add("down");
+    } else {
+      chg.textContent = "";
+    }
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+
+    const flag = document.createElement("span");
+    flag.className = "flag";
+    flag.textContent = flagEmoji(it.country);
+
+    const clk = document.createElement("span");
+    clk.className = "clk";
+    clk.textContent = fmtTime(it.tz || "UTC");
+
+    meta.appendChild(flag);
+    meta.appendChild(clk);
+
+    a.appendChild(icoWrap);
+    a.appendChild(nm);
+    a.appendChild(px);
+    if (it.changeText) a.appendChild(chg);
+    a.appendChild(meta);
+
+    return a;
+  }
+
+  function buildItemsDOM(model) {
+    const frag = document.createDocumentFragment();
+    let first = true;
+
+    const push = (node) => {
+      if (!first) frag.appendChild(makeSep());
+      frag.appendChild(node);
+      first = false;
     };
 
-    // clocks (si enabled)
     if (CFG.showClocks && Array.isArray(model.clocks) && model.clocks.length) {
-      for (const c of model.clocks) {
-        const a = document.createElement("a");
-        a.className = "item";
-        a.href = "#";
-        a.addEventListener("click", (e) => e.preventDefault());
-
-        const meta = document.createElement("span");
-        meta.className = "meta";
-
-        const flag = document.createElement("span");
-        flag.className = "flag";
-        flag.textContent = flagEmoji(c.country);
-
-        const clk = document.createElement("span");
-        clk.className = "clk";
-        clk.textContent = `${c.label} ${fmtTime(c.tz)}`;
-
-        meta.appendChild(flag);
-        meta.appendChild(clk);
-
-        a.appendChild(addSepDot());
-        a.appendChild(meta);
-
-        frag.appendChild(a);
-      }
+      for (const c of model.clocks) push(buildClockNode(c));
     }
 
-    // activos
-    for (const it of model.items || []) {
-      const a = document.createElement("a");
-      a.className = "item";
-      a.href = `https://stooq.com/q/?s=${encodeURIComponent(it.stooq)}`;
-      a.target = "_blank";
-      a.rel = "noreferrer noopener";
-
-      const icoWrap = document.createElement("span");
-      icoWrap.className = "ico";
-      const ic = iconFor(it);
-
-      if (ic.type === "img") {
-        const img = document.createElement("img");
-        img.loading = "lazy";
-        img.referrerPolicy = "no-referrer";
-        img.src = ic.url;
-        img.alt = "";
-        img.onerror = () => {
-          try {
-            img.remove();
-            const sp = document.createElement("span");
-            sp.className = "glyph";
-            sp.textContent = safeStr(it.glyph) || guessGlyph(it.kind);
-            icoWrap.appendChild(sp);
-          } catch (_) {}
-        };
-        icoWrap.appendChild(img);
-      } else {
-        const sp = document.createElement("span");
-        sp.className = "glyph";
-        sp.textContent = ic.glyph;
-        icoWrap.appendChild(sp);
-      }
-
-      const nm = document.createElement("span");
-      nm.className = "nm";
-      nm.textContent = clampLen(it.label || it.stooq.toUpperCase(), 18);
-
-      const px = document.createElement("span");
-      px.className = "px";
-      px.textContent = it.priceText || "—";
-
-      const chg = document.createElement("span");
-      chg.className = "chg";
-      if (it.changeText) {
-        chg.textContent = it.changeText;
-        if (it.changeDir === "up") chg.classList.add("up");
-        else if (it.changeDir === "down") chg.classList.add("down");
-      } else {
-        chg.textContent = "";
-      }
-
-      const meta = document.createElement("span");
-      meta.className = "meta";
-
-      const flag = document.createElement("span");
-      flag.className = "flag";
-      flag.textContent = flagEmoji(it.country);
-
-      const clk = document.createElement("span");
-      clk.className = "clk";
-      clk.textContent = fmtTime(it.tz || "UTC");
-
-      meta.appendChild(flag);
-      meta.appendChild(clk);
-
-      a.appendChild(addSepDot());
-      a.appendChild(icoWrap);
-      a.appendChild(nm);
-      a.appendChild(px);
-      if (it.changeText) a.appendChild(chg);
-      a.appendChild(meta);
-
-      frag.appendChild(a);
-    }
+    for (const it of model.items || []) push(buildAssetNode(it));
 
     return frag;
+  }
+
+  function repeatToFill(segEl, viewportWidth) {
+    const base = Array.from(segEl.childNodes).map(n => n.cloneNode(true));
+    if (!base.length) return;
+
+    let guard = 0;
+    while ((segEl.scrollWidth || 0) < viewportWidth * 1.2 && guard < 8) {
+      for (const n of base) segEl.appendChild(n.cloneNode(true));
+      guard++;
+    }
+  }
+
+  function cloneChildrenInto(fromEl, toEl) {
+    toEl.innerHTML = "";
+    const nodes = Array.from(fromEl.childNodes);
+    for (const n of nodes) toEl.appendChild(n.cloneNode(true));
   }
 
   function setTickerItems(model) {
@@ -741,25 +857,16 @@
     const viewport = track ? track.parentElement : null;
     if (!root || !track || !seg1 || !seg2) return;
 
-    root.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
-    document.documentElement.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
-
     track.style.animation = "none";
+
     seg1.innerHTML = "";
     seg2.innerHTML = "";
 
     seg1.appendChild(buildItemsDOM(model));
 
     const vw = viewport ? (viewport.clientWidth || 900) : 900;
-
-    // si queda corto, duplica para llenar
-    let guard = 0;
-    while ((seg1.scrollWidth || 0) < vw * 1.2 && guard < 8) {
-      seg1.innerHTML += seg1.innerHTML;
-      guard++;
-    }
-
-    seg2.innerHTML = seg1.innerHTML;
+    repeatToFill(seg1, vw);
+    cloneChildrenInto(seg1, seg2);
 
     const segW = Math.max(1200, seg1.scrollWidth || 1200);
     const endPx = -segW;
@@ -835,13 +942,11 @@
         const it = items[i];
         const sym = it.stooq;
 
-        // defaults
         let price = null;
         let prev = null;
         let dt = "";
         let err = "";
 
-        // Reusar cache para pintar algo si falla
         const cached = map[sym] || null;
 
         try {
@@ -875,7 +980,6 @@
           }
         }
 
-        // textos
         let priceText = "—";
         let changeText = "";
         let changeDir = "";
@@ -907,11 +1011,9 @@
     for (let k = 0; k < Math.min(maxConc, items.length); k++) workers.push(worker());
     await Promise.allSettled(workers);
 
-    // Orden original
     const order = new Map(items.map((x, i) => [x.stooq, i]));
     outItems.sort((a, b) => (order.get(a.stooq) ?? 0) - (order.get(b.stooq) ?? 0));
 
-    // guarda cache (namespaced)
     writeCache(ck, map);
 
     return {
@@ -932,7 +1034,6 @@
       setTickerItems(model);
     } catch (e) {
       log("refresh error:", e?.message || e);
-      // si falla duro, intenta render mínimo desde cache
       const cache = readCache();
       const ck = cacheKey();
       const map = (cache && cache.key === ck && cache.map) ? cache.map : {};
@@ -980,6 +1081,8 @@
     if (!CFG.enabled) setVisible(false);
     else setVisible(true);
 
+    try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {}
+
     setupHideOnVote();
     startTimer();
     refresh(true);
@@ -1020,7 +1123,6 @@
     setupHideOnVote();
     watchForVoteBox();
 
-    // pinta rápido desde cache
     try { refresh(false); } catch (_) {}
     log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
   }

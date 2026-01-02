@@ -1,8 +1,8 @@
-/* newsTicker.js — RLC Global News Ticker v1.5.0 (KEY NAMESPACE + MULTI-SOURCE + BILINGUAL EN+ES)
+/* newsTicker.js — RLC Global News Ticker v1.5.1 (KEY NAMESPACE + MULTI-SOURCE + BILINGUAL EN+ES + UI BARS FIX)
    ✅ KEY namespace (bus + storage + cache + translations): rlc_bus_v1:{key}, rlc_ticker_cfg_v1:{key}...
    ✅ Fuentes:
-      - GDELT (sourcelang:eng) ✅
-      - RSS libres: Google News (World), BBC World, DW World, The Guardian World ✅
+      - GDELT (sourcelang:eng)
+      - RSS libres: Google News (World), BBC World, DW World, The Guardian World
    ✅ Bilingüe: muestra EN + ES (MyMemory) + cache local + translateMax por refresh
    ✅ Toggle:
       - ?ticker=0 (OFF)
@@ -11,6 +11,8 @@
       - ?tickerTranslateMax=10
       - ?tickerSpan=1d / 12h / 30min / 1w ...
       - ?tickerDebug=1
+   ✅ Stack correcto con Econ: RLCUiBars (fallback incluido)
+   ✅ Sanitiza URLs (evita javascript:/data:)
 */
 
 (() => {
@@ -18,7 +20,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V150";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V151";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -91,11 +93,8 @@
   const log = (...a) => { if (DEBUG) console.log("[RLC:TICKER]", ...a); };
 
   function keyOk(msg, isMainChannel) {
-    // si no hay KEY, aceptar todo
     if (!KEY) return true;
-    // si viene del canal main (namespaced), aceptar
     if (isMainChannel) return true;
-    // si viene legacy/base, exigir msg.key === KEY para evitar cross-stream
     return !!(msg && msg.key === KEY);
   }
 
@@ -114,8 +113,6 @@
     bilingual: true,
     translateMax: 10,
 
-    // ✅ fuentes (mix)
-    // ids: gdelt, googlenews, bbc, dw, guardian
     sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
   };
 
@@ -179,17 +176,81 @@
   }
 
   function readCfgMerged() {
-    // ✅ Prioridad: NS -> Legacy
     return readJson(CFG_KEY_NS) || readJson(CFG_KEY_LEGACY) || null;
   }
 
   function writeCfgCompat(cfg) {
-    // ✅ Persistimos en NS y también en legacy/base para compat con players viejos (sin KEY)
     try { writeJson(CFG_KEY_NS, cfg); } catch (_) {}
     try { writeJson(CFG_KEY_LEGACY, cfg); } catch (_) {}
   }
 
   let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
+
+  // ───────────────────────────────────────── RLCUiBars fallback (mismo que econ)
+  function ensureUiBars() {
+    if (g.RLCUiBars && typeof g.RLCUiBars.set === "function") return;
+
+    const bars = new Map();
+    const cssNum = (varName, fb) => {
+      try {
+        const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : fb;
+      } catch (_) { return fb; }
+    };
+    const setVar = (name, val) => {
+      try { document.documentElement.style.setProperty(name, val); } catch (_) {}
+    };
+
+    const API = {
+      set(id, cfg) {
+        const c = Object.assign({}, cfg || {});
+        c.enabled = !!c.enabled;
+        c.height = Number.isFinite(+c.height) ? +c.height : 0;
+        c.wantTop = Number.isFinite(+c.wantTop) ? +c.wantTop : 10;
+        c.cssTopVar = safeStr(c.cssTopVar) || "";
+        c.priority = Number.isFinite(+c.priority) ? +c.priority : 999;
+        bars.set(String(id), c);
+        API.recalc();
+      },
+      remove(id) {
+        bars.delete(String(id));
+        API.recalc();
+      },
+      recalc() {
+        const gap = cssNum("--rlcTickerGap", 10);
+        const gapRaw = (() => {
+          try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
+          catch (_) { return ""; }
+        })();
+        if (!gapRaw) setVar("--rlcTickerGap", `${gap}px`);
+
+        const enabled = Array.from(bars.entries())
+          .map(([id, c]) => ({ id, ...c }))
+          .filter(b => b.enabled);
+
+        const baseTop = enabled.length
+          ? Math.min(...enabled.map(b => Number.isFinite(b.wantTop) ? b.wantTop : 10))
+          : cssNum("--rlcTickerTop", 10);
+
+        enabled.sort((a, b) => (a.priority - b.priority) || String(a.id).localeCompare(String(b.id)));
+
+        let y = 0;
+        for (const b of enabled) {
+          const top = baseTop + y;
+          if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
+          y += b.height + gap;
+        }
+
+        const totalH = enabled.length ? Math.max(0, y - gap) : 0;
+
+        setVar("--rlcTickerTop", `${baseTop}px`);
+        setVar("--rlcTickerH", `${totalH}px`);
+      }
+    };
+
+    g.RLCUiBars = API;
+  }
 
   // ───────────────────────────────────────── Fuentes
   const API = {
@@ -219,7 +280,7 @@
   position: absolute;
   left: 10px;
   right: 10px;
-  top: var(--rlcTickerTop, 10px);
+  top: var(--rlcNewsTop, var(--rlcTickerTop, 10px));
   height: 34px;
   z-index: 999999;
   display:flex;
@@ -302,10 +363,13 @@
   opacity: .92;
 }
 #rlcNewsTicker .item:hover{ opacity: 1; text-decoration: underline; }
+
 #rlcNewsTicker .sep{
   width: 5px; height: 5px; border-radius:999px;
   background: rgba(255,255,255,.28);
   box-shadow: 0 0 0 3px rgba(255,255,255,.06);
+  display:inline-block;
+  flex: 0 0 auto;
 }
 #rlcNewsTicker .src{
   font-weight: 950;
@@ -326,17 +390,13 @@
   #rlcNewsTicker .track{ animation: none !important; transform:none !important; }
 }
 
-:root{
-  --rlcTickerH: 34px;
-  --rlcTickerGap: 10px;
+/* Compat: empuja vote/ads por debajo de TODAS las barras */
+#voteBox, .vote{
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
 }
-#voteBox,
-.vote{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
-}
-
-#adsBox, #adBox, #adsNotice, #adNotice, #rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 34px) + var(--rlcTickerGap, 10px)) !important;
+#adsBox, #adBox, #adsNotice, #adNotice,
+#rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
+  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
 }
 `.trim();
 
@@ -344,16 +404,12 @@
   }
 
   function pickHost() {
-    // ✅ preferimos stage (evita parent con pointer-events:none)
-    return (
-      qs("#stage") ||
-      qs("#app") ||
-      document.body
-    );
+    return (qs("#stage") || qs("#app") || document.body);
   }
 
   function ensureUI() {
     injectStyles();
+    ensureUiBars();
 
     let root = qs("#rlcNewsTicker");
     if (root) return root;
@@ -388,16 +444,18 @@
 
     root.classList.toggle("hidden", !on);
 
-    if (!on) {
-      root.style.setProperty("--rlcTickerH", `0px`);
-      document.documentElement.style.setProperty("--rlcTickerH", `0px`);
-    } else {
-      root.style.setProperty("--rlcTickerH", `34px`);
-      document.documentElement.style.setProperty("--rlcTickerH", `34px`);
-    }
+    try {
+      g.RLCUiBars && g.RLCUiBars.set("news", {
+        enabled: !!on,
+        wantTop: CFG.topPx,
+        height: 34,
+        cssTopVar: "--rlcNewsTop",
+        priority: 10
+      });
+    } catch (_) {}
   }
 
-  // ───────────────────────────────────────── Fetch robusto (text)
+  // ───────────────────────────────────────── Fetch robusto (text/json)
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -497,7 +555,6 @@
     let t = safeStr(s).replace(/\s+/g, " ").trim();
     if (t.length < 14) return "";
     if (t.length > 140) t = t.slice(0, 137).trim() + "…";
-    // filtra scripts raros (si se cuela algo)
     if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
     return t;
   }
@@ -522,6 +579,17 @@
     return cleaned.toUpperCase().slice(0, 22);
   }
 
+  function sanitizeUrl(u) {
+    const s = safeStr(u);
+    if (!s) return "";
+    try {
+      const url = new URL(s, location.href);
+      const p = url.protocol.toLowerCase();
+      if (p === "http:" || p === "https:") return url.toString();
+      return "";
+    } catch (_) { return ""; }
+  }
+
   // ───────────────────────────────────────── Traducción + cache
   function simpleHash(str) {
     const s = String(str || "");
@@ -543,7 +611,6 @@
 
   function writeTransStore(store) {
     try { writeJson(TRANS_KEY_NS, store); } catch (_) {}
-    // compat legacy (solo si no hay KEY, o si quieres compartir cache)
     try { if (!KEY) writeJson(TRANS_KEY_LEGACY, store); } catch (_) {}
   }
 
@@ -630,7 +697,7 @@
 
     const mapped = articles.map(a => {
       const title = cleanTitle(a?.title || a?.name || "");
-      const link  = safeStr(a?.url || a?.link || a?.url_mobile || "");
+      const link  = sanitizeUrl(a?.url || a?.link || a?.url_mobile || "");
       if (!title || !link) return null;
       return { titleEn: title, url: link, source: normalizeSource(a) || "GDELT" };
     }).filter(Boolean);
@@ -638,23 +705,22 @@
     return uniqBy(mapped, x => (x.titleEn + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
   }
 
-  // ───────────────────────────────────────── Headlines: RSS (libres)
+  // ───────────────────────────────────────── Headlines: RSS/Atom
   function parseRssOrAtom(xmlText, fallbackSource) {
     const txt = String(xmlText || "");
     const doc = new DOMParser().parseFromString(txt, "text/xml");
 
-    // errores de parseo XML
     const pe = doc.querySelector("parsererror");
     if (pe) return [];
 
     const out = [];
 
-    // RSS <item>
     const items = Array.from(doc.querySelectorAll("item"));
     for (const it of items) {
       const t = cleanTitle(it.querySelector("title")?.textContent || "");
       let link = safeStr(it.querySelector("link")?.textContent || "");
       if (!link) link = safeStr(it.querySelector("guid")?.textContent || "");
+      link = sanitizeUrl(link);
       if (!t || !link) continue;
 
       const srcNode = it.querySelector("source");
@@ -666,13 +732,12 @@
       if (out.length >= API.maxItems) break;
     }
 
-    // Atom <entry>
     if (!out.length) {
       const entries = Array.from(doc.querySelectorAll("entry"));
       for (const e of entries) {
         const t = cleanTitle(e.querySelector("title")?.textContent || "");
         const linkEl = e.querySelector('link[rel="alternate"]') || e.querySelector("link");
-        const link = safeStr(linkEl?.getAttribute("href") || linkEl?.textContent || "");
+        const link = sanitizeUrl(linkEl?.getAttribute("href") || linkEl?.textContent || "");
         if (!t || !link) continue;
         out.push({ titleEn: t, url: link, source: fallbackSource || "ATOM" });
         if (out.length >= API.maxItems) break;
@@ -692,7 +757,6 @@
     }[id] || normalizeSourceFromUrl(url));
 
     const items = parseRssOrAtom(xml, source);
-    // dedupe por link
     return uniqBy(items, x => safeStr(x.url).toLowerCase()).slice(0, API.maxItems);
   }
 
@@ -717,7 +781,6 @@
       if (Array.isArray(got) && got.length) chunks.push(got);
     }
 
-    // interleave para mezclar fuentes (y que no sea todo GDELT)
     const merged = [];
     let guard = 0;
     while (merged.length < API.maxItems && guard < 500) {
@@ -769,33 +832,45 @@
     else label.textContent = (uiLangEffective() === "en") ? "NEWS" : "NOTICIAS";
   }
 
+  function makeSep() {
+    const sep = document.createElement("span");
+    sep.className = "sep";
+    sep.setAttribute("aria-hidden", "true");
+    return sep;
+  }
+
   function buildItemsDOM(items) {
     const uiLang = uiLangEffective();
     const list = (Array.isArray(items) && items.length) ? items : [
       {
         titleEn: (uiLang === "es") ? "No hay titulares ahora mismo… reintentando." : "No headlines right now… retrying.",
         titleEs: "",
-        url: "#",
+        url: "",
         source: "RLC"
       }
     ];
 
     const frag = document.createDocumentFragment();
+    let first = true;
+
+    const push = (node) => {
+      if (!first) frag.appendChild(makeSep());
+      frag.appendChild(node);
+      first = false;
+    };
 
     for (const it of list) {
-      const a = document.createElement("a");
-      a.className = "item";
-      a.href = it.url || "#";
-      if (a.href !== "#") {
-        a.target = "_blank";
-        a.rel = "noreferrer noopener";
-      } else {
-        a.addEventListener("click", (e) => e.preventDefault());
-      }
+      const link = sanitizeUrl(it.url || "");
+      const isLink = !!link;
 
-      const sep = document.createElement("span");
-      sep.className = "sep";
-      sep.setAttribute("aria-hidden", "true");
+      const el = document.createElement(isLink ? "a" : "span");
+      el.className = "item";
+
+      if (isLink) {
+        el.href = link;
+        el.target = "_blank";
+        el.rel = "noreferrer noopener";
+      }
 
       const title = document.createElement("span");
       title.className = "t";
@@ -813,14 +888,30 @@
       src.className = "src";
       src.textContent = it.source || "NEWS";
 
-      a.appendChild(sep);
-      a.appendChild(title);
-      a.appendChild(src);
+      el.appendChild(title);
+      el.appendChild(src);
 
-      frag.appendChild(a);
+      push(el);
     }
 
     return frag;
+  }
+
+  function repeatToFill(segEl, viewportWidth) {
+    const base = Array.from(segEl.childNodes).map(n => n.cloneNode(true));
+    if (!base.length) return;
+
+    let guard = 0;
+    while ((segEl.scrollWidth || 0) < viewportWidth * 1.2 && guard < 8) {
+      for (const n of base) segEl.appendChild(n.cloneNode(true));
+      guard++;
+    }
+  }
+
+  function cloneChildrenInto(fromEl, toEl) {
+    toEl.innerHTML = "";
+    const nodes = Array.from(fromEl.childNodes);
+    for (const n of nodes) toEl.appendChild(n.cloneNode(true));
   }
 
   function setTickerItems(items) {
@@ -833,9 +924,6 @@
 
     setLabel(root);
 
-    root.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
-    document.documentElement.style.setProperty("--rlcTickerTop", `${CFG.topPx}px`);
-
     track.style.animation = "none";
     seg1.innerHTML = "";
     seg2.innerHTML = "";
@@ -843,14 +931,8 @@
     seg1.appendChild(buildItemsDOM(items));
 
     const vw = viewport ? (viewport.clientWidth || 900) : 900;
-
-    let guard = 0;
-    while ((seg1.scrollWidth || 0) < vw * 1.2 && guard < 8) {
-      seg1.innerHTML += seg1.innerHTML;
-      guard++;
-    }
-
-    seg2.innerHTML = seg1.innerHTML;
+    repeatToFill(seg1, vw);
+    cloneChildrenInto(seg1, seg2);
 
     const segW = Math.max(1200, seg1.scrollWidth || 1200);
     const endPx = -segW;
@@ -921,7 +1003,6 @@
 
   function writeCache(key, items) {
     writeJson(CACHE_KEY_NS, { ts: Date.now(), key, items });
-    // legacy solo si no hay KEY (evita pisar multi-stream)
     if (!KEY) writeJson(CACHE_KEY_LEGACY, { ts: Date.now(), key, items });
   }
 
@@ -977,6 +1058,8 @@
     if (!CFG.enabled) setVisible(false);
     else setVisible(true);
 
+    try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {}
+
     setupHideOnVote();
     startTimer();
     refresh(true);
@@ -995,24 +1078,19 @@
     ensureUI();
     applyCfg(CFG, false);
 
-    // BroadcastChannel (main + legacy)
     try {
       if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
       if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
     } catch (_) {}
 
-    // postMessage fallback (si control lo manda)
     window.addEventListener("message", (ev) => {
       const msg = ev?.data;
       if (!msg || typeof msg !== "object") return;
       onBusMessage(msg, false);
     });
 
-    // storage event (otra pestaña)
     window.addEventListener("storage", (e) => {
       if (!e || !e.key) return;
-
-      // si hay KEY, reaccionar a ns y a legacy
       if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
         const stored = readCfgMerged();
         if (stored) applyCfg(stored, false);
@@ -1022,7 +1100,6 @@
     setupHideOnVote();
     watchForVoteBox();
 
-    // pinta rápido si hay cache
     const cache = readCache();
     if (cache?.items?.length) setTickerItems(cache.items);
 

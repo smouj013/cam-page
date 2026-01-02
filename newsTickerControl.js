@@ -1,9 +1,15 @@
-/* newsTickerControl.js — RLC Ticker Control v1.3.0 (HARDENED KEY+LEGACY + MULTI-BUS + COPY URL)
+/* newsTickerControl.js — RLC News Ticker Control v1.4.0 (COMPAT HARDENED: KEY+LEGACY + MULTI-BUS + COPY URL)
    ✅ Solo para control.html
-   ✅ Guarda config en localStorage (por key y legacy + fallback sin key)
-   ✅ Emite config por BroadcastChannel (namespaced + legacy + base) + postMessage fallback
+   ✅ Guarda config en localStorage (por key y legacy/base)
+   ✅ Emite config por BroadcastChannel (namespaced + legacy/base) + postMessage fallback
    ✅ Soporta #ctlTickerCopyUrl para generar URL del player con params del ticker
    ✅ Debounce en input para no spamear BC
+   ✅ Compat EXACTA con newsTicker.js v1.5.0:
+        - type: "TICKER_CFG"
+        - cfg: enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan,
+               bilingual, translateMax, sources[]
+   ✅ Añade soporte opcional UI para sources:
+        - input/textarea #ctlTickerSources (CSV: "gdelt,bbc,dw,...")
 */
 
 (() => {
@@ -11,7 +17,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKER_CONTROL_LOADED_V130";
+  const LOAD_GUARD = "__RLC_TICKER_CONTROL_LOADED_V140";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -35,21 +41,12 @@
 
   // ✅ Buses
   const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-  const BUS_LEGACY = BUS_BASE;
-  const BUS_BASE_ONLY = BUS_BASE;
-
   const bcNs = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
-  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-  const bcBase = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE_ONLY) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE) : null;
 
-  // ✅ Storage keys (HARDENED)
-  // - Por key: CFG_KEY_BASE:key
-  // - Legacy: CFG_KEY_BASE
-  // - Fallback “sin key”: por si el player lee sólo base o sólo legacy
+  // ✅ Storage keys (NS + legacy/base)
   const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
   const CFG_KEY_LEGACY = CFG_KEY_BASE;
-  const CFG_KEY_FALLBACK_NO_KEY = CFG_KEY_BASE; // igual que legacy, pero lo tratamos explícito
-  const CFG_KEY_FALLBACK_NSLESS = CFG_KEY_BASE; // mismo; mantenemos por claridad
 
   // ✅ Defaults (deben casar con newsTicker.js)
   const DEFAULTS = {
@@ -60,16 +57,33 @@
     topPx: 10,              // 0..120
     hideOnVote: true,
     timespan: "1d",         // 1d|12h|30min|1w|1m...
-    bilingual: true,        // si tu newsTicker.js lo soporta
-    translateMax: 10        // si tu newsTicker.js lo soporta
+
+    bilingual: true,
+    translateMax: 10,
+
+    // ✅ newsTicker.js soporta sources[]
+    sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
   };
 
   function normalizeTimespan(v) {
     const t = safeStr(v).toLowerCase();
     if (!t) return DEFAULTS.timespan;
-    // min/h/d/w/m
     if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
     return DEFAULTS.timespan;
+  }
+
+  function normalizeSources(list) {
+    const allowed = new Set(["gdelt","googlenews","bbc","dw","guardian"]);
+    const arr = Array.isArray(list)
+      ? list
+      : String(list || "").split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
+
+    const out = [];
+    for (const s of arr) {
+      if (!allowed.has(s)) continue;
+      if (!out.includes(s)) out.push(s);
+    }
+    return out.length ? out : DEFAULTS.sources.slice();
   }
 
   function normalizeCfg(inCfg) {
@@ -86,15 +100,15 @@
 
     c.timespan = normalizeTimespan(c.timespan);
 
-    // opcionales (si tu ticker los usa)
     c.bilingual = (c.bilingual !== false);
     c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
+
+    c.sources = normalizeSources(c.sources);
 
     return c;
   }
 
   function readCfgFirst() {
-    // ✅ prioriza NS, luego legacy
     try {
       const raw1 = localStorage.getItem(CFG_KEY_NS);
       if (raw1) return JSON.parse(raw1);
@@ -108,9 +122,7 @@
 
   function writeCfgEverywhere(cfg) {
     const raw = JSON.stringify(cfg);
-    // ✅ Guardar en NS (si hay KEY)
     try { localStorage.setItem(CFG_KEY_NS, raw); } catch (_) {}
-    // ✅ Guardar en legacy/base (compat total)
     try { localStorage.setItem(CFG_KEY_LEGACY, raw); } catch (_) {}
   }
 
@@ -127,15 +139,11 @@
       ...(KEY ? { key: KEY } : {})
     };
 
-    // ✅ Emitir por todos los BC posibles
     try { bcNs && bcNs.postMessage(msg); } catch (_) {}
     try { bcLegacy && bcLegacy.postMessage(msg); } catch (_) {}
-    try { bcBase && bcBase.postMessage(msg); } catch (_) {}
 
-    // ✅ Fallback: postMessage (por si OBS/Chromium raro con BC)
+    // Fallbacks
     try { window.postMessage(msg, "*"); } catch (_) {}
-
-    // ✅ Fallback: storage ping para tabs
     try { localStorage.setItem("__rlc_ticker_ping", String(Date.now())); } catch (_) {}
   }
 
@@ -158,9 +166,10 @@
     const hideOnVote = qs("#ctlTickerHideOnVote");
     const span = qs("#ctlTickerSpan");
 
-    // opcionales (si los añades al HTML en el futuro)
+    // opcionales
     const bilingualEl = qs("#ctlTickerBilingual");
     const transEl = qs("#ctlTickerTranslateMax");
+    const sourcesEl = qs("#ctlTickerSources"); // ✅ opcional (CSV)
 
     if (on) on.value = (c.enabled ? "on" : "off");
     if (lang) lang.value = c.lang;
@@ -172,6 +181,8 @@
 
     if (bilingualEl) bilingualEl.value = (c.bilingual ? "on" : "off");
     if (transEl) transEl.value = String(c.translateMax);
+
+    if (sourcesEl) sourcesEl.value = (c.sources || []).join(",");
 
     const where = KEY ? `KEY:${KEY}` : "SIN KEY";
     setStatus(c.enabled ? `Ticker: ON · ${where}` : `Ticker: OFF · ${where}`, c.enabled);
@@ -186,11 +197,14 @@
     const hideOnVote = (qs("#ctlTickerHideOnVote")?.value || "on") !== "off";
     const timespan = safeStr(qs("#ctlTickerSpan")?.value || DEFAULTS.timespan);
 
-    // opcionales si existieran
     const bilingualEl = qs("#ctlTickerBilingual");
     const transEl = qs("#ctlTickerTranslateMax");
+    const sourcesEl = qs("#ctlTickerSources");
+
     const bilingual = bilingualEl ? ((bilingualEl.value || "on") !== "off") : undefined;
     const translateMax = transEl ? num(transEl.value, DEFAULTS.translateMax) : undefined;
+
+    const sources = sourcesEl ? normalizeSources(sourcesEl.value) : undefined;
 
     return normalizeCfg({
       enabled: (on !== "off"),
@@ -201,7 +215,8 @@
       hideOnVote,
       timespan,
       ...(typeof bilingual === "boolean" ? { bilingual } : {}),
-      ...(Number.isFinite(translateMax) ? { translateMax } : {})
+      ...(Number.isFinite(translateMax) ? { translateMax } : {}),
+      ...(Array.isArray(sources) ? { sources } : {})
     });
   }
 
@@ -227,16 +242,12 @@
   }
 
   function buildPlayerUrlWithTicker(cfg) {
-    // ✅ Genera una URL del player (mismo origin/path base), con params ticker
-    // - Si tú usas otra ruta distinta, ajusta aquí: "index.html" o "/cam-page/"
     const u = new URL(location.href);
-    // Intento razonable: mismo directorio pero index.html
     u.pathname = u.pathname.replace(/[^/]*$/, "index.html");
 
-    // Mantener key si existe
     if (KEY) u.searchParams.set("key", KEY);
 
-    // Parámetros del ticker (coinciden con newsTicker.js parseParams)
+    // ✅ Params EXACTOS newsTicker.js parseParams
     u.searchParams.set("ticker", cfg.enabled ? "1" : "0");
     u.searchParams.set("tickerLang", cfg.lang);
     u.searchParams.set("tickerSpeed", String(cfg.speedPxPerSec));
@@ -245,14 +256,17 @@
     u.searchParams.set("tickerHideOnVote", cfg.hideOnVote ? "1" : "0");
     u.searchParams.set("tickerSpan", cfg.timespan);
 
-    // opcionales
     u.searchParams.set("tickerBilingual", cfg.bilingual ? "1" : "0");
     u.searchParams.set("tickerTranslateMax", String(cfg.translateMax));
+
+    // ✅ sources (siempre coherente con whitelist)
+    const src = normalizeSources(cfg.sources);
+    u.searchParams.set("tickerSources", src.join(","));
 
     return u.toString();
   }
 
-  // Debounce simple para inputs
+  // Debounce simple
   let tDeb = 0;
   function debounce(fn, ms = 160) {
     return () => {
@@ -286,7 +300,6 @@
       applyUIFromCfg(cfg);
     });
 
-    // ✅ Botón “Copiar URL Stream (con ticker)”
     qs("#ctlTickerCopyUrl")?.addEventListener("click", async () => {
       const cfg = collectCfgFromUI();
       const url = buildPlayerUrlWithTicker(cfg);
@@ -304,7 +317,8 @@
       "#ctlTickerHideOnVote",
       "#ctlTickerSpan",
       "#ctlTickerBilingual",
-      "#ctlTickerTranslateMax"
+      "#ctlTickerTranslateMax",
+      "#ctlTickerSources"
     ];
 
     const applyDebounced = debounce(() => doApply(true), 160);
@@ -314,14 +328,13 @@
       if (!el) continue;
 
       el.addEventListener("change", () => doApply(true));
-
-      // input continuo sólo en INPUT/number/text (evita spam)
       el.addEventListener("input", () => {
-        if (el.tagName === "INPUT") applyDebounced();
+        // input continuo solo si es INPUT/TEXTAREA (evita “spam” raro en selects)
+        const tag = (el.tagName || "").toUpperCase();
+        if (tag === "INPUT" || tag === "TEXTAREA") applyDebounced();
       });
     }
 
-    // Si cambian en otra pestaña, reflejar UI
     window.addEventListener("storage", (e) => {
       if (!e || !e.key) return;
       if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
@@ -330,7 +343,7 @@
       }
     });
 
-    // Pintado inicial + envío suave (para sincronizar player aunque no haya tocado nada)
+    // Sync inicial
     try { sendCfg(saved); } catch (_) {}
   }
 
