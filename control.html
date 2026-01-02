@@ -84,6 +84,7 @@
       overflow-x: hidden;
     }
 
+    /* Backplates (muy sutil) */
     body.mode-control::before{
       content:"";
       position: fixed;
@@ -130,20 +131,43 @@
       body.mode-control::after{ animation: none; }
     }
 
+    /* Fallback si no hay blend */
+    @supports not (mix-blend-mode: screen){
+      body.mode-control::before{ mix-blend-mode: normal; opacity: .28; }
+    }
+
     .controlWrap{ position: relative; z-index: 1; }
 
+    /* Header sticky bien “broadcast” */
     .controlHeader{
       position: sticky;
       top: 0;
       z-index: 5;
+
       background:
         linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
       border: 1px solid var(--news-stroke);
       box-shadow: var(--news-glow);
+
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+
       border-radius: var(--news-radius);
       overflow: hidden;
+
+      /* Asegura padding aunque el base lo cambie */
+      padding: 14px 14px 12px;
+      margin-bottom: 14px;
+    }
+
+    /* Si tu styles base mete una línea “after” debajo, aquí la hacemos elegante */
+    .controlHeader::after{
+      content:"";
+      position:absolute;
+      left:0; right:0; bottom:0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(55,214,255,.45), rgba(255,59,59,.40), transparent);
+      opacity: .65;
     }
 
     .controlHeader::before{
@@ -163,6 +187,7 @@
     .controlTitle .kicker{ color: rgba(255,255,255,.75); letter-spacing: .26em; }
     .controlTitle .name{ text-transform: uppercase; letter-spacing: .06em; }
 
+    /* Cards: estilo “panel de realización” */
     .card{
       background: var(--news-panel);
       border: 1px solid var(--news-stroke);
@@ -225,10 +250,43 @@
     }
     .hint{ color: var(--news-muted); }
 
+    /* Select grande (lista cams) más usable */
+    #ctlSelect.select{
+      padding: 8px !important;
+      border-radius: 14px !important;
+      height: auto;
+      max-height: 360px;
+      overflow: auto;
+    }
+    #ctlSelect option{
+      padding: 8px 10px;
+      border-radius: 10px;
+    }
+    #ctlSelect option:checked{
+      background: rgba(55,214,255,.22);
+    }
+
+    /* Diagnóstico: pre con “panel” */
+    #ctlDiagCard pre{
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.22);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+
     /* ✅ FIX CLAVE: si tu styles.css oculta .full, aquí lo forzamos */
     .btn.full{
       display: block !important;
       width: 100% !important;
+    }
+
+    /* Fallback si no hay blur */
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+      .controlHeader, .pill{
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(10,14,22,.92) !important;
+      }
     }
   </style>
 </head>
@@ -905,6 +963,7 @@
   <script defer src="./music.js?v=2.3.4"></script>
   <script defer src="./control.js?v=2.3.4"></script>
   <script defer src="./catalogControl.js?v=2.3.4"></script>
+  <script defer src="./pointsControl.js?v=2.3.4"></script>
   <!-- ℹ️ newsTickerControl.js eliminado: el ticker ya lo gestiona control.js -->
 </body>
 </html>

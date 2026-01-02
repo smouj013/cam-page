@@ -1,21 +1,32 @@
-/* app.js — RLC Player v2.2.5 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST)
+/* app.js — RLC Player v2.2.6 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + POINTS INTEGRATION)
    ✅ FIX CLAVE (mantenido):
       - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
       - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
       - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead)
       - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
       - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
-   ✅ Mejora v2.2.5:
+   ✅ Mejoras v2.2.5 (mantenidas):
       - parseParams más robusto (bools tipo "true/false/1/0")
       - setShown añade aria-hidden y refuerzo de display:none
       - guardas extra en filtros / listas vacías
+   ✅ Mejora v2.2.6:
+      - Integración nativa con pointsControl.js (RLCPoints)
+      - Auto-carga opcional de ./pointsControl.js si ?pts=1 o si llegan comandos PTS_*
+      - Soporta comandos: PTS_SET / PTS_ADD / PTS_GOAL / PTS_CFG / PTS_RESET / PTS_TOGGLE
+      - Incluye snapshot de puntos en postState (si está disponible)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V225_PRO";
-  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+
+  // Guard anti doble carga (compat con v2.2.5)
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V226_PRO";
+  try {
+    if (g.__RLC_PLAYER_LOADED_V225_PRO) return;
+    if (g[LOAD_GUARD]) return;
+    g[LOAD_GUARD] = true;
+  } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
   const qs = (s) => document.querySelector(s);
@@ -114,6 +125,35 @@
     const ytCookiesExplicit = (ytCookiesParam != null) || (ytSessionParam != null);
     const ytCookies = ytCookiesExplicit ? parseBoolParam((ytCookiesParam ?? ytSessionParam), true) : true;
 
+    // ✅ Points overlay (pointsControl.js)
+    const ptsParam = (u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"));
+    const ptsExplicit = (ptsParam != null);
+    const pts = ptsExplicit ? parseBoolParam(ptsParam, true) : false;
+
+    // overrides opcionales (solo si existen en URL, NO pisan control si no vienen)
+    const ptsName = (u.searchParams.get("ptsName") || u.searchParams.get("pointsName") || "").trim();
+    const ptsIcon = (u.searchParams.get("ptsIcon") || u.searchParams.get("pointsIcon") || "").trim();
+    const ptsPos = (u.searchParams.get("ptsPos") || "").trim().toLowerCase();
+    const ptsScaleRaw = u.searchParams.get("ptsScale");
+    const ptsScale = (ptsScaleRaw != null) ? clamp(parseFloat(ptsScaleRaw || "1") || 1, 0.6, 1.8) : NaN;
+
+    const ptsGoalRaw = (u.searchParams.get("ptsGoal") ?? u.searchParams.get("pointsGoal"));
+    const ptsValueRaw = (u.searchParams.get("ptsValue") ?? u.searchParams.get("pointsValue"));
+    const ptsGoal = (ptsGoalRaw != null) ? (parseInt(ptsGoalRaw || "0", 10) || 0) : NaN;
+    const ptsValue = (ptsValueRaw != null) ? (parseInt(ptsValueRaw || "0", 10) || 0) : NaN;
+
+    const ptsShowGoalRaw = u.searchParams.get("ptsShowGoal");
+    const ptsShowDeltaRaw = u.searchParams.get("ptsShowDelta");
+    const ptsShowGoalExplicit = (ptsShowGoalRaw != null);
+    const ptsShowDeltaExplicit = (ptsShowDeltaRaw != null);
+    const ptsShowGoal = ptsShowGoalExplicit ? parseBoolParam(ptsShowGoalRaw, true) : true;
+    const ptsShowDelta = ptsShowDeltaExplicit ? parseBoolParam(ptsShowDeltaRaw, true) : true;
+
+    const ptsHasOverrides =
+      !!ptsName || !!ptsIcon || !!ptsPos ||
+      (ptsScaleRaw != null) || (ptsGoalRaw != null) || (ptsValueRaw != null) ||
+      ptsShowGoalExplicit || ptsShowDeltaExplicit;
+
     return {
       mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
       fit: (u.searchParams.get("fit") || "cover"),
@@ -171,6 +211,21 @@
       startTimeoutMs,
       stallTimeoutMs,
       maxStalls,
+
+      // points
+      pts,
+      ptsExplicit,
+      ptsHasOverrides,
+      ptsName,
+      ptsIcon,
+      ptsPos,
+      ptsScale,
+      ptsGoal,
+      ptsValue,
+      ptsShowGoal,
+      ptsShowDelta,
+      ptsShowGoalExplicit,
+      ptsShowDeltaExplicit,
     };
   }
 
@@ -328,6 +383,99 @@
     const arr = Array.from(set);
     const raw = JSON.stringify(arr);
     for (const k of keys) lsSet(k, raw);
+  }
+
+  // ───────────────────────── pointsControl.js integration (RLCPoints) ─────────────────────────
+  // - Si pasas ?pts=1, se auto-carga ./pointsControl.js y muestra overlay (lo gestiona pointsControl.js)
+  // - Si NO pasas ?pts=1, no hace nada (a menos que llegue un comando PTS_*)
+  const POINTS_SCRIPT_URL = "./pointsControl.js";
+  let pointsWanted = !!P.pts;
+  let pointsScriptLoading = false;
+  let pointsLoadQueue = [];
+
+  function flushPointsQueue() {
+    const q = pointsLoadQueue.slice();
+    pointsLoadQueue.length = 0;
+    for (const fn of q) {
+      try { fn(); } catch (_) {}
+    }
+  }
+
+  function ensurePointsScript(cb) {
+    if (typeof cb === "function") pointsLoadQueue.push(cb);
+
+    if (g.RLCPoints && typeof g.RLCPoints.getState === "function") {
+      flushPointsQueue();
+      return;
+    }
+    if (pointsScriptLoading) return;
+
+    pointsScriptLoading = true;
+    try {
+      const s = document.createElement("script");
+      s.async = true;
+      s.src = POINTS_SCRIPT_URL + (POINTS_SCRIPT_URL.includes("?") ? "&" : "?") + "v=1.1.0";
+      s.onload = () => {
+        pointsScriptLoading = false;
+        flushPointsQueue();
+      };
+      s.onerror = () => {
+        pointsScriptLoading = false;
+        flushPointsQueue();
+      };
+      document.head.appendChild(s);
+    } catch (_) {
+      pointsScriptLoading = false;
+      flushPointsQueue();
+    }
+  }
+
+  function pointsApplyOverridesIfAny() {
+    try {
+      if (!g.RLCPoints || typeof g.RLCPoints.setCfg !== "function") return;
+      if (!P.ptsHasOverrides) return;
+
+      const cfg = {};
+      if (P.ptsName) cfg.name = P.ptsName;
+      if (P.ptsIcon) cfg.icon = P.ptsIcon;
+      if (P.ptsPos) cfg.pos = P.ptsPos;
+      if (Number.isFinite(P.ptsScale)) cfg.scale = P.ptsScale;
+      if (P.ptsShowGoalExplicit) cfg.showGoal = !!P.ptsShowGoal;
+      if (P.ptsShowDeltaExplicit) cfg.showDelta = !!P.ptsShowDelta;
+
+      if (Object.keys(cfg).length) g.RLCPoints.setCfg(cfg);
+
+      const st = {};
+      if (Number.isFinite(P.ptsValue)) st.value = Math.max(0, P.ptsValue | 0);
+      if (Number.isFinite(P.ptsGoal)) st.goal = Math.max(0, P.ptsGoal | 0);
+
+      if (Object.keys(st).length) g.RLCPoints.setState(st);
+    } catch (_) {}
+  }
+
+  function pointsBootIfNeeded() {
+    if (!pointsWanted) return;
+    ensurePointsScript(() => {
+      pointsApplyOverridesIfAny();
+    });
+  }
+
+  function pointsSnapshotSafe() {
+    try {
+      if (!g.RLCPoints) return null;
+      const st = g.RLCPoints.getState ? g.RLCPoints.getState() : null;
+      const cfg = g.RLCPoints.getCfg ? g.RLCPoints.getCfg() : null;
+      if (!st && !cfg) return null;
+      return {
+        enabled: cfg ? (cfg.enabled !== false ? 1 : 0) : 1,
+        value: st ? (st.value | 0) : 0,
+        goal: st ? (st.goal | 0) : 0,
+        name: cfg ? String(cfg.name || "") : "",
+        icon: cfg ? String(cfg.icon || "") : ""
+      };
+    } catch (_) {
+      return null;
+    }
   }
 
   // ───────────────────────── Emit EVENTS ─────────────────────────
@@ -1994,7 +2142,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.5",
+      version: "2.2.6",
       playing,
       idx,
       total: cams.length,
@@ -2043,6 +2191,9 @@
       owner: OWNER_MODE ? 1 : 0,
 
       tagVote: { active: tagVoteActive ? 1 : 0 },
+
+      // ✅ points snapshot (si pointsControl.js está cargado)
+      points: pointsSnapshotSafe(),
 
       ...extra
     };
@@ -2300,6 +2451,74 @@
         postState({ reason: "yt_cookies" });
       } break;
 
+      // ✅ Points commands (bridge a pointsControl.js)
+      case "PTS_TOGGLE":
+      case "POINTS_TOGGLE": {
+        pointsWanted = !!(payload?.enabled ?? payload?.value ?? payload ?? true);
+        if (pointsWanted) {
+          ensurePointsScript(() => {
+            try { if (g.RLCPoints?.setCfg) g.RLCPoints.setCfg({ enabled: true }); } catch (_) {}
+            pointsApplyOverridesIfAny();
+            postState({ reason: "pts_toggle_on" });
+          });
+        } else {
+          try { if (g.RLCPoints?.setCfg) g.RLCPoints.setCfg({ enabled: false }); } catch (_) {}
+          postState({ reason: "pts_toggle_off" });
+        }
+      } break;
+
+      case "PTS_SET":
+      case "POINTS_SET": {
+        ensurePointsScript(() => {
+          try {
+            const v = payload?.value ?? payload?.points ?? payload;
+            if (g.RLCPoints?.setValue) g.RLCPoints.setValue(v);
+          } catch (_) {}
+          postState({ reason: "pts_set" });
+        });
+      } break;
+
+      case "PTS_ADD":
+      case "POINTS_ADD": {
+        ensurePointsScript(() => {
+          try {
+            const d = payload?.delta ?? payload?.value ?? payload;
+            if (g.RLCPoints?.add) g.RLCPoints.add(d);
+          } catch (_) {}
+          postState({ reason: "pts_add" });
+        });
+      } break;
+
+      case "PTS_GOAL":
+      case "POINTS_GOAL": {
+        ensurePointsScript(() => {
+          try {
+            const goal = payload?.goal ?? payload?.value ?? payload;
+            if (g.RLCPoints?.setState) g.RLCPoints.setState({ goal: Math.max(0, (parseInt(String(goal ?? "0"), 10) || 0)) });
+          } catch (_) {}
+          postState({ reason: "pts_goal" });
+        });
+      } break;
+
+      case "PTS_CFG":
+      case "POINTS_CFG": {
+        ensurePointsScript(() => {
+          try {
+            const cfg = (payload && typeof payload === "object") ? (payload.cfg ?? payload) : {};
+            if (g.RLCPoints?.setCfg) g.RLCPoints.setCfg(cfg);
+          } catch (_) {}
+          postState({ reason: "pts_cfg" });
+        });
+      } break;
+
+      case "PTS_RESET":
+      case "POINTS_RESET": {
+        ensurePointsScript(() => {
+          try { if (g.RLCPoints?.reset) g.RLCPoints.reset(); } catch (_) {}
+          postState({ reason: "pts_reset" });
+        });
+      } break;
+
       case "RESET":
         resetState();
         break;
@@ -2325,6 +2544,12 @@
 
     const cmd = String(msg.cmd || "");
     const payload = msg.payload || {};
+
+    // Si llega un comando de puntos, intentamos cargar el script aunque no venga ?pts=1
+    if (cmd.startsWith("PTS_") || cmd.startsWith("POINTS_")) {
+      pointsWanted = true;
+    }
+
     applyCommand(cmd, payload);
   }
 
@@ -2398,7 +2623,10 @@
 
         ads: { enabled: !!adsEnabled, adLead: adLeadDefaultSec | 0, showDuring: !!adShowDuring, chatText: adChatText || "" },
 
-        bgm: { enabled: !!bgmEnabled, vol: +bgmVol || 0, idx: bgmIdx | 0, playing: !!bgmPlaying }
+        bgm: { enabled: !!bgmEnabled, vol: +bgmVol || 0, idx: bgmIdx | 0, playing: !!bgmPlaying },
+
+        // solo flag (no guardamos estado de puntos aquí: lo gestiona pointsControl.js)
+        pts: pointsWanted ? 1 : 0
       };
 
       const raw = JSON.stringify(data);
@@ -2508,6 +2736,16 @@
     setHudHidden(hudHidden);
 
     const saved = loadPlayerState();
+
+    // points: prefer URL param; si no, recupera flag guardado
+    if (!P.ptsExplicit && saved && typeof saved === "object") {
+      if (saved.pts != null) pointsWanted = !!saved.pts;
+    } else {
+      pointsWanted = !!P.pts;
+    }
+
+    // ✅ boot points (si aplica)
+    pointsBootIfNeeded();
 
     if (P.twitchExplicit) twitchChannel = P.twitch || "";
     else if (saved?.twitch) twitchChannel = String(saved.twitch || "").trim().replace(/^@/, "");

@@ -1,15 +1,25 @@
-/* catalogView.js — RLC Catalog View v1.1.3
+/* catalogView.js — RLC Catalog View v1.2.0
    ✅ Catálogo 2x2 (4 cams)
-   ✅ Modo "follow": SOLO 1 tile sigue al state (los demás no cambian)
-   ✅ Modo "sync": rotan las 4 a la vez (comportamiento antiguo)
-   ✅ Slots "sticky" guardados en localStorage (por KEY)
-   ✅ Click-to-cycle: cambia SOLO ese tile a la siguiente cam (opcional) (SHIFT => anterior)
-   ✅ ytCookies: true => youtube.com/embed (permite login/Premium si existe)
-   ✅ Oculta HUD single cuando catálogo ON + avisa a otros módulos ("rlc_catalog_mode")
-   ✅ Si existe window.RLCWx.getSummaryForCam(), muestra temp+hora por tile:
-      - NO placeholders ("…")
-      - Solo se ve si hay datos válidos (temp+time). Si falla => se oculta
-      - Refresh suave cada X segundos, sin flicker
+   ✅ Modo "follow": SOLO 1 tile sigue al state
+   ✅ Modo "sync": rotan las 4 a la vez
+   ✅ Slots sticky por KEY
+   ✅ Click-to-cycle por tile (SHIFT => anterior)
+   ✅ ytCookies: youtube.com/embed vs youtube-nocookie.com/embed
+   ✅ Oculta HUD single cuando catálogo ON + avisa ("rlc_catalog_mode")
+   ✅ WX por tile si existe window.RLCWx.getSummaryForCam() (sin placeholders / sin flicker)
+
+   🗳️ NUEVO: VOTACIÓN 4 OPCIONES (cambia SOLO 1 tile, las otras se mantienen)
+   - Si CFG.voteEnabled:
+       * Se abre una votación cada intervalo ALEATORIO [voteEveryMinSec..voteEveryMaxSec]
+       * Dura voteWindowSec
+       * El chat vota 1..4 (slot) y al cerrar se cambia SOLO ese slot a la siguiente cam
+       * Si nadie vota y voteAllowNoVotes => slot random
+   - Mensajes aceptados por BUS (para integrarlo con tu bot):
+       * {type:"CATALOG_VOTE", slot:0..3, user:"name"}  (o choice:1..4)
+       * {type:"VOTE_CAST",   slot:0..3, user:"name"}  (o text:"!2")
+       * {type:"CHAT", user:"name", text:"!1"}         (parsea 1..4)
+   - Para anunciar al chat (si tu Control soporta BOT_SAY):
+       * el player emite {type:"BOT_SAY", text:"..."} cuando empieza votación (si voteAnnounce)
 */
 
 (() => {
@@ -17,7 +27,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V113";
+  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V120";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Keys / Bus
@@ -58,14 +68,21 @@
     labels: true,
     muted: true,
 
-    mode: "follow",     // "follow" | "sync"
-    followSlot: 0,      // 0..3
-    ytCookies: true,    // true => youtube.com/embed (cookies)
-    clickCycle: true,   // click en tile => next cam
+    mode: "follow",
+    followSlot: 0,
+    ytCookies: true,
+    clickCycle: true,
 
-    // Opcionales (si no vienen, se usan defaults y no rompen nada)
-    wxTiles: true,      // WX en cada tile (si existe RLCWx)
-    wxRefreshSec: 30    // refresh suave
+    wxTiles: true,
+    wxRefreshSec: 30,
+
+    // 🗳️ voto
+    voteEnabled: true,
+    voteWindowSec: 18,
+    voteEveryMinSec: 55,
+    voteEveryMaxSec: 120,
+    voteAnnounce: true,
+    voteAllowNoVotes: true
   };
 
   function readJson(key) {
@@ -98,6 +115,17 @@
 
     c.wxTiles = (c.wxTiles !== false);
     c.wxRefreshSec = clamp((parseInt(c.wxRefreshSec, 10) || DEFAULTS.wxRefreshSec), 10, 180);
+
+    // 🗳️ voto
+    c.voteEnabled = (c.voteEnabled !== false);
+    c.voteWindowSec = clamp((parseInt(c.voteWindowSec, 10) || DEFAULTS.voteWindowSec), 8, 60);
+
+    c.voteEveryMinSec = clamp((parseInt(c.voteEveryMinSec, 10) || DEFAULTS.voteEveryMinSec), 15, 900);
+    c.voteEveryMaxSec = clamp((parseInt(c.voteEveryMaxSec, 10) || DEFAULTS.voteEveryMaxSec), 20, 1200);
+    if (c.voteEveryMaxSec < c.voteEveryMinSec + 5) c.voteEveryMaxSec = c.voteEveryMinSec + 5;
+
+    c.voteAnnounce = (c.voteAnnounce !== false);
+    c.voteAllowNoVotes = (c.voteAllowNoVotes !== false);
 
     return c;
   }
@@ -213,6 +241,12 @@
   opacity: .92;
   font-weight: 950;
 }
+#rlcCatalog .tag .chip.vote{
+  opacity: .95;
+  font-weight: 950;
+  border-color: rgba(255,255,255,.18);
+  background: rgba(5,10,18,.52);
+}
 
 #rlcCatalog .slot.offline::after{
   content: "NO EMBED / OFFLINE";
@@ -252,6 +286,7 @@
               <div class="chip small" data-chip="n">CAM ${i+1}</div>
               <div class="chip" data-chip="t">—</div>
               <div class="chip wx" data-chip="wx" style="display:none"></div>
+              <div class="chip vote" data-chip="v" style="display:none"></div>
             </div>
           </div>
         `).join("")}
@@ -274,7 +309,7 @@
 
   // ✅ ocultar HUD single
   let _hudEl = null;
-  let _hudPrevDisplay = null; // null => “no capturado aún”
+  let _hudPrevDisplay = null;
   function findHudEl() {
     return qs(".hud") || qs("#hud") || qs("#rlcHud") || null;
   }
@@ -403,7 +438,23 @@
     if (chipT) chipT.textContent = p ? `${t} — ${p}` : t;
   }
 
-  // ───────────────────────── WX (NO placeholders / sin flicker)
+  // ───────────────────────── Vote chip
+  function hideVoteChip(slotEl) {
+    const chip = slotEl.querySelector('[data-chip="v"]');
+    if (!chip) return;
+    chip.style.display = "none";
+    chip.textContent = "";
+  }
+  function setVoteChip(slotEl, text) {
+    const chip = slotEl.querySelector('[data-chip="v"]');
+    if (!chip) return;
+    if (!CFG.labels || !CFG.voteEnabled) { hideVoteChip(slotEl); return; }
+    if (!text) { hideVoteChip(slotEl); return; }
+    chip.textContent = text;
+    chip.style.display = "";
+  }
+
+  // ───────────────────────── WX
   function hideWxChip(slotEl) {
     const chip = slotEl.querySelector('[data-chip="wx"]');
     if (!chip) return;
@@ -422,7 +473,6 @@
     const chip = slotEl.querySelector('[data-chip="wx"]');
     if (!chip) return;
 
-    // si labels off o wxTiles off => ocultar
     if (!CFG.labels || !CFG.wxTiles) {
       hideWxChip(slotEl);
       slotObj._wxCamId = "";
@@ -443,7 +493,6 @@
       return;
     }
 
-    // ✅ cam nueva: oculto hasta tener datos válidos (NO placeholders)
     hideWxChip(slotEl);
     slotObj._wxCamId = camId;
 
@@ -456,7 +505,6 @@
       if (chip.dataset.wxTok !== tok) return;
       if (chip.dataset.wxCamId !== camId) return;
 
-      // ✅ solo visible con temp+time válidos
       if (!sum || !sum.temp || !sum.time) {
         hideWxChip(slotEl);
         return;
@@ -488,7 +536,6 @@
       return;
     }
 
-    // ✅ refresh sin flicker: NO ocultar antes de tiempo
     const tok = String((parseInt(chip.dataset.wxTok || "0", 10) || 0) + 1);
     chip.dataset.wxTok = tok;
     chip.dataset.wxCamId = camId;
@@ -508,7 +555,6 @@
       chip.style.display = "";
     } catch (_) {
       if (chip.dataset.wxTok !== tok) return;
-      // si ya había un texto válido, no lo mates por un fallo puntual
       if (!chip.textContent) hideWxChip(slotEl);
     }
   }
@@ -526,6 +572,8 @@
 
     setLabel(slotEl, cam, n);
     setWxChipInitial(slot, cam);
+
+    // vote chip se actualiza aparte (updateVoteUI)
 
     // reset medias
     if (slot.iframe) slot.iframe.src = "about:blank";
@@ -699,6 +747,252 @@
     }, ms);
   }
 
+  // ───────────────────────── 🗳️ Vote engine (random duration)
+  const VOTE = {
+    on: false,
+    startedAt: 0,
+    endsAt: 0,
+    counts: [0,0,0,0],
+    users: new Map(),    // user => slot(0..3)
+    lastAnnounceAt: 0
+  };
+
+  let voteTimer = null;
+  let voteEndTimer = null;
+
+  function randInt(a, b) {
+    const min = Math.min(a|0, b|0);
+    const max = Math.max(a|0, b|0);
+    return (min + ((Math.random() * (max - min + 1)) | 0));
+  }
+
+  function stopVoteTimers() {
+    if (voteTimer) clearTimeout(voteTimer);
+    if (voteEndTimer) clearTimeout(voteEndTimer);
+    voteTimer = null;
+    voteEndTimer = null;
+  }
+
+  function resetVoteState() {
+    VOTE.on = false;
+    VOTE.startedAt = 0;
+    VOTE.endsAt = 0;
+    VOTE.counts = [0,0,0,0];
+    VOTE.users.clear();
+    for (const s of slots) hideVoteChip(s.el);
+  }
+
+  function postBus(msg) {
+    if (KEY) msg.key = KEY;
+    try { bcMain?.postMessage(msg); } catch (_) {}
+    try { bcLegacy?.postMessage(msg); } catch (_) {}
+  }
+
+  function announceVoteStart() {
+    if (!CFG.voteAnnounce) return;
+
+    // anti-spam: mínimo 20s entre anuncios
+    const now = Date.now();
+    if (now - VOTE.lastAnnounceAt < 20000) return;
+    VOTE.lastAnnounceAt = now;
+
+    const text = "🗳️ CATALOGO: Vota qué tile cambia -> !1 !2 !3 !4 (solo cambia esa, las demás se quedan).";
+    postBus({ type: "BOT_SAY", text, ts: now });
+  }
+
+  function updateVoteUI() {
+    if (!CFG.enabled || !CFG.voteEnabled) {
+      for (const s of slots) hideVoteChip(s.el);
+      return;
+    }
+
+    if (!VOTE.on) {
+      for (const s of slots) hideVoteChip(s.el);
+      return;
+    }
+
+    // muestra conteos y tiempo restante
+    const leftMs = Math.max(0, VOTE.endsAt - Date.now());
+    const left = Math.ceil(leftMs / 1000);
+
+    for (let i = 0; i < 4; i++) {
+      const c = VOTE.counts[i] | 0;
+      setVoteChip(slots[i].el, `VOTO: ${c} · ${left}s`);
+    }
+  }
+
+  function scheduleNextVote() {
+    stopVoteTimers();
+    resetVoteState();
+
+    if (!CFG.enabled || !CFG.voteEnabled) return;
+    if (!root.classList.contains("on")) return;
+
+    const delaySec = randInt(CFG.voteEveryMinSec|0, CFG.voteEveryMaxSec|0);
+    voteTimer = setTimeout(() => startVoteRound(), delaySec * 1000);
+  }
+
+  function startVoteRound() {
+    stopVoteTimers();
+    resetVoteState();
+
+    if (!CFG.enabled || !CFG.voteEnabled) return;
+    if (!root.classList.contains("on")) return;
+
+    VOTE.on = true;
+    VOTE.startedAt = Date.now();
+    VOTE.endsAt = VOTE.startedAt + (CFG.voteWindowSec|0) * 1000;
+
+    announceVoteStart();
+    updateVoteUI();
+
+    // tick UI suave
+    const uiTick = () => {
+      if (!VOTE.on) return;
+      updateVoteUI();
+      const left = VOTE.endsAt - Date.now();
+      if (left <= 0) return;
+      voteEndTimer = setTimeout(uiTick, 300);
+    };
+    voteEndTimer = setTimeout(uiTick, 300);
+
+    // cierre
+    const closeIn = Math.max(0, VOTE.endsAt - Date.now());
+    voteTimer = setTimeout(() => endVoteRound(), closeIn);
+  }
+
+  function pickVoteWinner() {
+    let best = -1;
+    let bestCount = -1;
+    for (let i = 0; i < 4; i++) {
+      const c = VOTE.counts[i] | 0;
+      if (c > bestCount) { bestCount = c; best = i; }
+    }
+
+    // sin votos
+    if (bestCount <= 0) {
+      return CFG.voteAllowNoVotes ? ((Math.random() * 4) | 0) : -1;
+    }
+
+    // empate: elige random entre empatados
+    const tied = [];
+    for (let i = 0; i < 4; i++) {
+      if ((VOTE.counts[i] | 0) === bestCount) tied.push(i);
+    }
+    if (tied.length <= 1) return best;
+    return tied[(Math.random() * tied.length) | 0];
+  }
+
+  function endVoteRound() {
+    if (!VOTE.on) { scheduleNextVote(); return; }
+
+    VOTE.on = false;
+    const winner = pickVoteWinner();
+
+    // limpia UI
+    for (const s of slots) hideVoteChip(s.el);
+
+    // notifica (por si quieres overlay externo)
+    try {
+      g.dispatchEvent(new CustomEvent("rlc_catalog_vote", {
+        detail: {
+          phase: "end",
+          winnerSlot: winner,
+          counts: VOTE.counts.slice(0),
+          ts: Date.now()
+        }
+      }));
+    } catch (_) {}
+
+    // aplica resultado: cambia SOLO ese slot (las otras se quedan)
+    if (winner >= 0 && winner <= 3) {
+      cycleSlot(winner, +1);
+    }
+
+    // siguiente ronda aleatoria
+    scheduleNextVote();
+  }
+
+  function parseVoteSlotFromMsg(msg) {
+    if (!msg || typeof msg !== "object") return -1;
+
+    // campos directos
+    if (Number.isFinite(msg.slot)) {
+      const s = msg.slot | 0;
+      if (s >= 0 && s <= 3) return s;
+    }
+    if (Number.isFinite(msg.followSlot)) {
+      const s = msg.followSlot | 0;
+      if (s >= 0 && s <= 3) return s;
+    }
+
+    // choice 1..4
+    if (Number.isFinite(msg.choice)) {
+      const c = msg.choice | 0;
+      if (c >= 1 && c <= 4) return c - 1;
+    }
+    if (Number.isFinite(msg.option)) {
+      const c = msg.option | 0;
+      if (c >= 1 && c <= 4) return c - 1;
+    }
+
+    // texto: "!1" / "1" / "cam 2" / "!cam2"
+    const t = safeStr(msg.text || msg.message || msg.msg || "");
+    if (t) {
+      const m = t.match(/(^|\s)!?([1-4])(\s|$)/);
+      if (m && m[2]) return (parseInt(m[2], 10) - 1) | 0;
+
+      const m2 = t.match(/!?(?:cam|slot)\s*([1-4])/i);
+      if (m2 && m2[1]) return (parseInt(m2[1], 10) - 1) | 0;
+    }
+
+    return -1;
+  }
+
+  function getUserKeyFromMsg(msg) {
+    const u =
+      safeStr(msg.user) ||
+      safeStr(msg.username) ||
+      safeStr(msg.nick) ||
+      safeStr(msg.displayName) ||
+      safeStr(msg.userName) ||
+      safeStr(msg.user_id) ||
+      safeStr(msg.userId);
+    return u ? u.toLowerCase() : "";
+  }
+
+  function applyVoteFromMsg(msg) {
+    if (!CFG.enabled || !CFG.voteEnabled) return;
+    if (!root.classList.contains("on")) return;
+    if (!VOTE.on) return;
+
+    const slot = parseVoteSlotFromMsg(msg);
+    if (slot < 0 || slot > 3) return;
+
+    const userKey = getUserKeyFromMsg(msg);
+
+    // 1 voto por usuario (si sabemos quién es)
+    if (userKey) {
+      const prev = VOTE.users.get(userKey);
+      if (Number.isFinite(prev)) {
+        const p = prev | 0;
+        if (p >= 0 && p <= 3) VOTE.counts[p] = Math.max(0, (VOTE.counts[p] | 0) - 1);
+      }
+      VOTE.users.set(userKey, slot);
+    }
+
+    VOTE.counts[slot] = (VOTE.counts[slot] | 0) + 1;
+
+    try {
+      g.dispatchEvent(new CustomEvent("rlc_catalog_vote", {
+        detail: { phase: "vote", slot, user: userKey || "", counts: VOTE.counts.slice(0), ts: Date.now() }
+      }));
+    } catch (_) {}
+
+    updateVoteUI();
+  }
+
+  // ───────────────────────── Enable/disable catalog
   function setCatalogEnabled(on) {
     root.classList.toggle("on", !!on);
 
@@ -709,14 +1003,18 @@
       applyCfgToUI();
       setSingleMediaVisible(false);
       startWxRefresh();
+      scheduleNextVote();
     } else {
       stopWxRefresh();
+      stopVoteTimers();
+      resetVoteState();
 
       for (const s of slots) {
         stopHls(s);
         s._camRef = null;
         s._wxCamId = "";
         hideWxChip(s.el);
+        hideVoteChip(s.el);
 
         try { if (s.iframe) s.iframe.src = "about:blank"; } catch (_) {}
         try { if (s.img) s.img.src = ""; } catch (_) {}
@@ -740,7 +1038,13 @@
       `fs=${CFG.followSlot | 0}`,
       `cc=${CFG.clickCycle ? 1 : 0}`,
       `wx=${CFG.wxTiles ? 1 : 0}`,
-      `wxr=${CFG.wxRefreshSec | 0}`
+      `wxr=${CFG.wxRefreshSec | 0}`,
+      `ve=${CFG.voteEnabled ? 1 : 0}`,
+      `vw=${CFG.voteWindowSec | 0}`,
+      `vmin=${CFG.voteEveryMinSec | 0}`,
+      `vmax=${CFG.voteEveryMaxSec | 0}`,
+      `va=${CFG.voteAnnounce ? 1 : 0}`,
+      `vnv=${CFG.voteAllowNoVotes ? 1 : 0}`
     ].join("|");
   }
 
@@ -789,7 +1093,6 @@
       if (curId) {
         const fs = CFG.followSlot | 0;
 
-        // si ya está en otro slot => swap
         const other = ids.findIndex((x, i) => x === curId && i !== fs);
         if (other >= 0) {
           const tmp = ids[fs];
@@ -826,7 +1129,13 @@
       }
     }
 
-    if (cfgChanged) startWxRefresh();
+    if (cfgChanged) {
+      startWxRefresh();
+      if (CFG.enabled && CFG.voteEnabled) scheduleNextVote();
+    }
+
+    // si hay una votación activa, refresca chips (por si re-render)
+    updateVoteUI();
   }
 
   // click-to-cycle: cambia solo ese tile
@@ -849,7 +1158,6 @@
     const nextId = String(next?.id || "");
     if (!nextId) return;
 
-    // evitar duplicados: si ya está en otro slot => swap
     const other = ids.findIndex((x, i) => x === nextId && i !== slotIndex);
     if (other >= 0) {
       const tmp = ids[slotIndex];
@@ -868,6 +1176,7 @@
   function onBusMessage(msg, isMain) {
     if (!msg || typeof msg !== "object") return;
 
+    // cfg
     if (msg.type === "CATALOG_CFG" && msg.cfg && typeof msg.cfg === "object") {
       if (!keyOk(msg, isMain)) return;
       CFG = normalizeCfg(msg.cfg);
@@ -876,10 +1185,23 @@
       return;
     }
 
+    // state
     if (msg.type === "state") {
       if (!keyOk(msg, isMain)) return;
       lastState = msg;
       if (CFG.enabled) updateCatalog();
+      return;
+    }
+
+    // 🗳️ votos (varios formatos)
+    if (
+      msg.type === "CATALOG_VOTE" ||
+      msg.type === "VOTE_CAST" ||
+      msg.type === "CHAT_VOTE" ||
+      msg.type === "CHAT"
+    ) {
+      if (!keyOk(msg, isMain)) return;
+      applyVoteFromMsg(msg);
       return;
     }
   }
@@ -906,11 +1228,12 @@
     }
   });
 
-  // al volver a pestaña: refresh WX
+  // al volver a pestaña: refresh WX + vote chips
   document.addEventListener("visibilitychange", () => {
     if (!CFG.enabled) return;
     if (document.visibilityState !== "visible") return;
     for (const s of slots) refreshWxChipSoft(s);
+    updateVoteUI();
   });
 
   // clicks (solo una vez)

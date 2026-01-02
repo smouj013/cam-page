@@ -1,15 +1,12 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.4.0 (NEWSROOM/BROADCAST)
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.4.1 (NEWSROOM/BROADCAST) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
    ✅ Mantiene: --ui-top-offset robusto + line-clamp + FIX WX CHIP
-   ✅ HUD TITLE TICKER (marquee): si #hudTitle tiene:
-       data-title="texto..." y data-marquee="1"
-   🚀 Mejora:
-   - “Broadcast vibe”: glass + vignette + grain + scanlines suaves
-   - Fondo del sistema (player + control) más noticiero/estudio
-   - Fallbacks (Opera/Safari) y prefers-reduced-motion
+   ✅ Incluye estilos para #rlcNewsTicker (si existe) + fallbacks Opera/Safari
+   ✅ Reduce “glitch” por mask/backdrop/mix-blend en navegadores raros (Opera GX incluido)
 */
 
+/* ───────────────────────── Theme Tokens ───────────────────────── */
 :root{
   /* Base */
   --bg: #04060b;
@@ -83,14 +80,20 @@
   --hudMarqueeGap: 44px;
   --hudMarqueeDur: 12s;
 
+  /* Ticker (Top) */
+  --ticker-h: var(--rlcTickerH, 34px);
+  --ticker-gap: var(--rlcTickerGap, 12px);
+
   /* Broadcast overlays */
   --grain-opacity: .10;
   --scan-opacity: .07;
   --vignette-opacity: .42;
 
-  /* ───────────────────────── Ticker stacking (ROBUST) ───────────────────────── */
-  --ticker-h: var(--rlcTickerH, 34px);
-  --ticker-gap: var(--rlcTickerGap, 12px);
+  /* ───────────────────────── Ticker stacking (ROBUST) ─────────────────────────
+     - Sin :has(): usa --rlcTickerH (JS debe ponerlo a 0 si no hay ticker)
+     - Con :has(): auto quita el offset cuando el ticker no está o está hidden
+     - Extras: body.ticker--off / body[data-ticker="0"] (por si lo usas)
+  */
   --ui-top-offset: calc(var(--ticker-h) + min(var(--ticker-h), var(--ticker-gap)));
 }
 
@@ -100,6 +103,12 @@
   body:has(#rlcNewsTicker.hidden){
     --ui-top-offset: 0px;
   }
+}
+
+/* Hooks opcionales (no rompen nada si no se usan) */
+body.ticker--off,
+body[data-ticker="0"]{
+  --ui-top-offset: 0px;
 }
 
 /* ───────────────────────── Keyframes ───────────────────────── */
@@ -130,11 +139,16 @@
   50%{ opacity:.10; }
   100%{ transform: translate3d(12%,0,0); opacity:0; }
 }
+@keyframes rlcTickerMarquee{
+  from{ transform: translate3d(0,0,0); }
+  to{ transform: translate3d(-50%,0,0); }
+}
 
-/* ───────────────────────── Base ───────────────────────── */
+/* ───────────────────────── Base / Reset ───────────────────────── */
 *{ box-sizing: border-box; }
 html, body{ height:100%; }
 html{ color-scheme: dark; }
+
 body{
   margin:0;
   background: var(--bg);
@@ -147,13 +161,20 @@ body{
   text-rendering: optimizeLegibility;
 }
 
+img, video{ max-width:100%; display:block; }
+button, input, select, textarea{ font: inherit; color: inherit; }
+button{ background: none; border: 0; padding: 0; }
+::selection{ background: rgba(77,215,255,.20); }
+
 .hidden{ display:none !important; }
 .mono{ font-family: var(--mono); }
 .muted{ color: var(--muted); }
 .dot{ margin:0 6px; color: rgba(255,255,255,.34); }
 
-a{ color: inherit; }
-a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible{
+a{ color: inherit; text-decoration: none; }
+a:hover{ text-decoration: none; }
+
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
   outline: none;
   box-shadow: 0 0 0 3px var(--focus);
   border-radius: 10px;
@@ -165,6 +186,96 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+/* Scrollbar (sobre todo para modo control) */
+@supports (scrollbar-color: auto){
+  *{ scrollbar-color: rgba(255,255,255,.22) rgba(255,255,255,.06); scrollbar-width: thin; }
+}
+*::-webkit-scrollbar{ width: 12px; height: 12px; }
+*::-webkit-scrollbar-track{ background: rgba(255,255,255,.05); }
+*::-webkit-scrollbar-thumb{
+  background: rgba(255,255,255,.18);
+  border: 3px solid rgba(0,0,0,0);
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.24); }
+
+/* ───────────────────────── Top News Ticker (si existe) ───────────────────────── */
+#rlcNewsTicker{
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+
+  height: var(--ticker-h);
+  z-index: 20;
+
+  display:flex;
+  align-items:center;
+
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background:
+    linear-gradient(90deg, rgba(255,55,95,.14), rgba(77,215,255,.10), rgba(37,243,166,.10)),
+    linear-gradient(180deg, rgba(10,14,20,.92), rgba(8,10,14,.82));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgba(0,0,0,.26);
+
+  overflow:hidden;
+}
+#rlcNewsTicker.hidden{ display:none !important; }
+
+#rlcNewsTicker .tickerInner{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+#rlcNewsTicker .tickerBadge{
+  flex: 0 0 auto;
+  height: 24px;
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.26);
+  font: 950 10px/1 var(--sans);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+#rlcNewsTicker .tickerBadge::before{
+  content:"";
+  width: 7px; height: 7px; border-radius: 999px;
+  background: var(--news-red);
+  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.40);
+}
+#rlcNewsTicker .tickerText{
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow:hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(255,255,255,.86);
+  text-shadow: 0 2px 12px rgba(0,0,0,.35);
+}
+#rlcNewsTicker .tickerMarquee{
+  display:inline-flex;
+  gap: 28px;
+  will-change: transform;
+  transform: translateZ(0);
+}
+#rlcNewsTicker[data-marquee="1"] .tickerMarquee{
+  animation: rlcTickerMarquee 18s linear infinite;
+}
+#rlcNewsTicker:hover .tickerMarquee{ animation-play-state: paused; }
 
 /* ───────────────────────── Controls (Buttons / Inputs) ───────────────────────── */
 .btn{
@@ -188,10 +299,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     linear-gradient(135deg, rgba(77,215,255,.30), rgba(37,243,166,.26), rgba(255,255,255,.12)) border-box;
 
   box-shadow: 0 10px 26px rgba(0,0,0,.22);
-  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out);
 }
 .btn:hover{ filter: brightness(1.07); box-shadow: 0 14px 34px rgba(0,0,0,.28); }
 .btn:active{ transform: translateY(1px); }
+.btn:disabled{ opacity: .55; cursor:not-allowed; filter: none; transform:none; }
+
 .btn.ghost{
   background:
     linear-gradient(rgba(255,255,255,.05), rgba(255,255,255,.035)) padding-box,
@@ -200,7 +313,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .btn.full{ width:100%; }
 
-.input, .select{
+.input, .select, textarea.input{
   width:100%;
   border: 1px solid rgba(255,255,255,.14);
   background: rgba(255,255,255,.055);
@@ -210,13 +323,25 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   outline:none;
   transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
-.input::placeholder{ color: rgba(255,255,255,.40); }
-.select:focus, .input:focus{
+.input::placeholder, textarea.input::placeholder{ color: rgba(255,255,255,.40); }
+.select:focus, .input:focus, textarea.input:focus{
   border-color: rgba(77,215,255,.34);
   background: rgba(255,255,255,.072);
   box-shadow: 0 0 0 3px rgba(77,215,255,.14);
 }
-.select{ -webkit-appearance:none; appearance:none; }
+.select{
+  -webkit-appearance:none;
+  appearance:none;
+  padding-right: 38px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(255,255,255,.70) 50%),
+    linear-gradient(135deg, rgba(255,255,255,.70) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
 input[type="range"]{ accent-color: var(--accent); }
 
 /* ───────────────────────── Player Layout ───────────────────────── */
@@ -302,7 +427,7 @@ input[type="range"]{ accent-color: var(--accent); }
   background:#000;
 }
 
-/* Fallback */
+/* ───────────────────────── Fallback ───────────────────────── */
 .fallback{
   position:absolute;
   inset:0;
@@ -448,7 +573,7 @@ input[type="range"]{ accent-color: var(--accent); }
   -webkit-line-clamp: 1;
 }
 
-/* ✅ HUD TITLE TICKER (solo si data-marquee="1" y normalmente en collapsed) */
+/* ✅ HUD TITLE TICKER (solo si data-marquee="1") */
 .hud.hud--collapsed .hudTitle[data-marquee="1"]{
   position: relative;
   display: block;
@@ -604,7 +729,6 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 .hudLink{
   color: rgba(255,255,255,.92);
-  text-decoration: none;
   border-bottom: 1px solid rgba(77,215,255,.35);
 }
 .hudLink:hover{ border-bottom-color: rgba(77,215,255,.70); }
@@ -777,7 +901,27 @@ input[type="range"]{ accent-color: var(--accent); }
 .adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice, .alertBox, .alertsBox, .alertOverlay{
   position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
-  z-index: 6;
+  left: max(12px, env(safe-area-inset-left));
+  right: auto;
+  z-index: 8;
+  pointer-events:none;
+}
+
+/* “Tarjeta” genérica si el overlay usa un div dentro */
+#adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
+#rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *,
+.adBox > *, .adsBox > *, .adOverlay > *, .adsOverlay > *, .adNotice > *, .adsNotice > *, .alertBox > *, .alertsBox > *, .alertOverlay > *{
+  pointer-events:none;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: linear-gradient(180deg, rgba(10,14,20,.88), rgba(8,10,14,.72));
+  box-shadow: 0 12px 30px rgba(0,0,0,.30);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 10px 12px;
+  max-width: min(420px, calc(100vw - 24px));
+  font-size: 12.5px;
+  line-height: 1.3;
 }
 
 /* ───────────────────────── Chat Overlay ───────────────────────── */
@@ -840,6 +984,7 @@ input[type="range"]{ accent-color: var(--accent); }
     repeating-linear-gradient(90deg, rgba(255,255,255,.02) 0, rgba(255,255,255,.02) 1px, transparent 1px, transparent 58px),
     linear-gradient(180deg, #03050a, #050812);
 }
+.mode-control .stage, .mode-control .layer, .mode-control .layer-media, .mode-control .layer-ui{ display:none !important; }
 
 .controlWrap{ max-width: 1240px; margin: 0 auto; padding: 16px; }
 
@@ -868,6 +1013,7 @@ input[type="range"]{ accent-color: var(--accent); }
   font-size: 11px;
   letter-spacing: .18em;
   color: rgba(255,255,255,.54);
+  text-transform: uppercase;
 }
 .controlTitle .name{
   font-weight: 950;
@@ -891,6 +1037,11 @@ input[type="range"]{ accent-color: var(--accent); }
   display:grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+/* Intermedio: 2 columnas en pantallas medianas (mejor para Opera GX con zoom raro) */
+@media (max-width: 1180px){
+  .controlGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .card{
@@ -1011,20 +1162,34 @@ input[type="range"]{ accent-color: var(--accent); }
   .progress{ margin-left: 10px; margin-right: 10px; }
 }
 
+/* ───────────────────────── Opera/Safari “no-mask” safety ───────────────────────── */
+@supports not ((-webkit-mask-image: linear-gradient(#000,#000)) or (mask-image: linear-gradient(#000,#000))){
+  .hudTitle{
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+  }
+  .hud.hud--collapsed .hudTitle[data-marquee="1"]{
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+    color: rgba(255,255,255,.92) !important;
+  }
+}
+
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle, .card, .pill{ transition: none !important; }
   .badge::before, #rlcHudWx, .progressBar::after, .stage::after{ animation: none !important; }
   .fallbackCard, .hud, .vote, #rlcChatList > *{ animation: none !important; }
+  #rlcNewsTicker[data-marquee="1"] .tickerMarquee{ animation: none !important; }
 }
 
 /* ───────────────────────── Fallback si no hay backdrop-filter ───────────────────────── */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  .hud, .vote, #rlcChatList > *, .card, .pill, .fallbackCard{
+  .hud, .vote, #rlcChatList > *, .card, .pill, .fallbackCard, #rlcNewsTicker{
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-  .hud, .vote, #rlcChatList > *{
+  .hud, .vote, #rlcChatList > *, #rlcNewsTicker{
     background: rgba(10,14,20,.92) !important;
   }
   .card{
@@ -1032,6 +1197,11 @@ input[type="range"]{ accent-color: var(--accent); }
     border-color: rgba(255,255,255,.10) !important;
   }
   .stage::before, .layer-media::after{ mix-blend-mode: normal; opacity: .18; }
+}
+
+/* ───────────────────────── Fallback si no hay mix-blend-mode ───────────────────────── */
+@supports not (mix-blend-mode: overlay){
+  .stage::before, .layer-media::after{ mix-blend-mode: normal !important; opacity: .20; }
 }
 
 /* ───────────────────────── Optional: better rendering on OLED ───────────────────────── */

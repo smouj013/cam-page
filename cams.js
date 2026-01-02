@@ -1,4 +1,4 @@
-/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY 500 + CATALOG 4-UP) v2.3.1
+/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY 500 + CATALOG 4-UP) v2.3.4
    ✅ Mantiene tus cams existentes (mismos ids) como "seed"
    ✅ VIDEO ONLY: NO exporta cams "image" (solo "youtube" y "hls")
    ✅ Sanitizador:
@@ -7,10 +7,11 @@
       - infiere youtubeId desde originUrl si falta (watch?v= / live/ / embed/)
       - descarta entradas rotas (sin id/kind o sin youtubeId/url)
       - añade thumb para YouTube (para catálogo)
+      - FILTRO EXTRA: elimina “walk/tour/recorded/timelapse/replay/loops” (solo webcams LIVE)
    ✅ OBJETIVO: 500 cams REALES
       - Carga cache (si existe) y la usa inmediatamente
       - Auto-discovery: busca LIVE webcams en Invidious (/api/v1/search?features=live)
-      - Filtra “no-webcam” (música/lofi/radio/juegos/noticias)
+      - Filtra “no-webcam” (música/lofi/radio/juegos/noticias/walk tours/recorded)
       - Validación embed (best-effort; no invalida por fallos de CORS)
       - Se queda solo con las que funcionan (cuando se puede validar)
    ✅ Failsafe (solo si tu player necesita SI o SI 500):
@@ -36,7 +37,7 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V231_VIDEOONLY_AUTODISCOVERY500_CATALOG4";
+  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V234_VIDEOONLY_AUTODISCOVERY500_CATALOG4";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -57,52 +58,89 @@
   // Validación embed (si da problemas en tu hosting, ponlo en false)
   const VALIDATE_EMBED = true;
 
+  // “Solo lives” (best-effort). Si se puede comprobar y NO es live, se descarta.
+  // Si no se puede comprobar (CORS/proxy falla), no lo tratamos como negativo.
+  const BEST_EFFORT_LIVE_CHECK = true;
+
   // Concurrencia (no lo subas mucho o te rate-limitean)
-  const DISCOVERY_MAX_PAGES_PER_QUERY = 6;
-  const DISCOVERY_MAX_PER_QUERY = 140;  // tope por query
+  const DISCOVERY_MAX_PAGES_PER_QUERY = 5;
+  const DISCOVERY_MAX_PER_QUERY = 180;  // tope por query (candidatos)
   const DISCOVERY_CONCURRENCY = 4;
+
+  // Limita instancias para no spamear (más estable)
+  const DISCOVERY_MAX_INSTANCES = 10;
+
+  // Presupuesto de requests (corta “infinito” si algo va mal)
+  const DISCOVERY_REQUEST_BUDGET = 520;
 
   // Failsafe: para que tu player no reviente si exige 500 SÍ o SÍ.
   const HARD_FAILSAFE_ALT_FILL = true;
 
-  // Queries “webcam” (multi-idioma)
+  // Queries “webcam” (multi-idioma) — evitamos “tour/walk”
   const DISCOVERY_QUERIES = [
     "live webcam",
+    "webcam live",
     "webcam en vivo",
+    "cámara en vivo",
     "live cam",
+    "cctv live cam",
     "traffic camera live",
-    "airport live cam",
-    "beach live cam",
-    "harbor live cam",
-    "city live webcam",
-    "railcam live",
-    "ski live cam",
-    "mountain live cam",
-    "port live cam",
-    "cruise port live cam",
+    "traffic cam live",
+    "airport webcam live",
+    "harbor webcam live",
+    "harbour webcam live",
+    "port webcam live",
+    "beach webcam live",
+    "pier webcam live",
     "downtown live cam",
-    "plaza live cam",
-    "puerto live webcam",
-    "cámara en vivo 24/7",
-    "webcam 24/7 live"
+    "street cam live",
+    "railcam live",
+    "train station webcam live",
+    "ski webcam live",
+    "mountain webcam live",
+    "volcano webcam live",
+    "earthcam live webcam",
+    "skylinewebcams live webcam",
+    "webcams live 24/7"
   ];
 
+  // ─────────────────────────────────────────────────────────────
   // Filtro: permitidos vs bloqueados (evita streams que NO son cámaras)
+  // ─────────────────────────────────────────────────────────────
   const BLOCK_WORDS = [
+    // Música / radio / etc
     "lofi","lo-fi","radio","music","música","mix","playlist","beats",
     "podcast","audiobook","audiolibro",
+    // Gaming / noticias / religión / crypto
     "gameplay","gaming","walkthrough","speedrun",
     "news","noticias","cnn","bbc","aljazeera","fox",
     "sermon","church","iglesia","prayer","oración",
-    "crypto","trading","forex"
+    "crypto","trading","forex",
+    // ✅ Lo que tú NO quieres (walk / grabaciones / loops / tours)
+    "walk","walking","walks","walking tour","city walk","virtual walk","4k walk",
+    "tour","travel","travelling","viaje","paseo","recorrido",
+    "recorded","replay","rerun","repeat","loop","timelapse","time-lapse","time lapse",
+    "ambience","ambient","study","sleep","relax","asmr",
+    "dashcam","driving","drive","ride","train ride","bus ride","metro ride",
+    "vlog","vlogger","behind the scenes"
   ];
 
+  // ✅ Pistas de “esto SI parece webcam”
+  // (NO metemos “live” solo, porque cuela demasiadas cosas)
   const ALLOW_HINTS = [
-    "webcam","live cam","livecam","traffic","airport","harbor","harbour","beach",
-    "pier","port","downtown","street","avenue","plaza","square",
-    "camara","cámara","en vivo","directo",
-    "railcam","train","station","ski","snow","mountain","volcano",
-    "earthcam","skylinewebcams","webcams"
+    "webcam","web cam","live cam","livecam","camera live","cctv","traffic cam","traffic camera",
+    "airport","harbor","harbour","port","pier","beach","coast","marina",
+    "downtown","street cam","street camera","square","plaza",
+    "railcam","rail cam","train cam","station cam","train station",
+    "ski cam","snow cam","mountain cam","volcano cam","crater cam",
+    "earthcam","skylinewebcams","ozolio","webcams",
+    // multi-idioma “cámara”
+    "cámara","camara","en directo","en vivo","directo",
+    "telecamera","kamera","kamera na żywo","webkamera","caméra"
+  ];
+
+  const KNOWN_WEBCAM_BRANDS = [
+    "earthcam","skylinewebcams","ozolio","webcams","railcam"
   ];
 
   // ─────────────────────────────────────────────────────────────
@@ -145,17 +183,35 @@
     return `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg`;
   }
 
-  function camTitleOk(title) {
+  function includesAny(hay, list) {
+    for (let i = 0; i < list.length; i++) {
+      if (hay.includes(list[i])) return true;
+    }
+    return false;
+  }
+
+  function camTitleOk(title, author) {
     const t = safeStr(title).toLowerCase();
-    if (!t) return false;
-    for (const w of BLOCK_WORDS) {
-      if (t.includes(w)) return false;
+    const a = safeStr(author).toLowerCase();
+    const full = (t + " " + a).trim();
+    if (!full) return false;
+
+    // Bloqueos fuertes
+    for (let i = 0; i < BLOCK_WORDS.length; i++) {
+      if (full.includes(BLOCK_WORDS[i])) return false;
     }
-    for (const h of ALLOW_HINTS) {
-      if (t.includes(h)) return true;
+
+    // Requiere alguna pista de webcam
+    if (includesAny(full, KNOWN_WEBCAM_BRANDS)) return true;
+    if (includesAny(full, ALLOW_HINTS)) {
+      // Evita “en vivo” sin ninguna palabra de cámara
+      const hasCamWord =
+        full.includes("webcam") || full.includes("cam") || full.includes("cctv") ||
+        full.includes("cámara") || full.includes("camara") || full.includes("telecamera") ||
+        full.includes("kamera") || full.includes("caméra");
+      if (hasCamWord) return true;
     }
-    // fallback: “live/directo” suele ser cámara si el título parece de lugar
-    if (t.includes("live") || t.includes("en vivo") || t.includes("directo")) return true;
+
     return false;
   }
 
@@ -169,7 +225,7 @@
     // ──────────────── AMÉRICA (tus actuales) ────────────────
     {
       id: "nyc_times_square",
-      title: "Times Square (NYC)",
+      title: "Times Square (NYC) — Live Cam",
       place: "Times Square, New York, USA",
       source: "EarthCam (YouTube)",
       kind: "youtube",
@@ -179,7 +235,7 @@
     },
     {
       id: "niagara_falls",
-      title: "Niagara Falls",
+      title: "Niagara Falls — Live Cam",
       place: "Niagara Falls, Canadá",
       source: "EarthCam (YouTube)",
       kind: "youtube",
@@ -189,7 +245,7 @@
     },
     {
       id: "waikiki_sheraton",
-      title: "Waikiki Beach",
+      title: "Waikiki Beach — Live Cam",
       place: "Waikiki, Honolulu (Hawái), USA",
       source: "Ozolio / Sheraton (YouTube)",
       kind: "youtube",
@@ -199,7 +255,7 @@
     },
     {
       id: "rio_copacabana",
-      title: "Copacabana",
+      title: "Copacabana — Live Cam",
       place: "Rio de Janeiro, Brasil",
       source: "SkylineWebcams (YouTube)",
       kind: "youtube",
@@ -236,7 +292,7 @@
     // ──────────────── EUROPA (tus actuales) ────────────────
     {
       id: "london_abbey_road",
-      title: "Abbey Road Crossing",
+      title: "Abbey Road Crossing — Live Cam",
       place: "Londres, Reino Unido",
       source: "EarthCam (YouTube)",
       kind: "youtube",
@@ -246,7 +302,7 @@
     },
     {
       id: "rome_colosseum",
-      title: "Coliseo",
+      title: "Coliseo — Live Cam",
       place: "Roma, Italia",
       source: "SkylineWebcams (YouTube)",
       kind: "youtube",
@@ -256,9 +312,9 @@
     },
     {
       id: "reykjavik_live",
-      title: "Reykjavík",
+      title: "Reykjavík — Live Cam",
       place: "Reykjavík, Islandia",
-      source: "Mount Esja (YouTube)",
+      source: "YouTube",
       kind: "youtube",
       youtubeId: "ZONCgHc1cZc",
       originUrl: "https://www.youtube.com/watch?v=ZONCgHc1cZc",
@@ -266,7 +322,7 @@
     },
     {
       id: "lofotens_henningsvaer",
-      title: "Lofoten Islands",
+      title: "Lofoten Islands — Live Cam",
       place: "Henningsvær, Noruega",
       source: "SkylineWebcams (YouTube)",
       kind: "youtube",
@@ -286,7 +342,7 @@
     },
     {
       id: "zurich_webcam",
-      title: "Zürich",
+      title: "Zürich — Live Cam",
       place: "Zúrich, Suiza",
       source: "YouTube",
       kind: "youtube",
@@ -298,7 +354,7 @@
     // ──────────────── ASIA (tus actuales) ────────────────
     {
       id: "tokyo_shibuya",
-      title: "Shibuya Crossing",
+      title: "Shibuya Crossing — Live Cam",
       place: "Shibuya, Tokio, Japón",
       source: "YouTube",
       kind: "youtube",
@@ -308,9 +364,9 @@
     },
     {
       id: "tokyo_tower",
-      title: "Tokyo Tower",
+      title: "Tokyo Tower — Live Cam",
       place: "Tokio, Japón",
-      source: "Tokyo Tower (YouTube)",
+      source: "YouTube",
       kind: "youtube",
       youtubeId: "RCur8_bXL0U",
       originUrl: "https://www.youtube.com/watch?v=RCur8_bXL0U",
@@ -318,7 +374,7 @@
     },
     {
       id: "dubai_marina",
-      title: "Dubai Marina",
+      title: "Dubai Marina — Live Cam",
       place: "Dubái, Emiratos Árabes Unidos",
       source: "YouTube",
       kind: "youtube",
@@ -328,7 +384,7 @@
     },
     {
       id: "cappadocia_turkey",
-      title: "Cappadocia",
+      title: "Cappadocia — Live Cam",
       place: "Cappadocia, Turquía",
       source: "SkylineWebcams (YouTube)",
       kind: "youtube",
@@ -340,7 +396,7 @@
     // ──────────────── OCEANÍA (tus actuales) ────────────────
     {
       id: "sydney_harbour_static",
-      title: "Sydney Harbour",
+      title: "Sydney Harbour — Live Cam",
       place: "Sídney, Australia",
       source: "WebcamSydney (YouTube)",
       kind: "youtube",
@@ -350,7 +406,7 @@
     },
     {
       id: "sydney_harbour_panning",
-      title: "Sydney Harbour (Pan)",
+      title: "Sydney Harbour (Pan) — Live Cam",
       place: "Sídney, Australia",
       source: "WebcamSydney (YouTube)",
       kind: "youtube",
@@ -362,7 +418,7 @@
     // ──────────────── ÁFRICA (tus actuales) ────────────────
     {
       id: "cape_town_table_mountain",
-      title: "Table Mountain",
+      title: "Table Mountain — Live Cam",
       place: "Cape Town, Sudáfrica",
       source: "YouTube",
       kind: "youtube",
@@ -374,7 +430,7 @@
     // ──────────────── EXTRA (tus actuales) ────────────────
     {
       id: "iceland_volcano_watch",
-      title: "Volcano Watch",
+      title: "Volcano Watch — Live Cam",
       place: "Islandia (zona volcánica)",
       source: "YouTube",
       kind: "youtube",
@@ -386,89 +442,89 @@
     // ─────────────────────────────────────────────────────────
     // ──────────────── NUEVAS (las que ya añadiste) ───────────
     // ─────────────────────────────────────────────────────────
-    { id:"us_911_memorial", title:"9/11 Memorial & World Trade Center", place:"Lower Manhattan, NYC, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"PI63KrE3UGo", originUrl:"https://www.youtube.com/watch?v=PI63KrE3UGo", tags:["usa","nyc","landmark"] },
-    { id:"br_rio_earthcam_alt", title:"Rio de Janeiro (EarthCam)", place:"Rio de Janeiro, Brasil", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"bwQyNMjsG3k", originUrl:"https://www.youtube.com/watch?v=bwQyNMjsG3k", tags:["brazil","city"] },
-    { id:"us_coney_island", title:"Coney Island Live", place:"Brooklyn, NYC, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"xHLEKR3_8iI", originUrl:"https://www.youtube.com/watch?v=xHLEKR3_8iI", tags:["usa","beach","nyc"] },
-    { id:"us_myrtle_beach", title:"Myrtle Beach Live", place:"South Carolina, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"RG_-aRFPQSU", originUrl:"https://www.youtube.com/watch?v=RG_-aRFPQSU", tags:["usa","beach"] },
-    { id:"us_seaside_park_nj", title:"Seaside Park Live", place:"New Jersey, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"XKQKFYbaqdA", originUrl:"https://www.youtube.com/watch?v=XKQKFYbaqdA", tags:["usa","beach"] },
-    { id:"ky_cayman_islands", title:"Cayman Islands Live", place:"Grand Cayman, Islas Caimán", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"ZljOTPG2i1Y", originUrl:"https://www.youtube.com/watch?v=ZljOTPG2i1Y", tags:["caribbean","beach"] },
-    { id:"sx_sint_maarten", title:"Sint Maarten Live", place:"Philipsburg, Sint Maarten", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"aBpnLhWvW3A", originUrl:"https://www.youtube.com/watch?v=aBpnLhWvW3A", tags:["caribbean","port"] },
-    { id:"vg_scrub_island_bvi", title:"Scrub Island Live", place:"British Virgin Islands", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"GYp4rUikGc0", originUrl:"https://www.youtube.com/watch?v=GYp4rUikGc0", tags:["caribbean","island"] },
-    { id:"pr_palomino_island", title:"Palomino Island Beach Live", place:"Puerto Rico", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"MU8kI-PbVnM", originUrl:"https://www.youtube.com/watch?v=MU8kI-PbVnM", tags:["caribbean","beach"] },
-    { id:"mp_saipan_beach", title:"Saipan Beach Live", place:"Saipán, Islas Marianas", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"zFGugdfc8k4", originUrl:"https://www.youtube.com/watch?v=zFGugdfc8k4", tags:["island","beach"] },
-    { id:"us_new_orleans_street", title:"New Orleans Street View Live", place:"New Orleans, Louisiana, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"qHW8srS0ylo", originUrl:"https://www.youtube.com/live/qHW8srS0ylo", tags:["usa","street"] },
-    { id:"us_dc_cherry_blossom", title:"Cherry Blossom Live", place:"Washington, D.C., USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"nNkSMJP0Tyg", originUrl:"https://www.youtube.com/live/nNkSMJP0Tyg", tags:["usa","park"] },
-    { id:"us_hotel_saranac", title:"Hotel Saranac (Town View)", place:"Saranac Lake, NY, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"dZV8pa5QhHY", originUrl:"https://www.youtube.com/watch?v=dZV8pa5QhHY", tags:["usa","town"] },
-    { id:"us_tamarin_monkey_cam", title:"Tamarin Monkey Cam", place:"Utica, New York, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"1B0uwxfEYCA", originUrl:"https://www.youtube.com/watch?v=1B0uwxfEYCA", tags:["usa","wildlife"] },
-    { id:"us_halloween_earthcam", title:"Halloween (EarthCam mix)", place:"USA (varios puntos)", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"mBr1dGev8qM", originUrl:"https://www.youtube.com/watch?v=mBr1dGev8qM", tags:["mix","usa"] },
-    { id:"us_storm_idalia", title:"Tropical Storm / Hurricane Coverage", place:"USA (cobertura)", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"t40VpDs9J9c", originUrl:"https://www.youtube.com/watch?v=t40VpDs9J9c", tags:["weather","usa"] },
+    { id:"us_911_memorial", title:"9/11 Memorial & World Trade Center — Live Cam", place:"Lower Manhattan, NYC, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"PI63KrE3UGo", originUrl:"https://www.youtube.com/watch?v=PI63KrE3UGo", tags:["usa","nyc","landmark"] },
+    { id:"br_rio_earthcam_alt", title:"Rio de Janeiro (EarthCam) — Live Cam", place:"Rio de Janeiro, Brasil", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"bwQyNMjsG3k", originUrl:"https://www.youtube.com/watch?v=bwQyNMjsG3k", tags:["brazil","city"] },
+    { id:"us_coney_island", title:"Coney Island — Live Cam", place:"Brooklyn, NYC, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"xHLEKR3_8iI", originUrl:"https://www.youtube.com/watch?v=xHLEKR3_8iI", tags:["usa","beach","nyc"] },
+    { id:"us_myrtle_beach", title:"Myrtle Beach — Live Cam", place:"South Carolina, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"RG_-aRFPQSU", originUrl:"https://www.youtube.com/watch?v=RG_-aRFPQSU", tags:["usa","beach"] },
+    { id:"us_seaside_park_nj", title:"Seaside Park — Live Cam", place:"New Jersey, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"XKQKFYbaqdA", originUrl:"https://www.youtube.com/watch?v=XKQKFYbaqdA", tags:["usa","beach"] },
+    { id:"ky_cayman_islands", title:"Cayman Islands — Live Cam", place:"Grand Cayman, Islas Caimán", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"ZljOTPG2i1Y", originUrl:"https://www.youtube.com/watch?v=ZljOTPG2i1Y", tags:["caribbean","beach"] },
+    { id:"sx_sint_maarten", title:"Sint Maarten — Live Cam", place:"Philipsburg, Sint Maarten", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"aBpnLhWvW3A", originUrl:"https://www.youtube.com/watch?v=aBpnLhWvW3A", tags:["caribbean","port"] },
+    { id:"vg_scrub_island_bvi", title:"Scrub Island — Live Cam", place:"British Virgin Islands", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"GYp4rUikGc0", originUrl:"https://www.youtube.com/watch?v=GYp4rUikGc0", tags:["caribbean","island"] },
+    { id:"pr_palomino_island", title:"Palomino Island Beach — Live Cam", place:"Puerto Rico", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"MU8kI-PbVnM", originUrl:"https://www.youtube.com/watch?v=MU8kI-PbVnM", tags:["caribbean","beach"] },
+    { id:"mp_saipan_beach", title:"Saipan Beach — Live Cam", place:"Saipán, Islas Marianas", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"zFGugdfc8k4", originUrl:"https://www.youtube.com/watch?v=zFGugdfc8k4", tags:["island","beach"] },
+    { id:"us_new_orleans_street", title:"New Orleans Street Cam — Live", place:"New Orleans, Louisiana, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"qHW8srS0ylo", originUrl:"https://www.youtube.com/live/qHW8srS0ylo", tags:["usa","street"] },
+    { id:"us_dc_cherry_blossom", title:"Cherry Blossom — Live Cam", place:"Washington, D.C., USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"nNkSMJP0Tyg", originUrl:"https://www.youtube.com/live/nNkSMJP0Tyg", tags:["usa","park"] },
+    { id:"us_hotel_saranac", title:"Hotel Saranac (Town View) — Live Cam", place:"Saranac Lake, NY, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"dZV8pa5QhHY", originUrl:"https://www.youtube.com/watch?v=dZV8pa5QhHY", tags:["usa","town"] },
+    { id:"us_tamarin_monkey_cam", title:"Tamarin Monkey Cam — Live", place:"Utica, New York, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"1B0uwxfEYCA", originUrl:"https://www.youtube.com/watch?v=1B0uwxfEYCA", tags:["usa","wildlife"] },
+    { id:"us_halloween_earthcam", title:"EarthCam Seasonal Cam — Live", place:"USA (varios puntos)", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"mBr1dGev8qM", originUrl:"https://www.youtube.com/watch?v=mBr1dGev8qM", tags:["usa"] },
+    { id:"us_storm_idalia", title:"Storm Coverage — Live Cam", place:"USA (cobertura)", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"t40VpDs9J9c", originUrl:"https://www.youtube.com/watch?v=t40VpDs9J9c", tags:["weather","usa"] },
     { id:"us_rolling_tour", title:"USA Live Cam — Rolling Tour", place:"USA (tour rolling)", source:"YouTube", kind:"youtube", youtubeId:"fa8iGVeri_I", originUrl:"https://www.youtube.com/watch?v=fa8iGVeri_I", tags:["tour","usa"] },
-    { id:"us_times_square_4k_alt", title:"Times Square in 4K (Alt)", place:"New York, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"SW1vpWZq9-w", originUrl:"https://www.youtube.com/watch?v=SW1vpWZq9-w", tags:["nyc","4k"] },
-    { id:"us_nyc_xmas_4k", title:"NYC Christmas / Holiday Live", place:"New York, USA", source:"YouTube", kind:"youtube", youtubeId:"5_vrqwsKXEQ", originUrl:"https://www.youtube.com/watch?v=5_vrqwsKXEQ", tags:["nyc","seasonal"] },
-    { id:"es_tamariu_earthcam", title:"Tamariu Live", place:"Tamariu, España", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"ld87T3g_nyg", originUrl:"https://www.youtube.com/watch?v=ld87T3g_nyg", tags:["spain","beach"] },
+    { id:"us_times_square_4k_alt", title:"Times Square in 4K (Alt) — Live Cam", place:"New York, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"SW1vpWZq9-w", originUrl:"https://www.youtube.com/watch?v=SW1vpWZq9-w", tags:["nyc","4k"] },
+    { id:"us_nyc_xmas_4k", title:"NYC Holiday — Live Cam", place:"New York, USA", source:"YouTube", kind:"youtube", youtubeId:"5_vrqwsKXEQ", originUrl:"https://www.youtube.com/watch?v=5_vrqwsKXEQ", tags:["nyc","seasonal"] },
+    { id:"es_tamariu_earthcam", title:"Tamariu — Live Cam", place:"Tamariu, España", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"ld87T3g_nyg", originUrl:"https://www.youtube.com/watch?v=ld87T3g_nyg", tags:["spain","beach"] },
 
-    { id:"it_venice_grand_canal_povoledo", title:"Grand Canal (Povoledo) 4K", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"P6JA_YjHMZs", originUrl:"https://www.youtube.com/watch?v=P6JA_YjHMZs", tags:["italy","canal","4k"] },
-    { id:"it_venice_grand_canal_caangeli", title:"Grand Canal (Ca'Angeli)", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"P393gTj527k", originUrl:"https://www.youtube.com/watch?v=P393gTj527k", tags:["italy","canal"] },
-    { id:"it_venice_ponte_guglie_4k", title:"Ponte delle Guglie 4K", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"HpZAez2oYsA", originUrl:"https://www.youtube.com/watch?v=HpZAez2oYsA", tags:["italy","bridge","4k"] },
-    { id:"it_venice_san_cassiano", title:"Grand Canal (Hotel San Cassiano)", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"lFQ_BvxIcnI", originUrl:"https://www.youtube.com/watch?v=lFQ_BvxIcnI", tags:["italy","canal"] },
+    { id:"it_venice_grand_canal_povoledo", title:"Grand Canal (Povoledo) — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"P6JA_YjHMZs", originUrl:"https://www.youtube.com/watch?v=P6JA_YjHMZs", tags:["italy","canal"] },
+    { id:"it_venice_grand_canal_caangeli", title:"Grand Canal (Ca'Angeli) — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"P393gTj527k", originUrl:"https://www.youtube.com/watch?v=P393gTj527k", tags:["italy","canal"] },
+    { id:"it_venice_ponte_guglie_4k", title:"Ponte delle Guglie — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"HpZAez2oYsA", originUrl:"https://www.youtube.com/watch?v=HpZAez2oYsA", tags:["italy","bridge"] },
+    { id:"it_venice_san_cassiano", title:"Grand Canal (Hotel San Cassiano) — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"lFQ_BvxIcnI", originUrl:"https://www.youtube.com/watch?v=lFQ_BvxIcnI", tags:["italy","canal"] },
     { id:"it_venice_top_mix", title:"TOP Venice Live Cams (mix)", place:"Venecia, Italia (mix)", source:"YouTube", kind:"youtube", youtubeId:"CwhHltwJdhc", originUrl:"https://www.youtube.com/watch?v=CwhHltwJdhc", tags:["mix","italy"] },
-    { id:"it_trevi_fountain", title:"Trevi Fountain Live", place:"Roma, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"j39vIidsIJI", originUrl:"https://www.youtube.com/watch?v=j39vIidsIJI", tags:["italy","rome","landmark"] },
-    { id:"it_pozzuoli_campi_flegrei", title:"Campi Flegrei (Pozzuoli) Live", place:"Pozzuoli, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"-sNafHFByDI", originUrl:"https://www.youtube.com/watch?v=-sNafHFByDI", tags:["italy","volcano"] },
-    { id:"it_etna_eruption_live", title:"Etna Eruption Live", place:"Sicilia, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"plYtw4DSf5I", originUrl:"https://www.youtube.com/watch?v=plYtw4DSf5I", tags:["italy","volcano"] },
-    { id:"it_etna_live_alt1", title:"Mount Etna Live (Alt 1)", place:"Sicilia, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"k_g6c14hXGQ", originUrl:"https://www.youtube.com/watch?v=k_g6c14hXGQ", tags:["italy","volcano"] },
-    { id:"it_etna_live_alt2", title:"Mount Etna Live (Alt 2)", place:"Sicilia, Italia", source:"YouTube", kind:"youtube", youtubeId:"EHIelAoCBoM", originUrl:"https://www.youtube.com/watch?v=EHIelAoCBoM", tags:["italy","volcano"] },
-    { id:"es_malaga_weather_alert", title:"Weather Alert Live", place:"Málaga, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"cplErgOi_Ws", originUrl:"https://www.youtube.com/watch?v=cplErgOi_Ws", tags:["spain","weather"] },
-    { id:"ch_wengen_alps", title:"Under the Swiss Alps (Wengen)", place:"Wengen, Suiza", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"I28Cip207ZY", originUrl:"https://www.youtube.com/watch?v=I28Cip207ZY", tags:["switzerland","alps","snow"] },
-    { id:"gr_santorini_live", title:"Santorini Live", place:"Santorini, Grecia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"2a4SrvF0iS8", originUrl:"https://www.youtube.com/watch?v=2a4SrvF0iS8", tags:["greece","island"] },
-    { id:"il_jerusalem_live", title:"Jerusalem Live", place:"Jerusalén, Israel", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"hTSfDxRmrEQ", originUrl:"https://www.youtube.com/watch?v=hTSfDxRmrEQ", tags:["city","landmark"] },
-    { id:"cz_prague_live", title:"Prague Live Webcam", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"0FvTdT3EJY4", originUrl:"https://www.youtube.com/watch?v=0FvTdT3EJY4", tags:["czech","city"] },
-    { id:"cz_prague_snowfall", title:"Snowfall Live from Prague", place:"Praga, República Checa", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"B6FDKqfJ6M4", originUrl:"https://www.youtube.com/watch?v=B6FDKqfJ6M4", tags:["czech","snow"] },
-    { id:"cz_prague_trainspotting", title:"Prague Main Station (Trainspotting) 24/7", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"AttVS4KM8tY", originUrl:"https://www.youtube.com/watch?v=AttVS4KM8tY", tags:["train","czech"] },
+    { id:"it_trevi_fountain", title:"Trevi Fountain — Live Cam", place:"Roma, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"j39vIidsIJI", originUrl:"https://www.youtube.com/watch?v=j39vIidsIJI", tags:["italy","rome","landmark"] },
+    { id:"it_pozzuoli_campi_flegrei", title:"Campi Flegrei (Pozzuoli) — Live Cam", place:"Pozzuoli, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"-sNafHFByDI", originUrl:"https://www.youtube.com/watch?v=-sNafHFByDI", tags:["italy","volcano"] },
+    { id:"it_etna_eruption_live", title:"Etna Eruption — Live Cam", place:"Sicilia, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"plYtw4DSf5I", originUrl:"https://www.youtube.com/watch?v=plYtw4DSf5I", tags:["italy","volcano"] },
+    { id:"it_etna_live_alt1", title:"Mount Etna (Alt 1) — Live Cam", place:"Sicilia, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"k_g6c14hXGQ", originUrl:"https://www.youtube.com/watch?v=k_g6c14hXGQ", tags:["italy","volcano"] },
+    { id:"it_etna_live_alt2", title:"Mount Etna (Alt 2) — Live Cam", place:"Sicilia, Italia", source:"YouTube", kind:"youtube", youtubeId:"EHIelAoCBoM", originUrl:"https://www.youtube.com/watch?v=EHIelAoCBoM", tags:["italy","volcano"] },
+    { id:"es_malaga_weather_alert", title:"Málaga — Live Cam", place:"Málaga, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"cplErgOi_Ws", originUrl:"https://www.youtube.com/watch?v=cplErgOi_Ws", tags:["spain","weather"] },
+    { id:"ch_wengen_alps", title:"Wengen Alps — Live Cam", place:"Wengen, Suiza", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"I28Cip207ZY", originUrl:"https://www.youtube.com/watch?v=I28Cip207ZY", tags:["switzerland","alps","snow"] },
+    { id:"gr_santorini_live", title:"Santorini — Live Cam", place:"Santorini, Grecia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"2a4SrvF0iS8", originUrl:"https://www.youtube.com/watch?v=2a4SrvF0iS8", tags:["greece","island"] },
+    { id:"il_jerusalem_live", title:"Jerusalem — Live Cam", place:"Jerusalén, Israel", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"hTSfDxRmrEQ", originUrl:"https://www.youtube.com/watch?v=hTSfDxRmrEQ", tags:["city","landmark"] },
+    { id:"cz_prague_live", title:"Prague — Live Cam", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"0FvTdT3EJY4", originUrl:"https://www.youtube.com/watch?v=0FvTdT3EJY4", tags:["czech","city"] },
+    { id:"cz_prague_snowfall", title:"Prague Snowfall — Live Cam", place:"Praga, República Checa", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"B6FDKqfJ6M4", originUrl:"https://www.youtube.com/watch?v=B6FDKqfJ6M4", tags:["czech","snow"] },
+    { id:"cz_prague_trainspotting", title:"Prague Main Station — Live Cam", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"AttVS4KM8tY", originUrl:"https://www.youtube.com/watch?v=AttVS4KM8tY", tags:["train","czech"] },
     { id:"cz_prague_timelapse", title:"Prague Time-Lapse (live view link)", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"jbN6czYv0os", originUrl:"https://www.youtube.com/watch?v=jbN6czYv0os", tags:["czech","timelapse"] },
 
-    { id:"nl_amsterdam_dam_ptz", title:"Amsterdam — De Dam (PTZ)", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"Gd9d4q6WvUY", originUrl:"https://www.youtube.com/watch?v=Gd9d4q6WvUY", tags:["netherlands","ptz"] },
-    { id:"nl_amsterdam_singel_hotel", title:"Singel Hotel Live 24/7", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"ZnOoxCd7BGU", originUrl:"https://www.youtube.com/watch?v=ZnOoxCd7BGU", tags:["netherlands","city"] },
-    { id:"nl_amsterdam_sixhaven", title:"Sixhaven Live (1440p)", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"3gTHiUWrCAE", originUrl:"https://www.youtube.com/watch?v=3gTHiUWrCAE", tags:["netherlands","harbour"] },
-    { id:"nl_amsterdam_movenpick", title:"Mövenpick Rooftop Live", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"9Pm6Ji6tm7s", originUrl:"https://www.youtube.com/watch?v=9Pm6Ji6tm7s", tags:["netherlands","rooftop"] },
-    { id:"nl_amsterdam_live_stream", title:"Amsterdam Live Stream 24/7", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"RmiTd0J5qDg", originUrl:"https://www.youtube.com/watch?v=RmiTd0J5qDg", tags:["netherlands","city"] },
-    { id:"nl_amsterdam_stationseiland", title:"Amsterdam — Centraal station area", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"1phWWCgzXgM", originUrl:"https://www.youtube.com/watch?v=1phWWCgzXgM", tags:["netherlands","station"] },
+    { id:"nl_amsterdam_dam_ptz", title:"Amsterdam — De Dam (PTZ) — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"Gd9d4q6WvUY", originUrl:"https://www.youtube.com/watch?v=Gd9d4q6WvUY", tags:["netherlands","ptz"] },
+    { id:"nl_amsterdam_singel_hotel", title:"Singel Hotel — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"ZnOoxCd7BGU", originUrl:"https://www.youtube.com/watch?v=ZnOoxCd7BGU", tags:["netherlands","city"] },
+    { id:"nl_amsterdam_sixhaven", title:"Sixhaven — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"3gTHiUWrCAE", originUrl:"https://www.youtube.com/watch?v=3gTHiUWrCAE", tags:["netherlands","harbour"] },
+    { id:"nl_amsterdam_movenpick", title:"Mövenpick Rooftop — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"9Pm6Ji6tm7s", originUrl:"https://www.youtube.com/watch?v=9Pm6Ji6tm7s", tags:["netherlands","rooftop"] },
+    { id:"nl_amsterdam_live_stream", title:"Amsterdam — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"RmiTd0J5qDg", originUrl:"https://www.youtube.com/watch?v=RmiTd0J5qDg", tags:["netherlands","city"] },
+    { id:"nl_amsterdam_stationseiland", title:"Amsterdam — Station Area — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"1phWWCgzXgM", originUrl:"https://www.youtube.com/watch?v=1phWWCgzXgM", tags:["netherlands","station"] },
 
     { id:"fr_paris_walk_live", title:"Paris Eiffel Tower Walk Live", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"wCgNhsNjuPs", originUrl:"https://www.youtube.com/watch?v=wCgNhsNjuPs", tags:["france","tour"] },
-    { id:"fr_paris_pont_iena", title:"Paris — Pont de Iéna (Eiffel Tower)", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"7-OFVJ8hKFc", originUrl:"https://www.youtube.com/watch?v=7-OFVJ8hKFc", tags:["france","landmark"] },
-    { id:"fr_paris_live_hd", title:"Paris Live HD CAM — Eiffel", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"iZipA1LL_sU", originUrl:"https://www.youtube.com/watch?v=iZipA1LL_sU", tags:["france","landmark"] },
-    { id:"fr_paris_stream_alt", title:"Paris Stream (Eiffel area)", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"xzMYdVo-3Bs", originUrl:"https://www.youtube.com/watch?v=xzMYdVo-3Bs", tags:["france","city"] },
-    { id:"fr_paris_earth_hour", title:"Eiffel Tower Live (Earth Hour clip)", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"NrMFAkTeuVw", originUrl:"https://www.youtube.com/watch?v=NrMFAkTeuVw", tags:["france","eiffel"] },
-    { id:"fr_paris_angles_4k", title:"Paris — Eiffel Tower (multi angles)", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"mvcL9--pvHw", originUrl:"https://www.youtube.com/watch?v=mvcL9--pvHw&vl=en", tags:["france","multi","4k"] },
+    { id:"fr_paris_pont_iena", title:"Paris — Pont de Iéna (Eiffel Tower) — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"7-OFVJ8hKFc", originUrl:"https://www.youtube.com/watch?v=7-OFVJ8hKFc", tags:["france","landmark"] },
+    { id:"fr_paris_live_hd", title:"Paris — Eiffel — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"iZipA1LL_sU", originUrl:"https://www.youtube.com/watch?v=iZipA1LL_sU", tags:["france","landmark"] },
+    { id:"fr_paris_stream_alt", title:"Paris (Eiffel area) — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"xzMYdVo-3Bs", originUrl:"https://www.youtube.com/watch?v=xzMYdVo-3Bs", tags:["france","city"] },
+    { id:"fr_paris_earth_hour", title:"Eiffel Tower — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"NrMFAkTeuVw", originUrl:"https://www.youtube.com/watch?v=NrMFAkTeuVw", tags:["france","eiffel"] },
+    { id:"fr_paris_angles_4k", title:"Paris — Eiffel Tower — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"mvcL9--pvHw", originUrl:"https://www.youtube.com/watch?v=mvcL9--pvHw&vl=en", tags:["france","multi"] },
     { id:"fr_paris_virtual_live", title:"Eiffel Tower Virtual Tour (Live)", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"O8Ha_pAqYcY", originUrl:"https://www.youtube.com/watch?v=O8Ha_pAqYcY", tags:["france","tour"] },
 
-    { id:"es_barcelona_rough_morning", title:"Barcelona Live (Rough Morning)", place:"Barcelona, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"XL1hRO8EYa0", originUrl:"https://www.youtube.com/watch?v=XL1hRO8EYa0", tags:["spain","barcelona"] },
+    { id:"es_barcelona_rough_morning", title:"Barcelona — Live Cam", place:"Barcelona, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"XL1hRO8EYa0", originUrl:"https://www.youtube.com/watch?v=XL1hRO8EYa0", tags:["spain","barcelona"] },
     { id:"es_barcelona_recorded", title:"Barcelona (Recorded live)", place:"Barcelona, España", source:"YouTube", kind:"youtube", youtubeId:"-rADshzms8U", originUrl:"https://www.youtube.com/watch?v=-rADshzms8U", tags:["spain","barcelona"] },
-    { id:"es_tenerife_santa_cruz", title:"Santa Cruz de Tenerife Live", place:"Tenerife, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"RJbiqyQ4BlY", originUrl:"https://www.youtube.com/watch?v=RJbiqyQ4BlY", tags:["spain","canary"] },
-    { id:"es_tenerife_las_vistas", title:"Playa Las Vistas Live", place:"Tenerife, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"gsTMAwBl-5E", originUrl:"https://www.youtube.com/watch?v=gsTMAwBl-5E", tags:["spain","canary","beach"] },
+    { id:"es_tenerife_santa_cruz", title:"Santa Cruz de Tenerife — Live Cam", place:"Tenerife, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"RJbiqyQ4BlY", originUrl:"https://www.youtube.com/watch?v=RJbiqyQ4BlY", tags:["spain","canary"] },
+    { id:"es_tenerife_las_vistas", title:"Playa Las Vistas — Live Cam", place:"Tenerife, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"gsTMAwBl-5E", originUrl:"https://www.youtube.com/watch?v=gsTMAwBl-5E", tags:["spain","canary","beach"] },
     { id:"es_tenerife_recorded", title:"Tenerife (Recorded live)", place:"Tenerife, España", source:"YouTube", kind:"youtube", youtubeId:"lLdp3VjZ2K4", originUrl:"https://www.youtube.com/watch?v=lLdp3VjZ2K4", tags:["spain","canary"] },
 
-    { id:"ar_buenos_aires_live", title:"Buenos Aires Live", place:"Buenos Aires, Argentina", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"reShHDyLGbc", originUrl:"https://www.youtube.com/watch?v=reShHDyLGbc", tags:["argentina","city"] },
-    { id:"ar_ushuaia_snowfall", title:"Ushuaia Snowfall Live", place:"Ushuaia, Argentina", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"9cYa8Ssf0rI", originUrl:"https://www.youtube.com/watch?v=9cYa8Ssf0rI", tags:["argentina","snow"] },
+    { id:"ar_buenos_aires_live", title:"Buenos Aires — Live Cam", place:"Buenos Aires, Argentina", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"reShHDyLGbc", originUrl:"https://www.youtube.com/watch?v=reShHDyLGbc", tags:["argentina","city"] },
+    { id:"ar_ushuaia_snowfall", title:"Ushuaia Snowfall — Live Cam", place:"Ushuaia, Argentina", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"9cYa8Ssf0rI", originUrl:"https://www.youtube.com/watch?v=9cYa8Ssf0rI", tags:["argentina","snow"] },
 
-    { id:"fo_faroe_islands_live", title:"Faroe Islands Live Webcam", place:"Islas Feroe", source:"YouTube", kind:"youtube", youtubeId:"9NpCVV25j_4", originUrl:"https://www.youtube.com/watch?v=9NpCVV25j_4", tags:["faroe","nature"] },
-    { id:"it_canazei_snowfall", title:"Canazei Snowfall Live", place:"Canazei, Italia", source:"YouTube", kind:"youtube", youtubeId:"hIKpX489KCI", originUrl:"https://www.youtube.com/watch?v=hIKpX489KCI", tags:["italy","snow","alps"] },
+    { id:"fo_faroe_islands_live", title:"Faroe Islands — Live Cam", place:"Islas Feroe", source:"YouTube", kind:"youtube", youtubeId:"9NpCVV25j_4", originUrl:"https://www.youtube.com/watch?v=9NpCVV25j_4", tags:["faroe","nature"] },
+    { id:"it_canazei_snowfall", title:"Canazei Snowfall — Live Cam", place:"Canazei, Italia", source:"YouTube", kind:"youtube", youtubeId:"hIKpX489KCI", originUrl:"https://www.youtube.com/watch?v=hIKpX489KCI", tags:["italy","snow","alps"] },
 
     { id:"jp_shibuya_alt_timelapse", title:"Shibuya (Alt / Time-lapse)", place:"Tokio, Japón", source:"YouTube", kind:"youtube", youtubeId:"KiXaAGqD99I", originUrl:"https://www.youtube.com/watch?v=KiXaAGqD99I", tags:["japan","timelapse"] },
-    { id:"th_phuket_new_year_live", title:"New Year / Night Live Cam", place:"Phuket, Tailandia", source:"YouTube", kind:"youtube", youtubeId:"AQMaw6OAeHY", originUrl:"https://www.youtube.com/watch?v=AQMaw6OAeHY", tags:["thailand","night"] },
-    { id:"us_hawaii_volcano_cam_alt", title:"Volcano Cam (Big Island) — Alt", place:"Hawái, USA", source:"YouTube", kind:"youtube", youtubeId:"u4UZ4UvZXrg", originUrl:"https://www.youtube.com/watch?v=u4UZ4UvZXrg", tags:["usa","hawaii","volcano"] },
+    { id:"th_phuket_new_year_live", title:"Night Cam — Live", place:"Phuket, Tailandia", source:"YouTube", kind:"youtube", youtubeId:"AQMaw6OAeHY", originUrl:"https://www.youtube.com/watch?v=AQMaw6OAeHY", tags:["thailand","night"] },
+    { id:"us_hawaii_volcano_cam_alt", title:"Volcano Cam (Big Island) — Live", place:"Hawái, USA", source:"YouTube", kind:"youtube", youtubeId:"u4UZ4UvZXrg", originUrl:"https://www.youtube.com/watch?v=u4UZ4UvZXrg", tags:["usa","hawaii","volcano"] },
 
     { id:"mix_1200_top_webcams", title:"1200 TOP LIVE WEBCAMS (mix)", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"EFum1rGUdkk", originUrl:"https://www.youtube.com/watch?v=EFum1rGUdkk", tags:["mix","world"] },
     { id:"mix_50_greece_webcams", title:"50 TOP LIVE CAMS (Greece mix)", place:"Grecia (mix)", source:"YouTube", kind:"youtube", youtubeId:"QswsqbCmkjE", originUrl:"https://www.youtube.com/watch?v=QswsqbCmkjE", tags:["mix","greece"] },
     { id:"mix_us_webcams_oct", title:"LIVE WEBCAMS around the USA (mix)", place:"USA (mix)", source:"YouTube", kind:"youtube", youtubeId:"59D6sy6wjdI", originUrl:"https://www.youtube.com/watch?v=59D6sy6wjdI", tags:["mix","usa"] },
 
-    // placeholders/ejemplos -> si son inválidos, tu player ya autoskip; discovery los reemplaza en la práctica
-    { id:"es_madrid_puerta_sol", title:"Puerta del Sol Live", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"k7m5Jc2QYqA", originUrl:"https://www.youtube.com/watch?v=k7m5Jc2QYqA", tags:["spain","madrid","city"] },
-    { id:"es_madrid_gran_via", title:"Gran Vía Live", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"xjG8h3u4b8o", originUrl:"https://www.youtube.com/watch?v=xjG8h3u4b8o", tags:["spain","madrid","street"] },
-    { id:"es_valencia_city", title:"Valencia City Live", place:"Valencia, España", source:"YouTube", kind:"youtube", youtubeId:"wXxQm2n3p1s", originUrl:"https://www.youtube.com/watch?v=wXxQm2n3p1s", tags:["spain","valencia"] },
-    { id:"es_sevilla_city", title:"Sevilla Live", place:"Sevilla, España", source:"YouTube", kind:"youtube", youtubeId:"5mQpZQm9JqY", originUrl:"https://www.youtube.com/watch?v=5mQpZQm9JqY", tags:["spain","sevilla"] },
-    { id:"es_bilbao_ria", title:"Bilbao (Ría) Live", place:"Bilbao, España", source:"YouTube", kind:"youtube", youtubeId:"b2GQY8x1r1Q", originUrl:"https://www.youtube.com/watch?v=b2GQY8x1r1Q", tags:["spain","bilbao"] },
-    { id:"es_mallorca_beach", title:"Mallorca Beach Live", place:"Mallorca, España", source:"YouTube", kind:"youtube", youtubeId:"Z0H1y1b2v3c", originUrl:"https://www.youtube.com/watch?v=Z0H1y1b2v3c", tags:["spain","mallorca","beach"] },
-    { id:"es_gran_canaria_playa", title:"Gran Canaria Beach Live", place:"Gran Canaria, España", source:"YouTube", kind:"youtube", youtubeId:"Qq3a1n2m3p0", originUrl:"https://www.youtube.com/watch?v=Qq3a1n2m3p0", tags:["spain","canary","beach"] },
+    // (Estos “placeholders” se quedan como seed, pero el filtro live/webcam los puede descartar)
+    { id:"es_madrid_puerta_sol", title:"Puerta del Sol — Live Cam", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"k7m5Jc2QYqA", originUrl:"https://www.youtube.com/watch?v=k7m5Jc2QYqA", tags:["spain","madrid","city"] },
+    { id:"es_madrid_gran_via", title:"Gran Vía — Live Cam", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"xjG8h3u4b8o", originUrl:"https://www.youtube.com/watch?v=xjG8h3u4b8o", tags:["spain","madrid","street"] },
+    { id:"es_valencia_city", title:"Valencia — Live Cam", place:"Valencia, España", source:"YouTube", kind:"youtube", youtubeId:"wXxQm2n3p1s", originUrl:"https://www.youtube.com/watch?v=wXxQm2n3p1s", tags:["spain","valencia"] },
+    { id:"es_sevilla_city", title:"Sevilla — Live Cam", place:"Sevilla, España", source:"YouTube", kind:"youtube", youtubeId:"5mQpZQm9JqY", originUrl:"https://www.youtube.com/watch?v=5mQpZQm9JqY", tags:["spain","sevilla"] },
+    { id:"es_bilbao_ria", title:"Bilbao (Ría) — Live Cam", place:"Bilbao, España", source:"YouTube", kind:"youtube", youtubeId:"b2GQY8x1r1Q", originUrl:"https://www.youtube.com/watch?v=b2GQY8x1r1Q", tags:["spain","bilbao"] },
+    { id:"es_mallorca_beach", title:"Mallorca Beach — Live Cam", place:"Mallorca, España", source:"YouTube", kind:"youtube", youtubeId:"Z0H1y1b2v3c", originUrl:"https://www.youtube.com/watch?v=Z0H1y1b2v3c", tags:["spain","mallorca","beach"] },
+    { id:"es_gran_canaria_playa", title:"Gran Canaria Beach — Live Cam", place:"Gran Canaria, España", source:"YouTube", kind:"youtube", youtubeId:"Qq3a1n2m3p0", originUrl:"https://www.youtube.com/watch?v=Qq3a1n2m3p0", tags:["spain","canary","beach"] },
 
     { id:"mix_world_live_cities", title:"WORLD Live Cams — Cities Mix", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"w0rLdC1t13s0", originUrl:"https://www.youtube.com/watch?v=w0rLdC1t13s0", tags:["mix","world","cities"] },
     { id:"mix_world_nature", title:"WORLD Live Cams — Nature Mix", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"n4tur3M1x000", originUrl:"https://www.youtube.com/watch?v=n4tur3M1x000", tags:["mix","world","nature"] }
@@ -499,10 +555,19 @@
 
     const id = toId(cam.id, i);
     if (seenIds.has(id)) continue; // los primeros ganan
+
     let kind = safeStr(cam.kind).toLowerCase();
 
     // VIDEO ONLY
     if (kind === "image") continue;
+
+    // Filtro webcam LIVE (heurístico) — descarta walk/recorded/etc también en seeds
+    // (no tocamos HLS aquí por título si no hay title)
+    const tOk = camTitleOk(cam.title, cam.source);
+    if (!tOk) {
+      // Si es HLS y tiene pinta de m3u8, dejamos pasar (no hay título “real” muchas veces)
+      if (!(kind === "hls" && looksLikeM3U8(cam.url))) continue;
+    }
 
     // Inferencia suave
     if (!ALLOWED_KINDS.has(kind)) {
@@ -582,6 +647,9 @@
         const id = safeStr(c.id);
         if (!id || ids.has(id)) continue;
 
+        // filtro webcam LIVE (cache también)
+        if (!camTitleOk(c.title, c.source)) continue;
+
         if (kind === "youtube") {
           const yid = safeStr(c.youtubeId);
           if (!isValidYouTubeId(yid) || yts.has(yid)) continue;
@@ -615,6 +683,8 @@
 
       const id = safeStr(c.id);
       if (!id || seenIds.has(id)) continue;
+
+      if (!camTitleOk(c.title, c.source)) continue;
 
       if (kind === "youtube") {
         const yid = safeStr(c.youtubeId);
@@ -741,6 +811,15 @@
     return false;
   }
 
+  function textLooksNotLive(t) {
+    const s = (t || "").toLowerCase();
+    // heurística (best-effort): si detectamos señales claras de VOD/estreno/espera
+    if (s.includes("premiere")) return true;
+    if (s.includes("upcoming")) return true;
+    if (s.includes("scheduled")) return true;
+    return false;
+  }
+
   async function fetchWithTimeout(url, opts, timeoutMs) {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -798,6 +877,32 @@
     throw new Error("fetchJsonSmart: JSON parse failed");
   }
 
+  async function isReallyLiveYouTube(videoId) {
+    if (!BEST_EFFORT_LIVE_CHECK) return true;
+
+    // Best-effort: leer embed/watch y buscar señales de live.
+    // Si no podemos comprobar => no es negativo.
+    try {
+      const html = await fetchTextSmart(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, 11000);
+      if (!html) return true;
+
+      // Señales típicas (no perfectas)
+      const h = html.toLowerCase();
+
+      // Si detectamos claramente “no live”
+      if (textLooksNotLive(h)) return false;
+
+      // Señales de live (varían por HTML)
+      if (h.includes("\"islive\":true") || h.includes("\"islivecontent\":true") || h.includes("\"islivenow\":true")) return true;
+      if (h.includes("livestreamability") && !h.includes("unplayable")) return true;
+
+      // Si no vemos nada concluyente, no penalizamos
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   async function isEmbeddableYouTube(videoId) {
     if (!VALIDATE_EMBED) return true;
 
@@ -816,10 +921,17 @@
     try {
       const html = await fetchTextSmart(`https://www.youtube.com/embed/${videoId}`, 9000);
       if (!html) return true;
-      return !textLikelyBlockedEmbed(html);
+      if (textLikelyBlockedEmbed(html)) return false;
     } catch (_) {
-      return true; // si no podemos comprobar, no lo invalidamos (tu player ya autoskip)
+      // si no podemos comprobar, no lo invalidamos (tu player ya autoskip)
+      return true;
     }
+
+    // 3) live check (best-effort)
+    const liveOk = await isReallyLiveYouTube(videoId);
+    if (!liveOk) return false;
+
+    return true;
   }
 
   function toAutoCam(entry) {
@@ -827,9 +939,9 @@
     if (!isValidYouTubeId(vid)) return null;
 
     const title = safeStr(entry.title) || "Live Cam";
-    if (!camTitleOk(title)) return null;
-
     const author = safeStr(entry.author);
+    if (!camTitleOk(title, author)) return null;
+
     const id = `yt_${vid}`;
     return {
       id,
@@ -840,7 +952,7 @@
       youtubeId: vid,
       originUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`,
       thumb: youtubeThumb(vid),
-      tags: ["auto","live","discovery"],
+      tags: ["auto","live","webcam"],
       isAlt: false
     };
   }
@@ -869,6 +981,7 @@
           out.push(u.replace(/\/+$/, ""));
         }
       }
+      // uniq
       const uniq = [];
       const s = new Set();
       for (let i = 0; i < out.length; i++) {
@@ -877,17 +990,22 @@
         s.add(u);
         uniq.push(u);
       }
+      // añade fallback al final
       for (let i = 0; i < fallback.length; i++) {
         const u = fallback[i];
         if (!s.has(u)) { s.add(u); uniq.push(u); }
       }
-      return uniq.slice(0, 18);
+      return uniq.slice(0, Math.max(5, DISCOVERY_MAX_INSTANCES));
     } catch (_) {
-      return fallback;
+      return fallback.slice(0, Math.max(5, DISCOVERY_MAX_INSTANCES));
     }
   }
 
+  let __reqUsed = 0;
+
   async function invidiousSearch(instance, q, page) {
+    if (__reqUsed++ >= DISCOVERY_REQUEST_BUDGET) return [];
+
     const base = instance.replace(/\/+$/, "");
     const url =
       `${base}/api/v1/search` +
@@ -903,127 +1021,155 @@
     return res;
   }
 
+  function shuffleInPlace(arr) {
+    if (!Array.isArray(arr) || arr.length < 2) return arr;
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = arr[i];
+      arr[i] = arr[j];
+      arr[j] = t;
+    }
+    return arr;
+  }
+
   async function discoverMore() {
-    if (!AUTO_DISCOVERY) {
+    try {
+      if (!AUTO_DISCOVERY) {
+        saveCache(OUT_CATALOG);
+        emitUpdate();
+        if (__resolveReady) __resolveReady(g.CAM_LIST);
+        return;
+      }
+
+      if (OUT.length >= TARGET_CAMS) {
+        saveCache(OUT_CATALOG);
+        emitUpdate();
+        if (__resolveReady) __resolveReady(g.CAM_LIST);
+        return;
+      }
+
+      const instancesRaw = await getInvidiousInstances();
+      const instances = shuffleInPlace(instancesRaw.slice(0, Math.max(5, DISCOVERY_MAX_INSTANCES)));
+
+      const candidates = [];
+      const addedNow = new Set(); // videoId in this run
+
+      // tareas (más eficiente: no combinamos TODO; hacemos round-robin)
+      const tasks = [];
+      for (let qi = 0; qi < DISCOVERY_QUERIES.length; qi++) {
+        const q = DISCOVERY_QUERIES[qi];
+        for (let p = 1; p <= DISCOVERY_MAX_PAGES_PER_QUERY; p++) {
+          // rotamos instancias por query/página
+          for (let ii = 0; ii < instances.length; ii++) {
+            tasks.push({ q, p, inst: instances[ii] });
+          }
+        }
+      }
+      shuffleInPlace(tasks);
+
+      let cursor = 0;
+      const foundForQuery = Object.create(null);
+
+      async function worker() {
+        while (cursor < tasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
+          if (__reqUsed >= DISCOVERY_REQUEST_BUDGET) break;
+
+          const t = tasks[cursor++];
+
+          try {
+            const key = t.q;
+            foundForQuery[key] = foundForQuery[key] || 0;
+            if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) {
+              await sleep(50);
+              continue;
+            }
+
+            const results = await invidiousSearch(t.inst, t.q, t.p);
+
+            for (let i = 0; i < results.length; i++) {
+              const r = results[i];
+              if (!r || r.type !== "video") continue;
+
+              // liveNow es lo que queremos
+              if (r.liveNow !== true) continue;
+
+              const cam = toAutoCam(r);
+              if (!cam) continue;
+
+              const vid = cam.youtubeId;
+              if (seenYouTube.has(vid) || addedNow.has(vid)) continue;
+              addedNow.add(vid);
+
+              const ok = await isEmbeddableYouTube(vid);
+              if (!ok) continue;
+
+              candidates.push(cam);
+              foundForQuery[key]++;
+
+              // early stop
+              if ((OUT_CATALOG.length + candidates.length) >= TARGET_CAMS) break;
+              if (__reqUsed >= DISCOVERY_REQUEST_BUDGET) break;
+            }
+          } catch (_) {
+            // silencio
+          } finally {
+            await sleep(110);
+          }
+        }
+      }
+
+      const workers = [];
+      const n = Math.max(1, Math.min(DISCOVERY_CONCURRENCY, 8));
+      for (let i = 0; i < n; i++) workers.push(worker());
+      await Promise.all(workers);
+
+      // Añadir candidatos
+      for (let i = 0; i < candidates.length && OUT_CATALOG.length < TARGET_CAMS; i++) {
+        const c = candidates[i];
+        if (!c) continue;
+        if (seenIds.has(c.id)) continue;
+        if (seenYouTube.has(c.youtubeId)) continue;
+        pushCam(c);
+      }
+
+      // Failsafe ALT fill (solo para player; catálogo se queda limpio)
+      if (HARD_FAILSAFE_ALT_FILL && OUT.length > 0 && OUT.length < TARGET_CAMS) {
+        const baseLen = OUT.length;
+        let k = 0;
+        while (OUT.length < TARGET_CAMS && k < 40000) {
+          const src = OUT[k % baseLen];
+          const altN = ((k / baseLen) | 0) + 1;
+          const altId = `${src.id}_alt_${altN}`;
+          if (!seenIds.has(altId)) {
+            seenIds.add(altId);
+            const clone = Object.assign({}, src, {
+              id: altId,
+              title: `${src.title} (Alt ${altN})`,
+              tags: Array.isArray(src.tags) ? src.tags.slice(0, 11).concat(["alt"]) : ["alt"],
+              isAlt: true,
+              altOf: src.id
+            });
+            OUT.push(clone);
+          }
+          k++;
+        }
+      }
+
+      // Export final
+      g.CAM_LIST = OUT;
+      g.CAM_CATALOG_LIST = OUT_CATALOG;
+
+      // Guarda cache SOLO sin alts
       saveCache(OUT_CATALOG);
+
       emitUpdate();
       if (__resolveReady) __resolveReady(g.CAM_LIST);
-      return;
+    } catch (_) {
+      // Si algo explota, no bloqueamos: resolvemos con lo que haya
+      try { saveCache(OUT_CATALOG); } catch (_) {}
+      try { emitUpdate(); } catch (_) {}
+      try { if (__resolveReady) __resolveReady(g.CAM_LIST); } catch (_) {}
     }
-
-    if (OUT.length >= TARGET_CAMS) {
-      saveCache(OUT_CATALOG);
-      emitUpdate();
-      if (__resolveReady) __resolveReady(g.CAM_LIST);
-      return;
-    }
-
-    const instances = await getInvidiousInstances();
-    const candidates = [];
-    const addedNow = new Set(); // videoId in this run
-
-    // cola de tareas (query x page x instance)
-    const tasks = [];
-    for (let qi = 0; qi < DISCOVERY_QUERIES.length; qi++) {
-      const q = DISCOVERY_QUERIES[qi];
-      for (let p = 1; p <= DISCOVERY_MAX_PAGES_PER_QUERY; p++) {
-        for (let ii = 0; ii < instances.length; ii++) {
-          tasks.push({ q, p, inst: instances[ii] });
-        }
-      }
-    }
-
-    let cursor = 0;
-    const foundForQuery = Object.create(null);
-
-    async function worker() {
-      while (cursor < tasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
-        const t = tasks[cursor++];
-
-        try {
-          const key = t.q;
-          foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) {
-            await sleep(60);
-            continue;
-          }
-
-          const results = await invidiousSearch(t.inst, t.q, t.p);
-
-          for (let i = 0; i < results.length; i++) {
-            const r = results[i];
-            if (!r || r.type !== "video") continue;
-            if (r.liveNow !== true) continue;
-
-            const cam = toAutoCam(r);
-            if (!cam) continue;
-
-            const vid = cam.youtubeId;
-            if (seenYouTube.has(vid) || addedNow.has(vid)) continue;
-            addedNow.add(vid);
-
-            const ok = await isEmbeddableYouTube(vid);
-            if (!ok) continue;
-
-            candidates.push(cam);
-            foundForQuery[key]++;
-
-            if ((OUT_CATALOG.length + candidates.length) >= TARGET_CAMS) break;
-          }
-        } catch (_) {
-          // silencio
-        } finally {
-          await sleep(120);
-        }
-      }
-    }
-
-    const workers = [];
-    const n = Math.max(1, Math.min(DISCOVERY_CONCURRENCY, 8));
-    for (let i = 0; i < n; i++) workers.push(worker());
-    await Promise.all(workers);
-
-    // Añadir candidatos
-    for (let i = 0; i < candidates.length && OUT_CATALOG.length < TARGET_CAMS; i++) {
-      const c = candidates[i];
-      if (!c) continue;
-      if (seenIds.has(c.id)) continue;
-      if (seenYouTube.has(c.youtubeId)) continue;
-      pushCam(c);
-    }
-
-    // Failsafe ALT fill (solo para player; catálogo se queda limpio)
-    if (HARD_FAILSAFE_ALT_FILL && OUT.length > 0 && OUT.length < TARGET_CAMS) {
-      const baseLen = OUT.length;
-      let k = 0;
-      while (OUT.length < TARGET_CAMS && k < 40000) {
-        const src = OUT[k % baseLen];
-        const altN = ((k / baseLen) | 0) + 1;
-        const altId = `${src.id}_alt_${altN}`;
-        if (!seenIds.has(altId)) {
-          seenIds.add(altId);
-          const clone = Object.assign({}, src, {
-            id: altId,
-            title: `${src.title} (Alt ${altN})`,
-            tags: Array.isArray(src.tags) ? src.tags.slice(0, 11).concat(["alt"]) : ["alt"],
-            isAlt: true,
-            altOf: src.id
-          });
-          OUT.push(clone);
-        }
-        k++;
-      }
-    }
-
-    // Export final
-    g.CAM_LIST = OUT;
-    g.CAM_CATALOG_LIST = OUT_CATALOG;
-
-    // Guarda cache SOLO sin alts
-    saveCache(OUT_CATALOG);
-
-    emitUpdate();
-    if (__resolveReady) __resolveReady(g.CAM_LIST);
   }
 
   // Lanza discovery sin bloquear el arranque

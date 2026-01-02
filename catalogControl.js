@@ -1,18 +1,17 @@
-/* catalogControl.js — RLC Catalog Control v1.2.0
+/* catalogControl.js — RLC Catalog Control v1.3.0
    ✅ Solo para control.html
    ✅ Guarda config en localStorage (keyed + legacy)
    ✅ Emite config por BroadcastChannel (keyed + legacy)
-   ✅ Boot sync: emite config al arrancar (para que el player se entere aunque no toques nada)
+   ✅ Boot sync: emite config al arrancar
    ✅ Live apply suave (change/input con debounce)
-   ✅ Soporta nuevas opciones del Catalog View v1.1.3:
-      - mode: "follow" | "sync"
-      - followSlot: 0..3
-      - clickCycle: true/false
-      - ytCookies: true/false
-      - wxTiles: true/false
-      - wxRefreshSec: 10..180
-   ✅ No rompe si tu HTML no tiene los nuevos controles:
-      - Si faltan, usa defaults/guardado y no crashea
+   ✅ Compat total: si faltan controles nuevos NO crashea
+
+   🗳️ NUEVO (VOTO 4 OPCIONES / CAMBIO 1 TILE):
+   - voteEnabled: true/false
+   - voteWindowSec: duración de la votación (seg)
+   - voteEveryMinSec / voteEveryMaxSec: intervalo ALEATORIO entre votaciones (seg)
+   - voteAnnounce: si true, el player puede pedir al bot anunciar (si lo soportas)
+   - voteAllowNoVotes: si true y nadie vota => se elige un slot random igualmente
 */
 
 (() => {
@@ -20,7 +19,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_CONTROL_LOADED_V120";
+  const LOAD_GUARD = "__RLC_CATALOG_CONTROL_LOADED_V130";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Keys / Bus
@@ -57,7 +56,7 @@
   // ───────────────────────── Defaults (compat + nuevas opciones)
   const DEFAULTS = {
     enabled: false,
-    layout: "quad",     // 2x2 (4)
+    layout: "quad",     // fijo 2x2
     gapPx: 8,
     labels: true,
     muted: true,
@@ -70,7 +69,15 @@
 
     // WX tiles
     wxTiles: true,
-    wxRefreshSec: 30
+    wxRefreshSec: 30,
+
+    // 🗳️ voto 4 opciones
+    voteEnabled: true,
+    voteWindowSec: 18,
+    voteEveryMinSec: 55,
+    voteEveryMaxSec: 120,
+    voteAnnounce: true,
+    voteAllowNoVotes: true
   };
 
   // ───────────────────────── Storage helpers
@@ -107,6 +114,17 @@
 
     c.wxTiles = (c.wxTiles !== false);
     c.wxRefreshSec = clamp((parseInt(c.wxRefreshSec, 10) || DEFAULTS.wxRefreshSec), 10, 180);
+
+    // 🗳️ voto
+    c.voteEnabled = (c.voteEnabled !== false);
+    c.voteWindowSec = clamp((parseInt(c.voteWindowSec, 10) || DEFAULTS.voteWindowSec), 8, 60);
+
+    c.voteEveryMinSec = clamp((parseInt(c.voteEveryMinSec, 10) || DEFAULTS.voteEveryMinSec), 15, 900);
+    c.voteEveryMaxSec = clamp((parseInt(c.voteEveryMaxSec, 10) || DEFAULTS.voteEveryMaxSec), 20, 1200);
+    if (c.voteEveryMaxSec < c.voteEveryMinSec + 5) c.voteEveryMaxSec = c.voteEveryMinSec + 5;
+
+    c.voteAnnounce = (c.voteAnnounce !== false);
+    c.voteAllowNoVotes = (c.voteAllowNoVotes !== false);
 
     return c;
   }
@@ -153,7 +171,6 @@
     const v = safeStr(el.value).toLowerCase();
     if (v === "on") return true;
     if (v === "off") return false;
-    // si el HTML usa checkbox accidentalmente
     if (typeof el.checked === "boolean") return !!el.checked;
     return fallbackBool;
   }
@@ -168,35 +185,44 @@
   function applyUIFromCfg(cfg) {
     const c = normalizeCfg(cfg);
 
-    // existentes v1.0.1
+    // existentes
     if (qs("#ctlCatalogOn")) writeOnOff("#ctlCatalogOn", c.enabled);
     if (qs("#ctlCatalogLayout")) qs("#ctlCatalogLayout").value = "quad";
     if (qs("#ctlCatalogGap")) qs("#ctlCatalogGap").value = String(c.gapPx);
     if (qs("#ctlCatalogLabels")) writeOnOff("#ctlCatalogLabels", c.labels);
     if (qs("#ctlCatalogMuted")) writeOnOff("#ctlCatalogMuted", c.muted);
 
-    // nuevos (si existen)
-    if (qs("#ctlCatalogMode")) qs("#ctlCatalogMode").value = c.mode;               // follow/sync
+    // v1.1.x
+    if (qs("#ctlCatalogMode")) qs("#ctlCatalogMode").value = c.mode;
     if (qs("#ctlCatalogFollowSlot")) qs("#ctlCatalogFollowSlot").value = String(c.followSlot);
     if (qs("#ctlCatalogClickCycle")) writeOnOff("#ctlCatalogClickCycle", c.clickCycle);
     if (qs("#ctlCatalogYtCookies")) writeOnOff("#ctlCatalogYtCookies", c.ytCookies);
 
+    // WX
     if (qs("#ctlCatalogWxTiles")) writeOnOff("#ctlCatalogWxTiles", c.wxTiles);
     if (qs("#ctlCatalogWxRefreshSec")) qs("#ctlCatalogWxRefreshSec").value = String(c.wxRefreshSec);
+
+    // 🗳️ NUEVOS (si tu HTML los tiene)
+    if (qs("#ctlCatalogVoteOn")) writeOnOff("#ctlCatalogVoteOn", c.voteEnabled);
+    if (qs("#ctlCatalogVoteWindowSec")) qs("#ctlCatalogVoteWindowSec").value = String(c.voteWindowSec);
+    if (qs("#ctlCatalogVoteEveryMinSec")) qs("#ctlCatalogVoteEveryMinSec").value = String(c.voteEveryMinSec);
+    if (qs("#ctlCatalogVoteEveryMaxSec")) qs("#ctlCatalogVoteEveryMaxSec").value = String(c.voteEveryMaxSec);
+    if (qs("#ctlCatalogVoteAnnounce")) writeOnOff("#ctlCatalogVoteAnnounce", c.voteAnnounce);
+    if (qs("#ctlCatalogVoteAllowNoVotes")) writeOnOff("#ctlCatalogVoteAllowNoVotes", c.voteAllowNoVotes);
 
     setStatus(c.enabled ? "Catálogo: ON" : "Catálogo: OFF", c.enabled);
   }
 
   function collectCfgFromUI() {
-    const base = loadCfg(); // para no “perder” campos si faltan inputs
+    const base = loadCfg();
 
-    // existentes v1.0.1
+    // existentes
     const enabled = readOnOff("#ctlCatalogOn", base.enabled);
     const gapPx = num(qs("#ctlCatalogGap")?.value, base.gapPx);
     const labels = readOnOff("#ctlCatalogLabels", base.labels);
     const muted = readOnOff("#ctlCatalogMuted", base.muted);
 
-    // nuevos (si existen)
+    // v1.1.x
     const modeEl = qs("#ctlCatalogMode");
     const mode = modeEl ? safeStr(modeEl.value).toLowerCase() : base.mode;
 
@@ -206,8 +232,17 @@
     const clickCycle = readOnOff("#ctlCatalogClickCycle", base.clickCycle);
     const ytCookies = readOnOff("#ctlCatalogYtCookies", base.ytCookies);
 
+    // WX
     const wxTiles = readOnOff("#ctlCatalogWxTiles", base.wxTiles);
     const wxRefreshSec = num(qs("#ctlCatalogWxRefreshSec")?.value, base.wxRefreshSec);
+
+    // 🗳️ VOTO (si faltan inputs, no se pierde lo guardado)
+    const voteEnabled = readOnOff("#ctlCatalogVoteOn", base.voteEnabled);
+    const voteWindowSec = num(qs("#ctlCatalogVoteWindowSec")?.value, base.voteWindowSec);
+    const voteEveryMinSec = num(qs("#ctlCatalogVoteEveryMinSec")?.value, base.voteEveryMinSec);
+    const voteEveryMaxSec = num(qs("#ctlCatalogVoteEveryMaxSec")?.value, base.voteEveryMaxSec);
+    const voteAnnounce = readOnOff("#ctlCatalogVoteAnnounce", base.voteAnnounce);
+    const voteAllowNoVotes = readOnOff("#ctlCatalogVoteAllowNoVotes", base.voteAllowNoVotes);
 
     return normalizeCfg({
       enabled,
@@ -222,11 +257,18 @@
       ytCookies,
 
       wxTiles,
-      wxRefreshSec
+      wxRefreshSec,
+
+      voteEnabled,
+      voteWindowSec,
+      voteEveryMinSec,
+      voteEveryMaxSec,
+      voteAnnounce,
+      voteAllowNoVotes
     });
   }
 
-  // ───────────────────────── Debounce (para input events)
+  // ───────────────────────── Debounce
   function debounce(fn, waitMs = 140) {
     let t = null;
     return (...args) => {
@@ -237,10 +279,9 @@
 
   // ───────────────────────── Boot
   function boot() {
-    // Si no existe UI mínima, salimos sin romper
+    // UI mínima
     if (!qs("#ctlCatalogApply") || !qs("#ctlCatalogOn")) return;
 
-    // Guarda/normaliza lo que hubiera
     const saved = saveCfg(loadCfg());
     applyUIFromCfg(saved);
 
@@ -249,24 +290,19 @@
       sendCfg(cfg);
       applyUIFromCfg(cfg);
     };
-
     const doApplyDebounced = debounce(doApply, 160);
 
-    // Botón apply
     qs("#ctlCatalogApply")?.addEventListener("click", doApply);
 
-    // Reset
     qs("#ctlCatalogReset")?.addEventListener("click", () => {
       clearKey(CFG_KEY);
       clearKey(CFG_KEY_LEGACY);
-
-      // opcional: no borramos ping keys, pero da igual
       const cfg = saveCfg(DEFAULTS);
       sendCfg(cfg);
       applyUIFromCfg(cfg);
     });
 
-    // Live apply suave (inputs existentes + nuevos si están)
+    // Live apply
     const live = [
       "#ctlCatalogOn",
       "#ctlCatalogLayout",
@@ -280,24 +316,24 @@
       "#ctlCatalogYtCookies",
 
       "#ctlCatalogWxTiles",
-      "#ctlCatalogWxRefreshSec"
+      "#ctlCatalogWxRefreshSec",
+
+      // 🗳️ nuevos
+      "#ctlCatalogVoteOn",
+      "#ctlCatalogVoteWindowSec",
+      "#ctlCatalogVoteEveryMinSec",
+      "#ctlCatalogVoteEveryMaxSec",
+      "#ctlCatalogVoteAnnounce",
+      "#ctlCatalogVoteAllowNoVotes"
     ];
 
     for (const sel of live) {
       const el = qs(sel);
       if (!el) continue;
-
-      // change (select)
       el.addEventListener("change", doApply);
-
-      // input (range/text)
-      el.addEventListener("input", () => {
-        // en selects no hace falta, pero tampoco molesta
-        doApplyDebounced();
-      });
+      el.addEventListener("input", () => doApplyDebounced());
     }
 
-    // Si otra pestaña cambia config
     window.addEventListener("storage", (e) => {
       if (!e) return;
       if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
@@ -306,7 +342,7 @@
       }
     });
 
-    // Boot sync (muy importante si el player ya está abierto)
+    // Boot sync
     try { setTimeout(() => sendCfg(saved), 120); } catch (_) {
       try { sendCfg(saved); } catch (_) {}
     }

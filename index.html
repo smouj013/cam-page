@@ -1,11 +1,14 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.2.2 (NEWSROOM/BROADCAST + TICKER HARDEN)
+<!-- index.html — Random Live Cams (PLAYER) v2.3.4 (NEWSROOM/BROADCAST + TICKER HARDEN + CATALOG SAFE)
   ✅ Compatible con:
     - styles.css (Neo-Atlas)
     - cams.js, music.js
     - weatherClock.js, newsTicker.js, catalogView.js, app.js
-  ✅ FIX:
-    - Hardening de z-index/layers
-    - NewsTicker a position:fixed (no lo “come” ningún overflow/stacking context)
+  ✅ FIX/HARDEN:
+    - Stacking/layers blindados (isolation + z-index)
+    - NewsTicker SIEMPRE fixed (no lo “come” overflow/stacking context)
+    - Placeholder #rlcCatalog en DOM (catalogView.js puede montarlo sin depender de creación)
+    - Cache-bust opcional por APP_VERSION en assets locales
+    - REPAIR MODE: index.html?repair=1 (limpia SW + caches + storage)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
@@ -15,11 +18,50 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
   <meta name="format-detection" content="telephone=no" />
+  <meta name="robots" content="noindex,nofollow" />
 
   <title>Random Live Cams</title>
-  <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts y ads notice." />
+  <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts, ads notice, ticker y modo catálogo." />
 
-  <link rel="stylesheet" href="./styles.css" />
+  <script>window.APP_VERSION = "2.3.4";</script>
+
+  <!-- ✅ Cache-bust -->
+  <link rel="stylesheet" href="./styles.css?v=2.3.4" />
+
+  <!-- ✅ REPAIR MODE: index.html?repair=1 -->
+  <script>
+    (() => {
+      try {
+        const u = new URL(location.href);
+        if (!u.searchParams.has("repair")) return;
+
+        const go = async () => {
+          try {
+            if ("serviceWorker" in navigator) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map(r => r.unregister()));
+            }
+          } catch (_) {}
+
+          try {
+            if (window.caches && caches.keys) {
+              const keys = await caches.keys();
+              await Promise.all(keys.map(k => caches.delete(k)));
+            }
+          } catch (_) {}
+
+          try { localStorage.clear(); } catch (_) {}
+          try { sessionStorage.clear(); } catch (_) {}
+
+          u.searchParams.delete("repair");
+          u.searchParams.set("v", window.APP_VERSION || "repair");
+          location.replace(u.toString());
+        };
+
+        go();
+      } catch (_) {}
+    })();
+  </script>
 
   <!-- (Opcional) Preconnect: acelera GDELT/MyMemory si los usas -->
   <link rel="preconnect" href="https://api.gdeltproject.org" crossorigin>
@@ -30,18 +72,13 @@
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <script>window.APP_VERSION = "2.2.2";</script>
-
-  <!-- ✅ HARDEN: ticker/layers SIEMPRE visibles por encima -->
+  <!-- ✅ HARDEN: layers + ticker SIEMPRE por encima -->
   <style>
-    /* Asegura stacking ordenado dentro del stage */
-    #stage{
-      isolation: isolate;
-    }
-    #stage .layer{
-      position:absolute;
-      inset:0;
-    }
+    /* Asegura stacking ordenado dentro del stage (evita “come overlays”) */
+    #stage{ isolation: isolate; }
+    #stage .layer{ position:absolute; inset:0; }
+
+    /* Orden base (tu styles.css ya define, pero aquí lo blindamos) */
     #stage .layer-media{ z-index: 1; }
     #fallback{ z-index: 5; }
     #stage .layer-ui{ z-index: 10; }
@@ -54,6 +91,16 @@
       top: var(--rlcTickerTop, 10px) !important;
       z-index: 2147483647 !important;
     }
+
+    /* ✅ Placeholder catálogo (si catalogView.js lo usa, ya lo tiene) */
+    #rlcCatalog{
+      position:absolute;
+      inset:0;
+      z-index: 2; /* encima del media base pero debajo de UI */
+      display:none;
+      pointer-events:none;
+    }
+    #rlcCatalog.on{ display:block; }
   </style>
 
   <!-- ✅ Countdown styles mínimos (el resto ya va en styles.css) -->
@@ -61,8 +108,8 @@
     #rlcCountdown{
       position:absolute;
       z-index: 50;
-      top: calc(12px + var(--ui-top-offset));
-      right: 14px;
+      top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+      right: max(14px, env(safe-area-inset-right));
 
       display:flex;
       flex-direction:column;
@@ -81,6 +128,8 @@
       color: rgba(255,255,255,.94);
       max-width: min(340px, calc(100vw - 24px));
       overflow:hidden;
+
+      pointer-events:none; /* overlay puro */
     }
     #rlcCountdown.hidden{ display:none; }
     #rlcCountdown .lbl{
@@ -108,10 +157,10 @@
       letter-spacing:.02em;
       font-variant-numeric: tabular-nums;
     }
-    #rlcCountdown.tr{ top: calc(12px + var(--ui-top-offset)); right: 14px; left:auto; bottom:auto; }
-    #rlcCountdown.tl{ top: calc(12px + var(--ui-top-offset)); left: 14px; right:auto; bottom:auto; }
-    #rlcCountdown.br{ bottom: 14px; right: 14px; top:auto; left:auto; }
-    #rlcCountdown.bl{ bottom: 14px; left: 14px; top:auto; right:auto; }
+    #rlcCountdown.tr{ top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset)); right: max(14px, env(safe-area-inset-right)); left:auto; bottom:auto; }
+    #rlcCountdown.tl{ top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset)); left: max(14px, env(safe-area-inset-left)); right:auto; bottom:auto; }
+    #rlcCountdown.br{ bottom: max(14px, env(safe-area-inset-bottom)); right: max(14px, env(safe-area-inset-right)); top:auto; left:auto; }
+    #rlcCountdown.bl{ bottom: max(14px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); top:auto; right:auto; }
   </style>
 </head>
 
@@ -120,6 +169,9 @@
     <section id="stage" class="stage" aria-label="Reproductor de cámara">
       <!-- ───────────────────────── Media Layer ───────────────────────── -->
       <div class="layer layer-media" aria-hidden="true">
+        <!-- ✅ Catálogo (CCTV) — placeholder (catalogView.js monta aquí) -->
+        <div id="rlcCatalog" aria-hidden="true"></div>
+
         <!-- YouTube -->
         <iframe
           id="frame"
@@ -259,23 +311,34 @@
       <!-- Audio BGM -->
       <audio id="bgm" preload="auto" crossorigin="anonymous"></audio>
     </section>
+
+    <noscript>
+      <section class="fallback" style="position:fixed; inset:0; z-index:9999">
+        <div class="fallbackCard">
+          <div class="fallbackTitle">JavaScript desactivado</div>
+          <div class="fallbackText">
+            Este reproductor necesita JavaScript para rotar cámaras y mostrar overlays.
+          </div>
+        </div>
+      </section>
+    </noscript>
   </main>
 
   <!-- Base data -->
-  <script defer src="./cams.js"></script>
-  <script defer src="./music.js"></script>
+  <script defer src="./cams.js?v=2.3.4"></script>
+  <script defer src="./music.js?v=2.3.4"></script>
 
   <!-- ✅ Weather + hora local por cam -->
-  <script defer src="./weatherClock.js"></script>
+  <script defer src="./weatherClock.js?v=2.3.4"></script>
 
   <!-- ✅ Ticker de noticias -->
-  <script defer src="./newsTicker.js"></script>
+  <script defer src="./newsTicker.js?v=2.3.4"></script>
 
   <!-- ✅ Catálogo CCTV -->
-  <script defer src="./catalogView.js"></script>
+  <script defer src="./catalogView.js?v=2.3.4"></script>
 
   <!-- Main player logic -->
-  <script defer src="./app.js"></script>
+  <script defer src="./app.js?v=2.3.4"></script>
 
   <!-- ✅ Countdown bootstrap (BC + localStorage + URL params) + hide HUD when catalog ON -->
   <script>
