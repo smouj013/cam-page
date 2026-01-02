@@ -1,15 +1,4 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.4 (NEWSROOM/BROADCAST + TICKER HARDEN + CATALOG SAFE)
-  ✅ Compatible con:
-    - styles.css (Neo-Atlas)
-    - cams.js, music.js
-    - weatherClock.js, newsTicker.js, catalogView.js, app.js
-  ✅ FIX/HARDEN:
-    - Stacking/layers blindados (isolation + z-index)
-    - NewsTicker SIEMPRE fixed (no lo “come” overflow/stacking context)
-    - Placeholder #rlcCatalog en DOM (catalogView.js puede montarlo sin depender de creación)
-    - Cache-bust opcional por APP_VERSION en assets locales
-    - REPAIR MODE: index.html?repair=1 (limpia SW + caches + storage)
--->
+<!-- index.html — Random Live Cams (PLAYER) v2.3.4 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -25,45 +14,39 @@
 
   <script>window.APP_VERSION = "2.3.4";</script>
 
-  <!-- ✅ Cache-bust -->
+  <!-- Cache-bust -->
   <link rel="stylesheet" href="./styles.css?v=2.3.4" />
 
-  <!-- ✅ REPAIR MODE: index.html?repair=1 -->
+  <!-- REPAIR MODE: index.html?repair=1 -->
   <script>
     (() => {
-      try {
+      try{
         const u = new URL(location.href);
-        if (!u.searchParams.has("repair")) return;
-
+        if(!u.searchParams.has("repair")) return;
         const go = async () => {
-          try {
-            if ("serviceWorker" in navigator) {
+          try{
+            if("serviceWorker" in navigator){
               const regs = await navigator.serviceWorker.getRegistrations();
               await Promise.all(regs.map(r => r.unregister()));
             }
-          } catch (_) {}
-
-          try {
-            if (window.caches && caches.keys) {
+          }catch(_){}
+          try{
+            if(window.caches && caches.keys){
               const keys = await caches.keys();
               await Promise.all(keys.map(k => caches.delete(k)));
             }
-          } catch (_) {}
-
-          try { localStorage.clear(); } catch (_) {}
-          try { sessionStorage.clear(); } catch (_) {}
-
+          }catch(_){}
+          try{ localStorage.clear(); }catch(_){}
+          try{ sessionStorage.clear(); }catch(_){}
           u.searchParams.delete("repair");
           u.searchParams.set("v", window.APP_VERSION || "repair");
           location.replace(u.toString());
         };
-
         go();
-      } catch (_) {}
+      }catch(_){}
     })();
   </script>
 
-  <!-- (Opcional) Preconnect: acelera GDELT/MyMemory si los usas -->
   <link rel="preconnect" href="https://api.gdeltproject.org" crossorigin>
   <link rel="preconnect" href="https://api.mymemory.translated.net" crossorigin>
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin>
@@ -72,153 +55,81 @@
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <!-- ✅ HARDEN: layers + ticker SIEMPRE por encima -->
+  <!-- HARDEN: layers + ticker SIEMPRE por encima -->
   <style>
-    /* Asegura stacking ordenado dentro del stage (evita “come overlays”) */
-    #stage{ isolation: isolate; }
-    #stage .layer{ position:absolute; inset:0; }
-
-    /* Orden base (tu styles.css ya define, pero aquí lo blindamos) */
-    #stage .layer-media{ z-index: 1; }
-    #fallback{ z-index: 5; }
-    #stage .layer-ui{ z-index: 10; }
-
-    /* ✅ FIX: el ticker no depende del host/overflow: siempre “en pantalla” */
+    #stage{isolation:isolate}
+    #stage .layer{position:absolute;inset:0}
+    #stage .layer-media{z-index:1}
+    #fallback{z-index:5}
+    #stage .layer-ui{z-index:10}
+    /* ticker fixed fuera de stacking/overflow */
     #rlcNewsTicker{
-      position: fixed !important;
-      left: 10px !important;
-      right: 10px !important;
-      top: var(--rlcTickerTop, 10px) !important;
-      z-index: 2147483647 !important;
+      position:fixed!important;
+      left:10px!important;right:10px!important;
+      top:var(--rlcTickerTop,10px)!important;
+      z-index:2147483647!important;
     }
-
-    /* ✅ Placeholder catálogo (si catalogView.js lo usa, ya lo tiene) */
-    #rlcCatalog{
-      position:absolute;
-      inset:0;
-      z-index: 2; /* encima del media base pero debajo de UI */
-      display:none;
-      pointer-events:none;
-    }
-    #rlcCatalog.on{ display:block; }
-  </style>
-
-  <!-- ✅ Countdown styles mínimos (el resto ya va en styles.css) -->
-  <style>
+    /* placeholder catálogo */
+    #rlcCatalog{position:absolute;inset:0;z-index:2;display:none;pointer-events:none}
+    #rlcCatalog.on{display:block}
+    /* countdown mínimo */
     #rlcCountdown{
-      position:absolute;
-      z-index: 50;
-      top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
-      right: max(14px, env(safe-area-inset-right));
-
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-
-      padding:10px 12px;
-      border-radius:14px;
-
-      background: linear-gradient(180deg, var(--news-bg-top), var(--news-bg-bot));
-      border: 1px solid var(--stroke);
-
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-
-      box-shadow: 0 18px 55px rgba(0,0,0,.55);
-      color: rgba(255,255,255,.94);
-      max-width: min(340px, calc(100vw - 24px));
-      overflow:hidden;
-
-      pointer-events:none; /* overlay puro */
+      position:absolute;z-index:50;
+      top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+      right:max(14px, env(safe-area-inset-right));
+      display:flex;flex-direction:column;gap:6px;
+      padding:10px 12px;border-radius:14px;
+      background:linear-gradient(180deg, var(--news-bg-top), var(--news-bg-bot));
+      border:1px solid var(--stroke);
+      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      box-shadow:0 18px 55px rgba(0,0,0,.55);
+      color:rgba(255,255,255,.94);
+      max-width:min(340px, calc(100vw - 24px));
+      overflow:hidden;pointer-events:none;
     }
-    #rlcCountdown.hidden{ display:none; }
-    #rlcCountdown .lbl{
-      font: 950 12px/1 ui-sans-serif, system-ui;
-      letter-spacing:.14em;
-      opacity: .92;
-      text-transform: uppercase;
-      white-space: nowrap;
-      overflow:hidden;
-      text-overflow: ellipsis;
-      display:flex;
-      align-items:center;
-      gap:8px;
-    }
-    #rlcCountdown .lbl::before{
-      content:"";
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: var(--news-red);
-      box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
-    }
-    #rlcCountdown .time{
-      font: 950 20px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      letter-spacing:.02em;
-      font-variant-numeric: tabular-nums;
-    }
-    #rlcCountdown.tr{ top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset)); right: max(14px, env(safe-area-inset-right)); left:auto; bottom:auto; }
-    #rlcCountdown.tl{ top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset)); left: max(14px, env(safe-area-inset-left)); right:auto; bottom:auto; }
-    #rlcCountdown.br{ bottom: max(14px, env(safe-area-inset-bottom)); right: max(14px, env(safe-area-inset-right)); top:auto; left:auto; }
-    #rlcCountdown.bl{ bottom: max(14px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); top:auto; right:auto; }
+    #rlcCountdown.hidden{display:none}
+    #rlcCountdown .lbl{font:950 12px/1 ui-sans-serif,system-ui;letter-spacing:.14em;opacity:.92;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:8px}
+    #rlcCountdown .lbl::before{content:"";width:8px;height:8px;border-radius:999px;background:var(--news-red);box-shadow:0 0 0 3px rgba(255,55,95,.18),0 0 16px rgba(255,55,95,.45)}
+    #rlcCountdown .time{font:950 20px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+    #rlcCountdown.tr{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));right:max(14px, env(safe-area-inset-right));left:auto;bottom:auto}
+    #rlcCountdown.tl{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));left:max(14px, env(safe-area-inset-left));right:auto;bottom:auto}
+    #rlcCountdown.br{bottom:max(14px, env(safe-area-inset-bottom));right:max(14px, env(safe-area-inset-right));top:auto;left:auto}
+    #rlcCountdown.bl{bottom:max(14px, env(safe-area-inset-bottom));left:max(14px, env(safe-area-inset-left));top:auto;right:auto}
   </style>
 </head>
 
 <body class="mode-player">
   <main id="app" class="app" role="application" aria-label="Random Live Cams">
     <section id="stage" class="stage" aria-label="Reproductor de cámara">
-      <!-- ───────────────────────── Media Layer ───────────────────────── -->
+      <!-- Media Layer -->
       <div class="layer layer-media" aria-hidden="true">
-        <!-- ✅ Catálogo (CCTV) — placeholder (catalogView.js monta aquí) -->
         <div id="rlcCatalog" aria-hidden="true"></div>
 
-        <!-- YouTube -->
-        <iframe
-          id="frame"
-          class="media hidden"
-          title="Live Cam"
+        <iframe id="frame" class="media hidden" title="Live Cam"
           referrerpolicy="strict-origin-when-cross-origin"
           allow="autoplay; encrypted-media; picture-in-picture"
-          allowfullscreen
-        ></iframe>
+          allowfullscreen></iframe>
 
-        <!-- HLS -->
-        <video
-          id="video"
-          class="media hidden"
-          autoplay
-          muted
-          playsinline
-          webkit-playsinline
-        ></video>
-
-        <!-- Imagen -->
+        <video id="video" class="media hidden" autoplay muted playsinline webkit-playsinline></video>
         <img id="img" class="media hidden" alt="Webcam snapshot" />
       </div>
 
-      <!-- ───────────────────────── Fallback Layer ───────────────────────── -->
+      <!-- Fallback -->
       <div id="fallback" class="fallback hidden" role="status" aria-live="polite">
         <div class="fallbackCard">
           <div class="fallbackTitle">No se puede mostrar esta cámara aquí</div>
-          <div class="fallbackText">
-            Puede estar offline o bloquear el embed. Saltando…
-          </div>
+          <div class="fallbackText">Puede estar offline o bloquear el embed. Saltando…</div>
           <a id="fallbackLink" class="btn" href="#" target="_blank" rel="noopener">Ver en origen</a>
         </div>
       </div>
 
-      <!-- ───────────────────────── Overlay Layer ───────────────────────── -->
+      <!-- UI Layer -->
       <div class="layer layer-ui" aria-label="Overlays">
-        <!-- HUD -->
         <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
           <div class="hudBar">
             <div class="hudLeft" id="hudLeft">
               <div class="badge" id="badgeLive">LIVE</div>
-
-              <!-- ✅ Title ticker listo: data-title + data-marquee -->
               <div class="hudTitle" id="hudTitle" data-title="Cargando…" data-marquee="0">Cargando…</div>
-
-              <!-- ✅ WX fijo (styles.css lo deja perfecto) -->
               <div id="rlcHudWx" class="wxOff" aria-live="polite">
                 <span id="rlcHudWxIcon" aria-hidden="true">🌡️</span>
                 <span id="rlcHudWxTemp" class="wxTemp">—°C</span>
@@ -229,26 +140,14 @@
 
             <div class="hudRight">
               <div class="hudCountdown mono" id="hudCountdown">05:00</div>
-              <button
-                id="hudToggle"
-                class="hudToggle"
-                type="button"
-                aria-label="Expandir HUD"
-                aria-expanded="false"
-              >▸</button>
+              <button id="hudToggle" class="hudToggle" type="button" aria-label="Expandir HUD" aria-expanded="false">▸</button>
             </div>
           </div>
 
-          <div class="progress" aria-hidden="true">
-            <div id="progressBar" class="progressBar"></div>
-          </div>
+          <div class="progress" aria-hidden="true"><div id="progressBar" class="progressBar"></div></div>
 
           <div id="hudDetails" class="hudDetails">
-            <div class="hudRow">
-              <div class="hudLabel">Lugar</div>
-              <div class="hudValue" id="hudPlace">—</div>
-            </div>
-
+            <div class="hudRow"><div class="hudLabel">Lugar</div><div class="hudValue" id="hudPlace">—</div></div>
             <div class="hudRow">
               <div class="hudLabel">Fuente</div>
               <div class="hudValue">
@@ -257,58 +156,45 @@
                 <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
               </div>
             </div>
-
             <div class="hudFooter">
               <span id="hudIndex">—</span>
               <span class="dot">•</span>
-              <span class="muted">
-                Espacio pausa · N siguiente · P anterior · H HUD · I detalles · C chat
-              </span>
+              <span class="muted">Espacio pausa · N siguiente · P anterior · H HUD · I detalles · C chat</span>
             </div>
           </div>
         </div>
 
-        <!-- ✅ COUNTDOWN overlay -->
+        <!-- Countdown -->
         <div id="rlcCountdown" class="hidden tr" aria-live="polite">
           <div class="lbl" id="rlcCountdownLabel">FIN DE AÑO</div>
           <div class="time mono" id="rlcCountdownTime">--:--:--</div>
         </div>
 
-        <!-- VOTE overlay -->
+        <!-- Vote -->
         <div id="voteBox" class="vote hidden" aria-label="Votación del chat" aria-live="polite">
           <div class="voteTop">
             <div class="voteTitle">VOTA</div>
             <div class="voteTime mono" id="voteTime">00:20</div>
           </div>
-
           <div class="voteHint" id="voteHint">Votación en…</div>
-
-          <div class="voteBars" aria-hidden="false">
+          <div class="voteBars">
             <div class="voteBar">
               <div class="voteBarFill" id="voteYes"></div>
-              <div class="voteBarLabel">
-                <span>NEXT</span>
-                <span id="voteYesN">0</span>
-              </div>
+              <div class="voteBarLabel"><span>NEXT</span><span id="voteYesN">0</span></div>
             </div>
-
             <div class="voteBar">
               <div class="voteBarFill no" id="voteNo"></div>
-              <div class="voteBarLabel">
-                <span>STAY</span>
-                <span id="voteNoN">0</span>
-              </div>
+              <div class="voteBarLabel"><span>STAY</span><span id="voteNoN">0</span></div>
             </div>
           </div>
         </div>
 
-        <!-- Chat overlay -->
+        <!-- Chat -->
         <div id="rlcChatRoot" class="rlcChatRoot" aria-label="Chat overlay" aria-live="polite">
           <div id="rlcChatList"></div>
         </div>
       </div>
 
-      <!-- Audio BGM -->
       <audio id="bgm" preload="auto" crossorigin="anonymous"></audio>
     </section>
 
@@ -316,281 +202,174 @@
       <section class="fallback" style="position:fixed; inset:0; z-index:9999">
         <div class="fallbackCard">
           <div class="fallbackTitle">JavaScript desactivado</div>
-          <div class="fallbackText">
-            Este reproductor necesita JavaScript para rotar cámaras y mostrar overlays.
-          </div>
+          <div class="fallbackText">Este reproductor necesita JavaScript para rotar cámaras y mostrar overlays.</div>
         </div>
       </section>
     </noscript>
   </main>
 
-  <!-- Base data -->
+  <!-- ✅ Ticker root (evita stacking contexts raros) -->
+  <div id="rlcNewsTicker" aria-label="News ticker" aria-live="polite"></div>
+
+  <!-- Data -->
   <script defer src="./cams.js?v=2.3.4"></script>
   <script defer src="./music.js?v=2.3.4"></script>
 
-  <!-- ✅ Weather + hora local por cam -->
+  <!-- Weather + hora -->
   <script defer src="./weatherClock.js?v=2.3.4"></script>
 
-  <!-- ✅ Ticker de noticias -->
+  <!-- News ticker -->
   <script defer src="./newsTicker.js?v=2.3.4"></script>
-  
-  <script src="./econTicker.js"></script>
 
-  <!-- ✅ Catálogo CCTV -->
+  <!-- ✅ Econ ticker (FIX: defer + cache-bust) -->
+  <script defer src="./econTicker.js?v=2.3.4"></script>
+
+  <!-- Catálogo CCTV -->
   <script defer src="./catalogView.js?v=2.3.4"></script>
 
-  <!-- Main player logic -->
+  <!-- Main player -->
   <script defer src="./app.js?v=2.3.4"></script>
 
-  <!-- ✅ Countdown bootstrap (BC + localStorage + URL params) + hide HUD when catalog ON -->
+  <!-- Countdown bootstrap -->
   <script>
     (() => {
       "use strict";
+      const g=(typeof globalThis!=="undefined")?globalThis:window;
+      const LOAD_GUARD="__RLC_COUNTDOWN_BOOT_V110";
+      try{if(g[LOAD_GUARD]) return; g[LOAD_GUARD]=true;}catch(_){}
+      const BUS_BASE="rlc_bus_v1", CD_KEY_BASE="rlc_countdown_cfg_v1";
+      const qs=(s,r=document)=>r.querySelector(s);
+      const safeStr=(v)=>(typeof v==="string")?v.trim():"";
 
-      const g = (typeof globalThis !== "undefined") ? globalThis : window;
-      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V110";
-      try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
-
-      const BUS_BASE = "rlc_bus_v1";
-      const CD_KEY_BASE = "rlc_countdown_cfg_v1";
-
-      const qs = (s, r=document) => r.querySelector(s);
-      const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
-
-      function parseParams() {
-        const u = new URL(location.href);
-
-        const countdown = safeStr(u.searchParams.get("countdown") || "");
-        const key = safeStr(u.searchParams.get("key") || "");
-
-        const toA = safeStr(u.searchParams.get("countdownTo") || "");
-        const toB = safeStr(u.searchParams.get("countTo") || "");
-        const labelA = safeStr(u.searchParams.get("countdownLabel") || "");
-        const labelB = safeStr(u.searchParams.get("countLabel") || "");
-        const posA = safeStr(u.searchParams.get("countdownPos") || "");
-        const posB = safeStr(u.searchParams.get("countPos") || "");
-
-        return {
-          key,
-          countdown,
-          countdownTo: toA || toB,
-          countdownLabel: labelA || labelB,
-          countdownPos: posA || posB
-        };
+      function parseParams(){
+        const u=new URL(location.href);
+        const countdown=safeStr(u.searchParams.get("countdown")||"");
+        const key=safeStr(u.searchParams.get("key")||"");
+        const toA=safeStr(u.searchParams.get("countdownTo")||"");
+        const toB=safeStr(u.searchParams.get("countTo")||"");
+        const labelA=safeStr(u.searchParams.get("countdownLabel")||"");
+        const labelB=safeStr(u.searchParams.get("countLabel")||"");
+        const posA=safeStr(u.searchParams.get("countdownPos")||"");
+        const posB=safeStr(u.searchParams.get("countPos")||"");
+        return {key,countdown,countdownTo:toA||toB,countdownLabel:labelA||labelB,countdownPos:posA||posB};
       }
+      const P=parseParams();
+      const KEY=P.key;
+      const BUS=KEY?`${BUS_BASE}:${KEY}`:BUS_BASE;
+      const BUS_LEGACY=BUS_BASE;
+      const CD_KEY=KEY?`${CD_KEY_BASE}:${KEY}`:CD_KEY_BASE;
+      const CD_KEY_LEGACY=CD_KEY_BASE;
 
-      const P = parseParams();
-      const KEY = P.key;
+      const bcMain=("BroadcastChannel" in window)?new BroadcastChannel(BUS):null;
+      const bcLegacy=(("BroadcastChannel" in window)&&KEY)?new BroadcastChannel(BUS_LEGACY):null;
 
-      const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-      const BUS_LEGACY = BUS_BASE;
+      function keyOk(msg,isMain){if(!KEY) return true; if(isMain) return true; return (msg&&msg.key===KEY);}
 
-      const CD_KEY = KEY ? `${CD_KEY_BASE}:${KEY}` : CD_KEY_BASE;
-      const CD_KEY_LEGACY = CD_KEY_BASE;
+      const DEFAULTS={enabled:false,label:"FIN DE AÑO",targetMs:0,targetIso:"",position:"tr",hideHudWhenCatalog:true};
 
-      const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-      const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-
-      function keyOk(msg, isMainChannel) {
-        if (!KEY) return true;
-        if (isMainChannel) return true;
-        return (msg && msg.key === KEY);
+      function readJson(key){
+        try{const raw=localStorage.getItem(key); if(!raw) return null; const obj=JSON.parse(raw);
+          return (obj&&typeof obj==="object")?obj:null;
+        }catch(_){return null}
       }
-
-      const DEFAULTS = {
-        enabled: false,
-        label: "FIN DE AÑO",
-        targetMs: 0,
-        targetIso: "",
-        position: "tr",
-        hideHudWhenCatalog: true
-      };
-
-      function readJson(key) {
-        try {
-          const raw = localStorage.getItem(key);
-          if (!raw) return null;
-          const obj = JSON.parse(raw);
-          return (obj && typeof obj === "object") ? obj : null;
-        } catch (_) { return null; }
-      }
-
-      function normalizeCfg(inCfg) {
-        const c = Object.assign({}, DEFAULTS, inCfg || {});
-        c.enabled = (c.enabled === true);
-
-        c.label = safeStr(c.label || DEFAULTS.label).slice(0, 60) || DEFAULTS.label;
-
-        c.position = (c.position === "tl" || c.position === "tr" || c.position === "bl" || c.position === "br")
-          ? c.position : "tr";
-
-        c.hideHudWhenCatalog = (c.hideHudWhenCatalog !== false);
-
-        const ms = (typeof c.targetMs === "number") ? c.targetMs : parseInt(String(c.targetMs || "0"), 10);
-        c.targetMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
-
-        c.targetIso = safeStr(c.targetIso || "");
-
-        if (!c.targetMs && safeStr(c.targetIso).match(/^\d{10,13}$/)) {
-          const n = parseInt(c.targetIso, 10);
-          if (Number.isFinite(n)) c.targetMs = (String(n).length === 10) ? (n * 1000) : n;
-          c.targetIso = "";
+      function normalizeCfg(inCfg){
+        const c=Object.assign({},DEFAULTS,inCfg||{});
+        c.enabled=(c.enabled===true);
+        c.label=safeStr(c.label||DEFAULTS.label).slice(0,60)||DEFAULTS.label;
+        c.position=(c.position==="tl"||c.position==="tr"||c.position==="bl"||c.position==="br")?c.position:"tr";
+        c.hideHudWhenCatalog=(c.hideHudWhenCatalog!==false);
+        const ms=(typeof c.targetMs==="number")?c.targetMs:parseInt(String(c.targetMs||"0"),10);
+        c.targetMs=Number.isFinite(ms)?Math.max(0,ms):0;
+        c.targetIso=safeStr(c.targetIso||"");
+        if(!c.targetMs && safeStr(c.targetIso).match(/^\d{10,13}$/)){
+          const n=parseInt(c.targetIso,10);
+          if(Number.isFinite(n)) c.targetMs=(String(n).length===10)?(n*1000):n;
+          c.targetIso="";
         }
-
         return c;
       }
-
-      function cfgFromUrlParams() {
-        const on = (P.countdown === "1" || P.countdown === "true");
-        if (!on && !P.countdownTo && !P.countdownLabel) return null;
-
-        let targetMs = 0;
-        const rawTo = safeStr(P.countdownTo || "");
-        if (rawTo) {
-          if (/^\d{10,13}$/.test(rawTo)) {
-            const n = parseInt(rawTo, 10);
-            if (Number.isFinite(n)) targetMs = (String(n).length === 10) ? (n * 1000) : n;
-          } else {
-            const d = new Date(rawTo);
-            const ms = d.getTime();
-            if (Number.isFinite(ms) && ms > 0) targetMs = ms;
+      function cfgFromUrlParams(){
+        const on=(P.countdown==="1"||P.countdown==="true");
+        if(!on && !P.countdownTo && !P.countdownLabel) return null;
+        let targetMs=0;
+        const rawTo=safeStr(P.countdownTo||"");
+        if(rawTo){
+          if(/^\d{10,13}$/.test(rawTo)){
+            const n=parseInt(rawTo,10);
+            if(Number.isFinite(n)) targetMs=(String(n).length===10)?(n*1000):n;
+          }else{
+            const d=new Date(rawTo);const ms=d.getTime();
+            if(Number.isFinite(ms)&&ms>0) targetMs=ms;
           }
         }
-
-        return normalizeCfg({
-          enabled: on || !!targetMs,
-          label: P.countdownLabel || DEFAULTS.label,
-          targetMs,
-          position: P.countdownPos || "tr"
-        });
+        return normalizeCfg({enabled:on||!!targetMs,label:P.countdownLabel||DEFAULTS.label,targetMs,position:P.countdownPos||"tr"});
       }
-
-      function loadCfg() {
-        const stored = readJson(CD_KEY) || readJson(CD_KEY_LEGACY);
-        const urlCfg = cfgFromUrlParams();
-        return normalizeCfg(stored || urlCfg || DEFAULTS);
+      function loadCfg(){
+        const stored=readJson(CD_KEY)||readJson(CD_KEY_LEGACY);
+        const urlCfg=cfgFromUrlParams();
+        return normalizeCfg(stored||urlCfg||DEFAULTS);
       }
+      let CFG=loadCfg();
+      const root=qs("#rlcCountdown"), elLbl=qs("#rlcCountdownLabel"), elTime=qs("#rlcCountdownTime"), hud=qs("#hud");
+      function setPos(pos){if(!root) return; root.classList.remove("tr","tl","br","bl"); root.classList.add(pos||"tr");}
+      function show(on){if(!root) return; root.classList.toggle("hidden",!on);}
+      function nextNewYearLocalMs(){try{const now=new Date();const y=now.getFullYear()+1;return new Date(y,0,1,0,0,0,0).getTime();}catch(_){return 0}}
+      let targetMs=0;
 
-      let CFG = loadCfg();
-
-      const root = qs("#rlcCountdown");
-      const elLbl = qs("#rlcCountdownLabel");
-      const elTime = qs("#rlcCountdownTime");
-      const hud = qs("#hud");
-
-      function setPos(pos) {
-        if (!root) return;
-        root.classList.remove("tr","tl","br","bl");
-        root.classList.add(pos || "tr");
-      }
-
-      function show(on) {
-        if (!root) return;
-        root.classList.toggle("hidden", !on);
-      }
-
-      function nextNewYearLocalMs() {
-        try {
-          const now = new Date();
-          const y = now.getFullYear() + 1;
-          return new Date(y, 0, 1, 0, 0, 0, 0).getTime();
-        } catch (_) { return 0; }
-      }
-
-      let targetMs = 0;
-
-      function applyCfg(cfg) {
-        CFG = normalizeCfg(cfg);
-
-        if (elLbl) elLbl.textContent = CFG.label || DEFAULTS.label;
-        setPos(CFG.position || "tr");
-
-        targetMs = CFG.targetMs || 0;
-
-        if (!targetMs && CFG.targetIso) {
-          const d = new Date(CFG.targetIso);
-          const ms = d.getTime();
-          if (Number.isFinite(ms) && ms > 0) targetMs = ms;
+      function applyCfg(cfg){
+        CFG=normalizeCfg(cfg);
+        if(elLbl) elLbl.textContent=CFG.label||DEFAULTS.label;
+        setPos(CFG.position||"tr");
+        targetMs=CFG.targetMs||0;
+        if(!targetMs && CFG.targetIso){
+          const d=new Date(CFG.targetIso);const ms=d.getTime();
+          if(Number.isFinite(ms)&&ms>0) targetMs=ms;
         }
-
-        if (!targetMs && CFG.enabled) targetMs = nextNewYearLocalMs();
-
-        show(!!(CFG.enabled && targetMs > 0));
+        if(!targetMs && CFG.enabled) targetMs=nextNewYearLocalMs();
+        show(!!(CFG.enabled && targetMs>0));
       }
-
-      function fmtRemain(ms) {
-        ms = Math.max(0, ms|0);
-        const sec = (ms / 1000) | 0;
-        const d = (sec / 86400) | 0;
-        const h = ((sec % 86400) / 3600) | 0;
-        const m = ((sec % 3600) / 60) | 0;
-        const s = sec % 60;
-        const pad = (n) => String(n).padStart(2,"0");
-        if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
+      function fmtRemain(ms){
+        ms=Math.max(0,ms|0);
+        const sec=(ms/1000)|0;
+        const d=(sec/86400)|0;
+        const h=((sec%86400)/3600)|0;
+        const m=((sec%3600)/60)|0;
+        const s=sec%60;
+        const pad=(n)=>String(n).padStart(2,"0");
+        if(d>0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
         return `${pad(h)}:${pad(m)}:${pad(s)}`;
       }
-
-      function isCatalogOn() {
-        const c = qs("#rlcCatalog");
-        return !!(c && c.classList.contains("on"));
-      }
-
-      function tick() {
-        try {
-          if (hud && CFG.hideHudWhenCatalog) {
-            hud.style.display = isCatalogOn() ? "none" : "";
-          }
-        } catch (_) {}
-
-        if (!root || root.classList.contains("hidden")) return;
-        if (!targetMs) return;
-
-        const ms = targetMs - Date.now();
-
-        if (ms <= 0) {
-          if (elTime) elTime.textContent = "🎉 00:00:00";
-          if (elLbl) elLbl.textContent = "FELIZ AÑO NUEVO";
+      function isCatalogOn(){const c=qs("#rlcCatalog");return !!(c && c.classList.contains("on"));}
+      function tick(){
+        try{if(hud && CFG.hideHudWhenCatalog){hud.style.display=isCatalogOn()?"none":"";}}catch(_){}
+        if(!root || root.classList.contains("hidden")) return;
+        if(!targetMs) return;
+        const ms=targetMs-Date.now();
+        if(ms<=0){
+          if(elTime) elTime.textContent="🎉 00:00:00";
+          if(elLbl) elLbl.textContent="FELIZ AÑO NUEVO";
           return;
         }
-
-        if (elTime) elTime.textContent = fmtRemain(ms);
+        if(elTime) elTime.textContent=fmtRemain(ms);
       }
-
-      function onBusMessage(msg, isMain) {
-        if (!msg || typeof msg !== "object") return;
-
-        if (msg.type === "COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg === "object") {
-          if (!keyOk(msg, isMain)) return;
-          applyCfg(msg.cfg);
-          return;
+      function onBusMessage(msg,isMain){
+        if(!msg||typeof msg!=="object") return;
+        if(msg.type==="COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg==="object"){
+          if(!keyOk(msg,isMain)) return;
+          applyCfg(msg.cfg);return;
         }
-
-        if (msg.type === "cmd" && msg.cmd === "COUNTDOWN_SET" && msg.payload && typeof msg.payload === "object") {
-          if (!keyOk(msg, isMain)) return;
-          applyCfg(msg.payload);
-          return;
+        if(msg.type==="cmd" && msg.cmd==="COUNTDOWN_SET" && msg.payload && typeof msg.payload==="object"){
+          if(!keyOk(msg,isMain)) return;
+          applyCfg(msg.payload);return;
         }
       }
+      if(bcMain) bcMain.onmessage=(ev)=>onBusMessage(ev?.data,true);
+      if(bcLegacy) bcLegacy.onmessage=(ev)=>onBusMessage(ev?.data,false);
+      window.addEventListener("storage",(e)=>{if(!e||!e.key) return; if(e.key===CD_KEY||e.key===CD_KEY_LEGACY) applyCfg(loadCfg());});
 
-      if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
-      if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
-
-      window.addEventListener("storage", (e) => {
-        if (!e || !e.key) return;
-        if (e.key === CD_KEY || e.key === CD_KEY_LEGACY) applyCfg(loadCfg());
-      });
-
-      function boot() {
-        applyCfg(loadCfg());
-        tick();
-        setInterval(tick, 250);
-      }
-
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", boot, { once: true });
-      } else {
-        boot();
-      }
+      function boot(){applyCfg(loadCfg());tick();setInterval(tick,250);}
+      if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot,{once:true});
+      else boot();
     })();
   </script>
 </body>

@@ -1,3 +1,4 @@
+<!-- control.html — Random Live Cams (CONTROL) v2.3.4 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -9,284 +10,121 @@
   <meta name="robots" content="noindex,nofollow" />
 
   <title>Random Live Cams — Control</title>
+  <meta name="description" content="Random Live Cams — Control Room (votación, overlays, ticker, catálogo CCTV, ads notice, bot IRC, auto título Helix)." />
 
   <script>window.APP_VERSION = "2.3.4";</script>
 
-  <!-- ✅ Cache-bust -->
+  <!-- Cache-bust -->
   <link rel="stylesheet" href="./styles.css?v=2.3.4" />
 
-  <!-- ✅ REPAIR MODE: control.html?repair=1 -->
+  <!-- REPAIR MODE: control.html?repair=1 -->
   <script>
     (() => {
-      try {
+      try{
         const u = new URL(location.href);
-        if (!u.searchParams.has("repair")) return;
-
+        if(!u.searchParams.has("repair")) return;
         const go = async () => {
-          try {
-            if ("serviceWorker" in navigator) {
+          try{
+            if("serviceWorker" in navigator){
               const regs = await navigator.serviceWorker.getRegistrations();
               await Promise.all(regs.map(r => r.unregister()));
             }
-          } catch (_) {}
-
-          try {
-            if (window.caches && caches.keys) {
+          }catch(_){}
+          try{
+            if(window.caches && caches.keys){
               const keys = await caches.keys();
               await Promise.all(keys.map(k => caches.delete(k)));
             }
-          } catch (_) {}
-
-          try { localStorage.clear(); } catch (_) {}
-          try { sessionStorage.clear(); } catch (_) {}
-
+          }catch(_){}
+          try{ localStorage.clear(); }catch(_){}
+          try{ sessionStorage.clear(); }catch(_){}
           u.searchParams.delete("repair");
           u.searchParams.set("v", window.APP_VERSION || "repair");
           location.replace(u.toString());
         };
-
         go();
-      } catch (_) {}
+      }catch(_){}
     })();
   </script>
 
-  <!-- ✅ Newsroom Skin (solo control.html) -->
+  <!-- Newsroom Skin (solo control.html) -->
   <style>
     :root{
-      --news-bg0:#05060b;
-      --news-bg1:#070b14;
-      --news-bg2:#0a1528;
-
-      --news-panel: rgba(10,14,22,.72);
-      --news-panel2: rgba(10,14,22,.86);
-
-      --news-stroke: rgba(255,255,255,.10);
-      --news-stroke2: rgba(255,255,255,.16);
-
-      --news-text: rgba(255,255,255,.92);
-      --news-muted: rgba(255,255,255,.64);
-
-      --news-accent: #ff3b3b;
-      --news-accent2:#37d6ff;
-      --news-ok:#19e28a;
-      --news-bad:#ff5a5a;
-
-      --news-glow: 0 18px 60px rgba(0,0,0,.55);
-      --news-radius: 16px;
+      --news-bg0:#05060b;--news-bg1:#070b14;--news-bg2:#0a1528;
+      --news-panel:rgba(10,14,22,.72);--news-panel2:rgba(10,14,22,.86);
+      --news-stroke:rgba(255,255,255,.10);--news-stroke2:rgba(255,255,255,.16);
+      --news-text:rgba(255,255,255,.92);--news-muted:rgba(255,255,255,.64);
+      --news-accent:#ff3b3b;--news-accent2:#37d6ff;--news-ok:#19e28a;--news-bad:#ff5a5a;
+      --news-glow:0 18px 60px rgba(0,0,0,.55);--news-radius:16px;
     }
-
     body.mode-control{
       background:
         radial-gradient(1200px 900px at 20% 0%, rgba(55,214,255,.14), transparent 55%),
         radial-gradient(900px 700px at 85% 15%, rgba(255,59,59,.10), transparent 55%),
-        linear-gradient(180deg, var(--news-bg0), var(--news-bg1) 35%, var(--news-bg2));
-      color: var(--news-text);
-      overflow-x: hidden;
+        linear-gradient(180deg,var(--news-bg0),var(--news-bg1) 35%,var(--news-bg2));
+      color:var(--news-text);overflow-x:hidden;
     }
-
-    /* Backplates (muy sutil) */
     body.mode-control::before{
-      content:"";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 0;
-      opacity: .75;
+      content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.75;
       background:
         radial-gradient(900px 700px at 50% 40%, rgba(0,0,0,.20), rgba(0,0,0,.72)),
-        repeating-linear-gradient(0deg,
-          rgba(255,255,255,.05) 0 1px,
-          rgba(255,255,255,0) 1px 3px
-        ),
-        linear-gradient(90deg,
-          rgba(55,214,255,.08), transparent 35%,
-          rgba(255,59,59,.07)
-        );
-      mix-blend-mode: screen;
+        repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0 1px, rgba(255,255,255,0) 1px 3px),
+        linear-gradient(90deg, rgba(55,214,255,.08), transparent 35%, rgba(255,59,59,.07));
+      mix-blend-mode:screen;
     }
-
     body.mode-control::after{
-      content:"";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 0;
-      opacity: .20;
-      background:
-        repeating-linear-gradient(90deg,
-          rgba(255,255,255,.05) 0 1px,
-          rgba(255,255,255,0) 1px 18px
-        );
-      filter: blur(.2px);
-      transform: translateZ(0);
-      animation: rlcGridDrift 12s linear infinite;
+      content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.20;
+      background:repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, rgba(255,255,255,0) 1px 18px);
+      filter:blur(.2px);transform:translateZ(0);animation:rlcGridDrift 12s linear infinite;
     }
-
-    @keyframes rlcGridDrift{
-      from { transform: translate3d(0,0,0); }
-      to   { transform: translate3d(-18px,0,0); }
-    }
-
-    @media (prefers-reduced-motion: reduce){
-      body.mode-control::after{ animation: none; }
-    }
-
-    /* Fallback si no hay blend */
-    @supports not (mix-blend-mode: screen){
-      body.mode-control::before{ mix-blend-mode: normal; opacity: .28; }
-    }
-
-    .controlWrap{ position: relative; z-index: 1; }
-
-    /* Header sticky bien “broadcast” */
+    @keyframes rlcGridDrift{from{transform:translate3d(0,0,0)}to{transform:translate3d(-18px,0,0)}}
+    @media (prefers-reduced-motion: reduce){body.mode-control::after{animation:none}}
+    @supports not (mix-blend-mode: screen){body.mode-control::before{mix-blend-mode:normal;opacity:.28}}
+    .controlWrap{position:relative;z-index:1}
     .controlHeader{
-      position: sticky;
-      top: 0;
-      z-index: 5;
-
-      background:
-        linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
-      border: 1px solid var(--news-stroke);
-      box-shadow: var(--news-glow);
-
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-
-      border-radius: var(--news-radius);
-      overflow: hidden;
-
-      /* Asegura padding aunque el base lo cambie */
-      padding: 14px 14px 12px;
-      margin-bottom: 14px;
+      position:sticky;top:0;z-index:5;
+      background:linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
+      border:1px solid var(--news-stroke);box-shadow:var(--news-glow);
+      backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      border-radius:var(--news-radius);overflow:hidden;
+      padding:14px 14px 12px;margin-bottom:14px;
     }
-
-    /* Si tu styles base mete una línea “after” debajo, aquí la hacemos elegante */
-    .controlHeader::after{
-      content:"";
-      position:absolute;
-      left:0; right:0; bottom:0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(55,214,255,.45), rgba(255,59,59,.40), transparent);
-      opacity: .65;
-    }
-
+    .controlHeader::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+      background:linear-gradient(90deg, transparent, rgba(55,214,255,.45), rgba(255,59,59,.40), transparent);opacity:.65;}
     .controlHeader::before{
-      content:"LIVE • CONTROL ROOM";
-      position:absolute;
-      top: 10px;
-      right: 12px;
-      font: 950 11px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      letter-spacing: .14em;
-      color: rgba(255,255,255,.92);
-      background: rgba(255,59,59,.18);
-      border: 1px solid rgba(255,59,59,.35);
-      padding: 6px 10px;
-      border-radius: 999px;
+      content:"LIVE • CONTROL ROOM";position:absolute;top:10px;right:12px;
+      font:950 11px/1 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      letter-spacing:.14em;color:rgba(255,255,255,.92);
+      background:rgba(255,59,59,.18);border:1px solid rgba(255,59,59,.35);
+      padding:6px 10px;border-radius:999px;
     }
-
-    .controlTitle .kicker{ color: rgba(255,255,255,.75); letter-spacing: .26em; }
-    .controlTitle .name{ text-transform: uppercase; letter-spacing: .06em; }
-
-    /* Cards: estilo “panel de realización” */
-    .card{
-      background: var(--news-panel);
-      border: 1px solid var(--news-stroke);
-      border-radius: var(--news-radius);
-      box-shadow: var(--news-glow);
-      position: relative;
-      overflow: hidden;
-    }
-    .card::before{
-      content:"";
-      position:absolute;
-      left:0; right:0; top:0;
-      height: 3px;
-      background: linear-gradient(90deg, rgba(255,59,59,.85), rgba(55,214,255,.85));
-      opacity: .80;
-    }
-    .cardTitle{
-      font-weight: 950;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      color: rgba(255,255,255,.86);
-    }
-
-    .pill{
-      border: 1px solid var(--news-stroke2) !important;
-      background: rgba(0,0,0,.28) !important;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-    }
-    .pill--ok{
-      border-color: rgba(25,226,138,.35) !important;
-      box-shadow: 0 0 0 1px rgba(25,226,138,.12) inset;
-    }
-    .pill--bad{
-      border-color: rgba(255,90,90,.40) !important;
-      box-shadow: 0 0 0 1px rgba(255,90,90,.12) inset;
-    }
-
-    .btn{
-      border-radius: 14px !important;
-      border: 1px solid rgba(255,255,255,.14) !important;
-      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06)) !important;
-      box-shadow: 0 10px 30px rgba(0,0,0,.30);
-    }
-    .btn.ghost{
-      background: rgba(0,0,0,.18) !important;
-      border-color: rgba(255,255,255,.12) !important;
-    }
-    .btn:hover{
-      transform: translateY(-1px);
-      border-color: rgba(55,214,255,.25) !important;
-      box-shadow: 0 14px 36px rgba(0,0,0,.38), 0 0 0 1px rgba(55,214,255,.08) inset;
-    }
-
-    .input, .select{
-      border-radius: 14px !important;
-      border: 1px solid rgba(255,255,255,.14) !important;
-      background: rgba(0,0,0,.18) !important;
-      color: rgba(255,255,255,.92) !important;
-    }
-    .hint{ color: var(--news-muted); }
-
-    /* Select grande (lista cams) más usable */
-    #ctlSelect.select{
-      padding: 8px !important;
-      border-radius: 14px !important;
-      height: auto;
-      max-height: 360px;
-      overflow: auto;
-    }
-    #ctlSelect option{
-      padding: 8px 10px;
-      border-radius: 10px;
-    }
-    #ctlSelect option:checked{
-      background: rgba(55,214,255,.22);
-    }
-
-    /* Diagnóstico: pre con “panel” */
-    #ctlDiagCard pre{
-      border: 1px solid rgba(255,255,255,.12);
-      background: rgba(0,0,0,.22);
-      border-radius: 12px;
-      padding: 10px 12px;
-    }
-
-    /* ✅ FIX CLAVE: si tu styles.css oculta .full, aquí lo forzamos */
-    .btn.full{
-      display: block !important;
-      width: 100% !important;
-    }
-
-    /* Fallback si no hay blur */
+    .controlTitle .kicker{color:rgba(255,255,255,.75);letter-spacing:.26em}
+    .controlTitle .name{text-transform:uppercase;letter-spacing:.06em}
+    .card{background:var(--news-panel);border:1px solid var(--news-stroke);border-radius:var(--news-radius);
+      box-shadow:var(--news-glow);position:relative;overflow:hidden}
+    .card::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;
+      background:linear-gradient(90deg, rgba(255,59,59,.85), rgba(55,214,255,.85));opacity:.80}
+    .cardTitle{font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.86)}
+    .pill{border:1px solid var(--news-stroke2)!important;background:rgba(0,0,0,.28)!important;
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+    .pill--ok{border-color:rgba(25,226,138,.35)!important;box-shadow:0 0 0 1px rgba(25,226,138,.12) inset}
+    .pill--bad{border-color:rgba(255,90,90,.40)!important;box-shadow:0 0 0 1px rgba(255,90,90,.12) inset}
+    .btn{border-radius:14px!important;border:1px solid rgba(255,255,255,.14)!important;
+      background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06))!important;
+      box-shadow:0 10px 30px rgba(0,0,0,.30)}
+    .btn.ghost{background:rgba(0,0,0,.18)!important;border-color:rgba(255,255,255,.12)!important}
+    .btn:hover{transform:translateY(-1px);border-color:rgba(55,214,255,.25)!important;
+      box-shadow:0 14px 36px rgba(0,0,0,.38),0 0 0 1px rgba(55,214,255,.08) inset}
+    .input,.select{border-radius:14px!important;border:1px solid rgba(255,255,255,.14)!important;
+      background:rgba(0,0,0,.18)!important;color:rgba(255,255,255,.92)!important}
+    .hint{color:var(--news-muted)}
+    #ctlSelect.select{padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto}
+    #ctlSelect option{padding:8px 10px;border-radius:10px}
+    #ctlSelect option:checked{background:rgba(55,214,255,.22)}
+    #ctlDiagCard pre{border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.22);border-radius:12px;padding:10px 12px}
+    .btn.full{display:block!important;width:100%!important}
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-      .controlHeader, .pill{
-        backdrop-filter: none !important;
-        -webkit-backdrop-filter: none !important;
-        background: rgba(10,14,22,.92) !important;
-      }
+      .controlHeader,.pill{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(10,14,22,.92)!important}
     }
   </style>
 </head>
@@ -301,16 +139,12 @@
       <div class="pill mono" id="ctlStatus" aria-live="polite">Conectando…</div>
     </header>
 
-    <!-- ✅ DIAGNÓSTICO EN PANTALLA -->
+    <!-- DIAGNÓSTICO EN PANTALLA -->
     <section id="ctlDiagCard" class="card" style="display:none; margin-top:12px">
       <div class="cardTitle">Diagnóstico</div>
-      <div class="hint" style="margin:10px 0 8px">
-        Se detectó un error JS. Copia este texto y pégamelo.
-      </div>
+      <div class="hint" style="margin:10px 0 8px">Se detectó un error JS. Copia este texto y pégamelo.</div>
       <pre id="ctlDiagText" class="mono" style="white-space:pre-wrap; margin:0; opacity:.92"></pre>
-      <div class="hint" style="margin-top:10px">
-        Tip: prueba <b>control.html?repair=1</b> para limpiar cachés.
-      </div>
+      <div class="hint" style="margin-top:10px">Tip: prueba <b>control.html?repair=1</b> para limpiar cachés.</div>
     </section>
 
     <section class="controlGrid" aria-label="Panel de control">
@@ -343,7 +177,6 @@
       <!-- AJUSTES -->
       <div class="card">
         <div class="cardTitle">Ajustes</div>
-
         <label class="row" for="ctlMins">
           <span>Duración (min)</span>
           <input id="ctlMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
@@ -394,10 +227,9 @@
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
-      <!-- ✅ CATALOG MODE (4 cams) -->
+      <!-- CATALOG MODE -->
       <div class="card">
         <div class="cardTitle">Modo catálogo (CCTV)</div>
-
         <div class="row2">
           <label class="row" style="margin:0" for="ctlCatalogOn">
             <span>Catálogo</span>
@@ -441,10 +273,7 @@
           <label class="row" style="margin:0" for="ctlCatalogFollowSlot">
             <span>Follow slot</span>
             <select id="ctlCatalogFollowSlot" class="select">
-              <option value="0">Slot 1</option>
-              <option value="1">Slot 2</option>
-              <option value="2">Slot 3</option>
-              <option value="3">Slot 4</option>
+              <option value="0">Slot 1</option><option value="1">Slot 2</option><option value="2">Slot 3</option><option value="3">Slot 4</option>
             </select>
           </label>
         </div>
@@ -469,10 +298,7 @@
         <div class="row2">
           <label class="row" style="margin:0" for="ctlCatalogWxTiles">
             <span>Weather tiles</span>
-            <select id="ctlCatalogWxTiles" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
+            <select id="ctlCatalogWxTiles" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
           </label>
           <label class="row" style="margin:0" for="ctlCatalogWxRefreshSec">
             <span>WX refresh (s)</span>
@@ -482,10 +308,7 @@
 
         <label class="row" for="ctlCatalogMuted">
           <span>Mutear vídeos</span>
-          <select id="ctlCatalogMuted" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
+          <select id="ctlCatalogMuted" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
 
         <div class="row2">
@@ -493,33 +316,23 @@
           <button id="ctlCatalogReset" class="btn ghost full" type="button">Reset catálogo</button>
         </div>
 
-        <div class="hint">
-          ✅ Muestra 4 cams (CCTV). En player, el HUD de single-cam se oculta cuando catálogo está ON.
-        </div>
+        <div class="hint">✅ Muestra 4 cams (CCTV). En player, el HUD de single-cam se oculta cuando catálogo está ON.</div>
       </div>
 
-      <!-- ✅ NEWS TICKER (CONFIG) -->
+      <!-- NEWS TICKER -->
       <div class="card card--ticker">
         <div class="cardTitle">Noticias (ticker)</div>
-
         <div class="row2">
           <label class="row" style="margin:0" for="ctlTickerOn">
             <span>Ticker</span>
-            <select id="ctlTickerOn" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
+            <select id="ctlTickerOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
           </label>
           <div class="pill mono" id="ctlTickerStatus" aria-live="polite">Ticker: —</div>
         </div>
 
         <label class="row" for="ctlTickerLang">
           <span>Idioma</span>
-          <select id="ctlTickerLang" class="select">
-            <option value="auto">AUTO</option>
-            <option value="es">ES</option>
-            <option value="en">EN</option>
-          </select>
+          <select id="ctlTickerLang" class="select"><option value="auto">AUTO</option><option value="es">ES</option><option value="en">EN</option></select>
         </label>
 
         <div class="row2">
@@ -540,10 +353,7 @@
           </label>
           <label class="row" style="margin:0" for="ctlTickerHideOnVote">
             <span>Ocultar en voto</span>
-            <select id="ctlTickerHideOnVote" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
+            <select id="ctlTickerHideOnVote" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
           </label>
         </div>
 
@@ -557,53 +367,38 @@
           <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
         </div>
 
-        <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">
-          Copiar URL Stream (con ticker)
-        </button>
-
-        <div class="hint">
-          ✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>.
-        </div>
+        <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">Copiar URL Stream (con ticker)</button>
+        <div class="hint">✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>.</div>
       </div>
 
-      <!-- ✅ AUTO TITLE (STREAM) -->
+      <!-- AUTO TITLE -->
       <div class="card">
         <div class="cardTitle">Twitch: Título automático</div>
-
         <div class="row2">
           <label class="row" style="margin:0" for="ctlTitleOn">
             <span>Auto-título</span>
-            <select id="ctlTitleOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
+            <select id="ctlTitleOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
           </label>
           <div class="pill mono" id="ctlTitleStatus" aria-live="polite">Título: —</div>
         </div>
 
-        <label class="row" for="ctlTitleClientId">
-          <span>Client ID</span>
+        <label class="row" for="ctlTitleClientId"><span>Client ID</span>
           <input id="ctlTitleClientId" class="input" type="text" placeholder="Twitch App Client ID" autocomplete="off" />
         </label>
 
-        <label class="row" for="ctlTitleBroadcasterId">
-          <span>Broadcaster ID</span>
+        <label class="row" for="ctlTitleBroadcasterId"><span>Broadcaster ID</span>
           <input id="ctlTitleBroadcasterId" class="input" type="text" placeholder="ID numérico del canal (opcional)" inputmode="numeric" autocomplete="off" />
         </label>
 
-        <label class="row" for="ctlTitleToken">
-          <span>User Token (scope)</span>
+        <label class="row" for="ctlTitleToken"><span>User Token (scope)</span>
           <input id="ctlTitleToken" class="input" type="password" placeholder="Bearer token con channel:manage:broadcast" autocomplete="off" />
         </label>
 
-        <label class="row" for="ctlTitleTemplate">
-          <span>Plantilla</span>
-          <input id="ctlTitleTemplate" class="input" type="text"
-                 value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
+        <label class="row" for="ctlTitleTemplate"><span>Plantilla</span>
+          <input id="ctlTitleTemplate" class="input" type="text" value="🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV" autocomplete="off" />
         </label>
 
-        <label class="row" for="ctlTitleCooldown">
-          <span>Cooldown (s)</span>
+        <label class="row" for="ctlTitleCooldown"><span>Cooldown (s)</span>
           <input id="ctlTitleCooldown" class="input" type="number" min="10" max="180" step="1" value="20" inputmode="numeric" />
         </label>
 
@@ -612,38 +407,27 @@
           <button id="ctlTitleTest" class="btn ghost full" type="button">Test ahora</button>
         </div>
 
-        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">
-          Reset auto-título
-        </button>
+        <button id="ctlTitleReset" class="btn ghost full" type="button" style="margin-top:8px">Reset auto-título</button>
 
-        <div class="hint">
-          Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b><br/>
-          Necesita token de usuario con scope <b>channel:manage:broadcast</b>.
-        </div>
+        <div class="hint">Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b><br/>Necesita token de usuario con scope <b>channel:manage:broadcast</b>.</div>
       </div>
 
-      <!-- ✅ COUNTDOWN OVERLAY -->
+      <!-- COUNTDOWN -->
       <div class="card">
         <div class="cardTitle">Countdown (overlay en stream)</div>
-
         <div class="row2">
           <label class="row" style="margin:0" for="ctlCountdownOn">
             <span>Countdown</span>
-            <select id="ctlCountdownOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
+            <select id="ctlCountdownOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
           </label>
           <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Countdown: —</div>
         </div>
 
-        <label class="row" for="ctlCountdownLabel">
-          <span>Texto</span>
+        <label class="row" for="ctlCountdownLabel"><span>Texto</span>
           <input id="ctlCountdownLabel" class="input" type="text" value="FIN DE AÑO" autocomplete="off" />
         </label>
 
-        <label class="row" for="ctlCountdownTarget">
-          <span>Objetivo</span>
+        <label class="row" for="ctlCountdownTarget"><span>Objetivo</span>
           <input id="ctlCountdownTarget" class="input" type="datetime-local" />
         </label>
 
@@ -652,9 +436,7 @@
           <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset countdown</button>
         </div>
 
-        <div class="hint">
-          ✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).
-        </div>
+        <div class="hint">✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).</div>
       </div>
 
       <!-- CAM SELECT -->
@@ -674,19 +456,12 @@
         <div class="cardTitle">Preview (opcional)</div>
         <label class="row" for="ctlPreviewOn">
           <span>Mostrar</span>
-          <select id="ctlPreviewOn" class="select">
-            <option value="off">OFF</option>
-            <option value="on">ON</option>
-          </select>
+          <select id="ctlPreviewOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
         </label>
         <div id="ctlPreviewWrap" class="previewWrap hidden">
-          <iframe
-            id="ctlPreview"
-            class="previewFrame"
-            title="Preview stream"
+          <iframe id="ctlPreview" class="previewFrame" title="Preview stream"
             referrerpolicy="strict-origin-when-cross-origin"
-            allow="autoplay; encrypted-media; picture-in-picture"
-          ></iframe>
+            allow="autoplay; encrypted-media; picture-in-picture"></iframe>
         </div>
         <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
       </div>
@@ -694,116 +469,75 @@
       <!-- BGM -->
       <div class="card">
         <div class="cardTitle">Música ambiente (BGM)</div>
-
-        <label class="row" for="ctlBgmOn">
-          <span>Enable</span>
-          <select id="ctlBgmOn" class="select">
-            <option value="off">OFF</option>
-            <option value="on">ON</option>
-          </select>
+        <label class="row" for="ctlBgmOn"><span>Enable</span>
+          <select id="ctlBgmOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
         </label>
-
-        <label class="row" for="ctlBgmVol">
-          <span>Volumen</span>
+        <label class="row" for="ctlBgmVol"><span>Volumen</span>
           <input id="ctlBgmVol" class="input" type="range" min="0" max="1" step="0.01" value="0.25" />
         </label>
-
-        <label class="row" for="ctlBgmTrack">
-          <span>Track</span>
+        <label class="row" for="ctlBgmTrack"><span>Track</span>
           <select id="ctlBgmTrack" class="select" aria-label="Track BGM"></select>
         </label>
-
         <div class="controls3">
           <button class="btn" id="ctlBgmPrev" type="button" aria-label="Track anterior">⏮</button>
           <button class="btn" id="ctlBgmPlay" type="button" aria-label="Play/Pausa BGM">▶/⏸</button>
           <button class="btn" id="ctlBgmNext" type="button" aria-label="Siguiente track">⏭</button>
         </div>
         <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
-
         <div class="hint" id="ctlBgmNow">—</div>
       </div>
 
-      <!-- TWITCH VOTE + CHAT + ALERTS -->
+      <!-- TWITCH -->
       <div class="card">
         <div class="cardTitle">Twitch (votos / chat / alerts)</div>
 
-        <label class="row" for="ctlTwitchChannel">
-          <span>Canal</span>
+        <label class="row" for="ctlTwitchChannel"><span>Canal</span>
           <input id="ctlTwitchChannel" class="input" type="text" placeholder="globaleyetv" autocomplete="off" />
         </label>
 
         <div class="row2">
-          <label class="row" style="margin:0" for="ctlVoteOn">
-            <span>Votos</span>
-            <select id="ctlVoteOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
+          <label class="row" style="margin:0" for="ctlVoteOn"><span>Votos</span>
+            <select id="ctlVoteOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
           </label>
-          <label class="row" style="margin:0" for="ctlVoteOverlay">
-            <span>Overlay voto</span>
-            <select id="ctlVoteOverlay" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
+          <label class="row" style="margin:0" for="ctlVoteOverlay"><span>Overlay voto</span>
+            <select id="ctlVoteOverlay" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
           </label>
         </div>
 
         <div class="row2">
-          <label class="row" style="margin:0" for="ctlChatOn">
-            <span>Chat overlay</span>
-            <select id="ctlChatOn" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
+          <label class="row" style="margin:0" for="ctlChatOn"><span>Chat overlay</span>
+            <select id="ctlChatOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
           </label>
-          <label class="row" style="margin:0" for="ctlChatHideCmd">
-            <span>Ocultar cmds</span>
-            <select id="ctlChatHideCmd" class="select">
-              <option value="on">ON</option>
-              <option value="off">OFF</option>
-            </select>
+          <label class="row" style="margin:0" for="ctlChatHideCmd"><span>Ocultar cmds</span>
+            <select id="ctlChatHideCmd" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
           </label>
         </div>
 
-        <label class="row" for="ctlAlertsOn">
-          <span>Alerts Twitch</span>
-          <select id="ctlAlertsOn" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
+        <label class="row" for="ctlAlertsOn"><span>Alerts Twitch</span>
+          <select id="ctlAlertsOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
 
-        <label class="row" for="ctlVoteWindow">
-          <span>Duración voto (s)</span>
+        <label class="row" for="ctlVoteWindow"><span>Duración voto (s)</span>
           <input id="ctlVoteWindow" class="input" type="number" min="5" max="180" step="1" value="60" inputmode="numeric" />
         </label>
 
-        <label class="row" for="ctlVoteAt">
-          <span>Auto (a falta)</span>
+        <label class="row" for="ctlVoteAt"><span>Auto (a falta)</span>
           <input id="ctlVoteAt" class="input" type="number" min="5" max="600" step="1" value="60" inputmode="numeric" />
         </label>
 
-        <label class="row" for="ctlVoteLead">
-          <span>Pre-aviso (s)</span>
+        <label class="row" for="ctlVoteLead"><span>Pre-aviso (s)</span>
           <input id="ctlVoteLead" class="input" type="number" min="0" max="30" step="1" value="5" inputmode="numeric" />
         </label>
 
-        <label class="row" for="ctlStayMins">
-          <span>STAY → re-voto (min)</span>
+        <label class="row" for="ctlStayMins"><span>STAY → re-voto (min)</span>
           <input id="ctlStayMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
         </label>
 
-        <label class="row" for="ctlYtCookies">
-          <span>YouTube cookies</span>
-          <select id="ctlYtCookies" class="select">
-            <option value="on">ON (sesión)</option>
-            <option value="off">OFF (nocookie)</option>
-          </select>
+        <label class="row" for="ctlYtCookies"><span>YouTube cookies</span>
+          <select id="ctlYtCookies" class="select"><option value="on">ON (sesión)</option><option value="off">OFF (nocookie)</option></select>
         </label>
 
-        <label class="row" for="ctlVoteCmd">
-          <span>Cmds voto</span>
+        <label class="row" for="ctlVoteCmd"><span>Cmds voto</span>
           <input id="ctlVoteCmd" class="input" type="text" value="!next,!cam|!stay,!keep" autocomplete="off" />
         </label>
 
@@ -812,44 +546,31 @@
           <button id="ctlVoteApply" class="btn ghost full" type="button">Aplicar</button>
         </div>
 
-        <div class="hint">
-          ✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)
-        </div>
+        <div class="hint">✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)</div>
       </div>
 
       <!-- ADS OVERLAY -->
       <div class="card">
         <div class="cardTitle">Anuncios (overlay en stream)</div>
 
-        <label class="row" for="ctlAdsOn">
-          <span>Ads overlay</span>
-          <select id="ctlAdsOn" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
+        <label class="row" for="ctlAdsOn"><span>Ads overlay</span>
+          <select id="ctlAdsOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
 
         <div class="row2">
-          <label class="row" style="margin:0" for="ctlAdLead">
-            <span>Lead (s)</span>
+          <label class="row" style="margin:0" for="ctlAdLead"><span>Lead (s)</span>
             <input id="ctlAdLead" class="input" type="number" min="0" max="300" step="1" value="30" inputmode="numeric" />
           </label>
-          <label class="row" style="margin:0" for="ctlAdDur">
-            <span>Duración (s)</span>
+          <label class="row" style="margin:0" for="ctlAdDur"><span>Duración (s)</span>
             <input id="ctlAdDur" class="input" type="number" min="5" max="600" step="1" value="30" inputmode="numeric" />
           </label>
         </div>
 
-        <label class="row" for="ctlAdShowDuring">
-          <span>Mostrar durante</span>
-          <select id="ctlAdShowDuring" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
+        <label class="row" for="ctlAdShowDuring"><span>Mostrar durante</span>
+          <select id="ctlAdShowDuring" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
 
-        <label class="row" for="ctlAdChatText">
-          <span>Msg chat (lead)</span>
+        <label class="row" for="ctlAdChatText"><span>Msg chat (lead)</span>
           <input id="ctlAdChatText" class="input" type="text" value="⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜" autocomplete="off" />
         </label>
 
@@ -859,9 +580,7 @@
         </div>
         <button id="ctlAdClearBtn" class="btn ghost full" type="button" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
 
-        <div class="hint">
-          Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.
-        </div>
+        <div class="hint">Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.</div>
       </div>
 
       <!-- BOT IRC -->
@@ -869,32 +588,22 @@
         <div class="cardTitle">Bot (manda mensajes al chat)</div>
 
         <div class="row2">
-          <label class="row" style="margin:0" for="ctlBotOn">
-            <span>Bot</span>
-            <select id="ctlBotOn" class="select">
-              <option value="off">OFF</option>
-              <option value="on">ON</option>
-            </select>
+          <label class="row" style="margin:0" for="ctlBotOn"><span>Bot</span>
+            <select id="ctlBotOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
           </label>
           <div class="pill mono" id="ctlBotStatus" aria-live="polite">Bot OFF</div>
         </div>
 
-        <label class="row" for="ctlBotUser">
-          <span>Usuario bot</span>
+        <label class="row" for="ctlBotUser"><span>Usuario bot</span>
           <input id="ctlBotUser" class="input" type="text" placeholder="mi_bot" autocomplete="username" />
         </label>
 
-        <label class="row" for="ctlBotToken">
-          <span>OAuth token</span>
+        <label class="row" for="ctlBotToken"><span>OAuth token</span>
           <input id="ctlBotToken" class="input" type="password" placeholder="oauth:xxxx (o solo xxxx)" autocomplete="current-password" />
         </label>
 
-        <label class="row" for="ctlBotSayOnAd">
-          <span>Escribir en Ads</span>
-          <select id="ctlBotSayOnAd" class="select">
-            <option value="on">ON</option>
-            <option value="off">OFF</option>
-          </select>
+        <label class="row" for="ctlBotSayOnAd"><span>Escribir en Ads</span>
+          <select id="ctlBotSayOnAd" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
 
         <button id="ctlBotConnect" class="btn full" type="button">🔌 Conectar bot</button>
@@ -904,9 +613,7 @@
           <button id="ctlBotTestSend" class="btn" type="button">Enviar test</button>
         </div>
 
-        <div class="hint">
-          ✅ Esto solo funciona en tu panel (no en el player). No se expone el token en la URL.
-        </div>
+        <div class="hint">✅ Esto solo funciona en tu panel (no en el player). No se expone el token en la URL.</div>
       </div>
     </section>
 
@@ -924,7 +631,7 @@
     </noscript>
   </main>
 
-  <!-- ✅ Captura errores JS y los muestra en pantalla -->
+  <!-- Captura errores JS y los muestra en pantalla -->
   <script>
     (() => {
       const qs = (s) => document.querySelector(s);
@@ -934,12 +641,8 @@
         const st   = qs("#ctlStatus");
         if (card) card.style.display = "block";
         if (pre) pre.textContent = msg;
-        if (st) {
-          st.textContent = "Error";
-          st.classList.add("pill--bad");
-        }
+        if (st) { st.textContent = "Error"; st.classList.add("pill--bad"); }
       };
-
       window.addEventListener("error", (e) => {
         const lines = [
           `[${new Date().toISOString()}] window.error`,
@@ -949,7 +652,6 @@
         ];
         showDiag(lines.join("\n"));
       });
-
       window.addEventListener("unhandledrejection", (e) => {
         const r = e.reason;
         const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
@@ -958,12 +660,11 @@
     })();
   </script>
 
-  <!-- ✅ Cache-bust scripts -->
+  <!-- Scripts (cache-bust) -->
   <script defer src="./cams.js?v=2.3.4"></script>
   <script defer src="./music.js?v=2.3.4"></script>
   <script defer src="./control.js?v=2.3.4"></script>
   <script defer src="./catalogControl.js?v=2.3.4"></script>
   <script defer src="./pointsControl.js?v=2.3.4"></script>
-  <!-- ℹ️ newsTickerControl.js eliminado: el ticker ya lo gestiona control.js -->
 </body>
 </html>
