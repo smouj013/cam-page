@@ -1,4 +1,4 @@
-/* pointsControl.js — RLC Points v1.1.0 (KEYED BUS + OVERLAY + CONTROL + SAFE STORAGE + DEDUPE)
+/* pointsControl.js — RLC Points v1.1.1 (KEYED BUS + OVERLAY + CONTROL + SAFE STORAGE + DEDUPE + OVERLAY-ONLY)
    ✅ Funciona sin backend (localStorage + BroadcastChannel)
    ✅ Soporta namespace por ?key=... (compatible con tu sistema RLC)
    ✅ Un mismo archivo sirve para:
@@ -6,15 +6,16 @@
       - Overlay (browser source) si detecta / crea root de puntos
    ✅ Null-safe (si faltan elementos en el HTML, no rompe)
    ✅ Anti-spam / dedupe por ts
+   ✅ NEW: Modo overlay-only para OBS con ?pts=1 (&ptsOnly=1 opcional)
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_POINTS_LOADED_V110";
+  const LOAD_GUARD = "__RLC_POINTS_LOADED_V111";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  const VERSION = "1.1.0";
+  const VERSION = "1.1.1";
 
   // ───────────────────────── helpers
   const qs = (s, r = document) => r.querySelector(s);
@@ -34,7 +35,6 @@
     if (s === "0" || s === "false" || s === "no" || s === "off") return false;
     return def;
   };
-  const pad2 = (n) => String(n).padStart(2, "0");
   const fmtK = (n) => {
     const x = +n || 0;
     const ax = Math.abs(x);
@@ -50,10 +50,12 @@
 
   function parseParams() {
     const u = new URL(location.href);
+    const overlay = parseBool(u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"), false);
     return {
       key: safeStr(u.searchParams.get("key") || ""),
-      // overlay flags (opcionales)
-      overlay: parseBool(u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"), false),
+      overlay,
+      overlayOnly: overlay ? parseBool(u.searchParams.get("ptsOnly"), true) : false,
+
       // defaults opcionales
       name: safeStr(u.searchParams.get("ptsName") || u.searchParams.get("pointsName") || ""),
       icon: safeStr(u.searchParams.get("ptsIcon") || u.searchParams.get("pointsIcon") || ""),
@@ -71,8 +73,8 @@
   // ───────────────────────── BUS + keys (compat RLC)
   const BUS_BASE = "rlc_bus_v1";
 
-  const PTS_STATE_KEY_BASE = "rlc_points_state_v1"; // estado actual (valor/goal/nombre)
-  const PTS_CFG_KEY_BASE   = "rlc_points_cfg_v1";   // cfg (visibilidad/estilo)
+  const PTS_STATE_KEY_BASE = "rlc_points_state_v1";
+  const PTS_CFG_KEY_BASE   = "rlc_points_cfg_v1";
 
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const BUS_LEGACY = BUS_BASE;
@@ -113,13 +115,11 @@
     enabled: true,
     showGoal: true,
     showDelta: true,
-    // layout
     pos: "tl", // tl,tr,bl,br
     scale: 1,
-    // look
     name: "Crystal",
     icon: "💎",
-    theme: "neo", // future-proof
+    theme: "neo",
   };
 
   const STATE_DEFAULTS = {
@@ -157,20 +157,21 @@
   }
 
   function loadCfg() {
-    // 1) keyed
     const a = safeJson(lsGet(PTS_CFG_KEY), null);
     if (a && typeof a === "object") return normalizeCfg(a);
-    // 2) base
+
     const b = safeJson(lsGet(PTS_CFG_KEY_BASE), null);
     if (b && typeof b === "object") return normalizeCfg(b);
-    // 3) query overrides
+
+    // query overrides
     const c = normalizeCfg(CFG_DEFAULTS);
     if (P.name) c.name = P.name;
     if (P.icon) c.icon = P.icon;
     if (P.pos) c.pos = P.pos.toLowerCase();
     if (Number.isFinite(P.scale)) c.scale = P.scale;
-    if (P.showGoal != null) c.showGoal = !!P.showGoal;
-    if (P.showDelta != null) c.showDelta = !!P.showDelta;
+    c.showGoal = !!P.showGoal;
+    c.showDelta = !!P.showDelta;
+
     return normalizeCfg(c);
   }
 
@@ -185,10 +186,11 @@
   function loadState() {
     const a = safeJson(lsGet(PTS_STATE_KEY), null);
     if (a && typeof a === "object") return normalizeState(a);
+
     const b = safeJson(lsGet(PTS_STATE_KEY_BASE), null);
     if (b && typeof b === "object") return normalizeState(b);
 
-    // query overrides iniciales (si vienen)
+    // query overrides iniciales
     const s = normalizeState(STATE_DEFAULTS);
     if (Number.isFinite(P.goal)) s.goal = Math.max(0, P.goal | 0);
     if (Number.isFinite(P.value)) s.value = Math.max(0, P.value | 0);
@@ -225,9 +227,7 @@
   let cfg = loadCfg();
   let state = loadState();
 
-  let overlayWanted = false;
-
-  // Detecta si es control (IDs típicos) o overlay
+  // Detecta si es control (IDs típicos)
   const isControl =
     !!qs("#ctlPtsApply") ||
     !!qs("#ctlPointsApply") ||
@@ -238,7 +238,7 @@
   // - viene param ?pts=1 / ?points=1
   // - o ya existe root
   // - o NO es control (página dedicada)
-  overlayWanted = !!P.overlay || !!document.getElementById(OVERLAY_ROOT_ID) || (!isControl);
+  const overlayWanted = !!P.overlay || !!document.getElementById(OVERLAY_ROOT_ID) || (!isControl);
 
   function injectOverlayStylesOnce() {
     if (document.getElementById("rlcPtsStyles")) return;
@@ -264,7 +264,10 @@
       ".rlcPtsBar{margin-top:10px;height:7px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden}" +
       ".rlcPtsBar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,rgba(77,215,255,.88),rgba(255,206,87,.88))}" +
       ".rlcPtsGoalRow{margin-top:6px;display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:rgba(255,255,255,.78)}" +
-      ".rlcPtsRoot.off{display:none!important}";
+      ".rlcPtsRoot.off{display:none!important}" +
+      "body.rlcPtsOnly{background:transparent!important}html.rlcPtsOnly,body.rlcPtsOnly{background:transparent!important}" +
+      "body.rlcPtsOnly .controlWrap{display:none!important}";
+
     document.head.appendChild(st);
   }
 
@@ -328,7 +331,6 @@
       elDelta.textContent = (x > 0 ? `+${fmtK(x)}` : `${fmtK(x)}`);
       elDelta.classList.remove("plus","minus","on");
       elDelta.classList.add(x > 0 ? "plus" : "minus");
-      // reflow para reiniciar transición
       void elDelta.offsetWidth;
       elDelta.classList.add("on");
     } catch (_) {}
@@ -343,7 +345,6 @@
     if (!overlayWanted) return;
     if (!ensureOverlayUI()) return;
 
-    // enable/disable
     const on = !!cfg.enabled;
     elRoot.classList.toggle("off", !on);
     if (!on) return;
@@ -372,23 +373,15 @@
       if (elGoalR) elGoalR.textContent = `Goal ${fmtK(goal)}`;
     }
 
-    // delta anim si cambia
     if (cfg.showDelta) {
       if (lastRenderValue == null) lastRenderValue = v;
       const d = (v - (lastRenderValue | 0)) | 0;
       if (d !== 0) showDelta(d);
     }
     lastRenderValue = v;
-
-    // accesible
-    try { elRoot.setAttribute("aria-hidden", "false"); } catch (_) {}
   }
 
   // ───────────────────────── Control UI (IDs opcionales)
-  // Puedes usar cualquiera de estos IDs en tu control.html:
-  // #ctlPtsOn (select on/off) | #ctlPtsName | #ctlPtsIcon | #ctlPtsValue | #ctlPtsGoal
-  // #ctlPtsAdd (btn) #ctlPtsSub (btn) #ctlPtsDelta (input) #ctlPtsApply (btn) #ctlPtsReset (btn)
-  // #ctlPtsCopyUrl (btn opcional)
   const ctlPtsOn = qs("#ctlPtsOn") || qs("#ctlPointsOn");
   const ctlPtsName = qs("#ctlPtsName") || qs("#ctlPointsName");
   const ctlPtsIcon = qs("#ctlPtsIcon") || qs("#ctlPointsIcon");
@@ -468,7 +461,6 @@
   }
 
   function resetAll() {
-    // resetea SOLO puntos (no toca otros stores)
     cfg = publishCfg(CFG_DEFAULTS);
     state = publishState({ value: 0, goal: 0, updatedAt: Date.now() });
     syncControlUI();
@@ -497,13 +489,13 @@
 
   function buildOverlayUrl() {
     const u = new URL(location.href);
-    // deja la ruta actual; si quieres otra página (points.html), cámbialo tú
     u.searchParams.set("pts", "1");
     if (KEY) u.searchParams.set("key", KEY);
+    // overlay-only por defecto (para OBS)
+    u.searchParams.set("ptsOnly", "1");
     return u.toString();
   }
 
-  // Hotkeys (solo en control, y safe para inputs)
   function isTextInputActive() {
     const a = document.activeElement;
     if (!a) return false;
@@ -524,17 +516,14 @@
     try {
       ctlPtsCopyUrl?.addEventListener?.("click", async () => {
         const ok = await copyToClipboard(buildOverlayUrl());
-        // si tienes un pill/status en tu HTML, lo puedes enganchar aquí sin romper
         try { ctlPtsCopyUrl.textContent = ok ? "Copiado ✅" : "Error ❌"; } catch (_) {}
-        setTimeout(() => { try { ctlPtsCopyUrl.textContent = "Copiar URL"; } catch (_) {} }, 1200);
+        setTimeout(() => { try { ctlPtsCopyUrl.textContent = "Copiar URL overlay"; } catch (_) {} }, 1200);
       });
     } catch (_) {}
 
-    // enter para aplicar rápido
     try {
       document.addEventListener("keydown", (e) => {
         if (isTextInputActive()) return;
-        // + / - para sumar/restar rápido
         if (e.key === "+") { e.preventDefault(); applyDelta(+1); }
         else if (e.key === "-") { e.preventDefault(); applyDelta(-1); }
         else if (e.key.toLowerCase() === "p") { e.preventDefault(); applyControlAll(); }
@@ -592,7 +581,7 @@
     }
   });
 
-  // ───────────────────────── Public API (por si quieres llamarlo desde otros scripts)
+  // ───────────────────────── Public API
   g.RLCPoints = {
     version: VERSION,
     getCfg: () => normalizeCfg(cfg),
@@ -619,19 +608,24 @@
   };
 
   // ───────────────────────── Boot
-  // Aplica defaults de query una sola vez si no había store
   (function boot() {
+    // Si estás en modo overlay y quieres “solo puntos” (OBS), ocultamos el UI del control
+    if (P.overlay && P.overlayOnly) {
+      try {
+        document.documentElement.classList.add("rlcPtsOnly");
+        document.body.classList.add("rlcPtsOnly");
+        document.documentElement.style.background = "transparent";
+        document.body.style.background = "transparent";
+      } catch (_) {}
+    }
+
     cfg = loadCfg();
     state = loadState();
 
-    // si vienen params de valor/goal y no hay nada guardado, publícalos
     const hadCfg = !!lsGet(PTS_CFG_KEY) || !!lsGet(PTS_CFG_KEY_BASE);
     const hadSt  = !!lsGet(PTS_STATE_KEY) || !!lsGet(PTS_STATE_KEY_BASE);
 
-    if (!hadCfg) {
-      // respeta query overrides ya aplicados en loadCfg()
-      cfg = publishCfg(cfg);
-    }
+    if (!hadCfg) cfg = publishCfg(cfg);
     if (!hadSt) {
       state.updatedAt = Date.now();
       state = publishState(state);
