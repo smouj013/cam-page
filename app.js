@@ -1,28 +1,15 @@
-/* app.js — RLC Player v2.3.4 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE)
-   ✅ FIX CLAVE (mantenido):
-      - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
-      - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
-      - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead) (+ PRE si voteUi > lead+window)
-      - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
-      - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
-   ✅ Mejora v2.3.4:
-      - parseParams más robusto (bools tipo "true/false/1/0")
-      - setShown añade aria-hidden y refuerzo de display:none
-      - guardas extra en filtros / listas vacías
-      - voteUi ahora soporta fase PRE (solo auto). Por defecto: comportamiento idéntico (PRE=0).
-   ✅ Compat UI (HUD footer):
-      - Space: play/pause
-      - N: siguiente
-      - P: anterior
-      - H: ocultar/mostrar HUD
-      - I: detalles (collapse/expand)
-      - C: chat on/off
+/* app.js — RLC Player v2.3.4 PRO (PATCH A)
+   ✅ Mantiene TODO lo que traías (VOTE remaining + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE + TAGVOTE + ADS + ALERTS + CHAT + HEALTH + KEY NAMESPACE)
+   ✅ Patch A (sin romper nada):
+      - Dedupe/orden de comandos más robusto: ya NO se pierden comandos si llegan con el mismo ts (misma milésima) desde BC/LS.
+      - Firma de cmd (sig) para evitar “doble ejecución” en rebotes BC<->LS.
 */
+
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V234_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V234_PRO_PATCH_A";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -2148,7 +2135,9 @@
   }
 
   // ───────────────────────── Commands ─────────────────────────
-  let lastCmdTs = 0;
+  // Patch A: dedupe robusto (no pierde cmds con mismo ts)
+  let lastCmdStamp = 0;
+  let lastCmdSig = "";
 
   function cmdKeyOk(msg, isMainChannel) {
     if (!KEY) return true;
@@ -2156,6 +2145,18 @@
     if (ALLOW_LEGACY && !isMainChannel && msg && !msg.key) return true;
     if (ALLOW_LEGACY && isMainChannel && msg && !msg.key) return true;
     return false;
+  }
+
+  function makeCmdSig(msg) {
+    try {
+      const k = msg?.key ? String(msg.key) : "";
+      const ts = (msg?.ts != null) ? String(msg.ts) : "";
+      const c = (msg?.cmd != null) ? String(msg.cmd) : "";
+      const p = msg?.payload != null ? JSON.stringify(msg.payload) : "";
+      return `${k}|${ts}|${c}|${p}`;
+    } catch (_) {
+      return String(msg?.cmd || "") + "|" + String(msg?.ts || "");
+    }
   }
 
   function applyCommand(cmd, payload) {
@@ -2410,8 +2411,16 @@
     if (!cmdKeyOk(msg, !!isMainChannel)) return;
 
     const ts = (msg.ts | 0) || 0;
-    if (ts && ts <= lastCmdTs) return;
-    if (ts) lastCmdTs = ts;
+    const sig = makeCmdSig(msg);
+
+    // Dedupe: evita dobles (rebotes BC/LS)
+    if (sig && sig === lastCmdSig) return;
+
+    // Orden: NO rechazamos si ts == lastCmdStamp (para no perder comandos en misma ms)
+    if (ts && ts < lastCmdStamp) return;
+
+    if (ts) lastCmdStamp = Math.max(lastCmdStamp, ts);
+    lastCmdSig = sig || "";
 
     const cmd = String(msg.cmd || "");
     const payload = msg.payload || {};
