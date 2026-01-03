@@ -1,17 +1,15 @@
-/* newsTicker.js — RLC Global News Ticker v1.5.1 (KEY NAMESPACE + MULTI-SOURCE + BILINGUAL EN+ES + UI BARS FIX)
-   ✅ KEY namespace (bus + storage + cache + translations): rlc_bus_v1:{key}, rlc_ticker_cfg_v1:{key}...
-   ✅ Fuentes:
-      - GDELT (sourcelang:eng)
-      - RSS libres: Google News (World), BBC World, DW World, The Guardian World
-   ✅ Bilingüe: muestra EN + ES (MyMemory) + cache local + translateMax por refresh
+/* newsTicker.js — RLC Global News Ticker v1.5.2
+   ✅ KEY namespace (bus + storage + cache + translations)
+   ✅ Fuentes: GDELT + RSS (Google News, BBC, DW, Guardian)
+   ✅ Bilingüe: EN + ES (MyMemory) + cache local + translateMax por refresh
    ✅ Toggle:
-      - ?ticker=0 (OFF)
+      - ?ticker=0 (OFF) / ?ticker=1 (FORCE ON)
       - ?tickerBilingual=0/1
       - ?tickerSources=gdelt,googlenews,bbc,dw,guardian
       - ?tickerTranslateMax=10
       - ?tickerSpan=1d / 12h / 30min / 1w ...
       - ?tickerDebug=1
-   ✅ Stack correcto con Econ: RLCUiBars (fallback incluido)
+   ✅ Split layout: NEWS derecha + ECON izquierda (cuando >=980px) sin sumar alturas
    ✅ Sanitiza URLs (evita javascript:/data:)
 */
 
@@ -20,7 +18,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V151";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V152";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -98,7 +96,6 @@
     return !!(msg && msg.key === KEY);
   }
 
-  // UI auto (solo etiqueta)
   const uiLangAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
 
   const DEFAULTS = {
@@ -118,11 +115,16 @@
 
   function cfgFromUrl() {
     const out = {};
+
+    // ✅ FIX: permitir forzar ON desde URL
+    if (P.ticker === "1" || P.ticker === "true") out.enabled = true;
+
     if (P.lang === "es" || P.lang === "en" || P.lang === "auto") out.lang = P.lang;
     if (P.speed) out.speedPxPerSec = clamp(num(P.speed, DEFAULTS.speedPxPerSec), 20, 140);
     if (P.refresh) out.refreshMins = clamp(num(P.refresh, DEFAULTS.refreshMins), 3, 60);
     if (P.top) out.topPx = clamp(num(P.top, DEFAULTS.topPx), 0, 120);
     if (P.hideOnVote === "0") out.hideOnVote = false;
+    if (P.hideOnVote === "1") out.hideOnVote = true;
     if (P.span) out.timespan = P.span;
 
     if (P.bilingual === "0") out.bilingual = false;
@@ -186,23 +188,31 @@
 
   let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
 
-  // ───────────────────────────────────────── RLCUiBars fallback (mismo que econ)
+  // ───────────────────────────────────────── RLCUiBars v2 (con group)
   function ensureUiBars() {
-    if (g.RLCUiBars && typeof g.RLCUiBars.set === "function") return;
+    const exists = g.RLCUiBars && typeof g.RLCUiBars.set === "function" && typeof g.RLCUiBars.recalc === "function";
+    if (exists && g.RLCUiBars.__rlcVer === 2) return;
 
     const bars = new Map();
+
+    const safeNum = (x, fb) => {
+      const n = parseFloat(String(x ?? "").trim());
+      return Number.isFinite(n) ? n : fb;
+    };
+
     const cssNum = (varName, fb) => {
       try {
         const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-        const n = parseFloat(v);
-        return Number.isFinite(n) ? n : fb;
+        return safeNum(v, fb);
       } catch (_) { return fb; }
     };
+
     const setVar = (name, val) => {
       try { document.documentElement.style.setProperty(name, val); } catch (_) {}
     };
 
     const API = {
+      __rlcVer: 2,
       set(id, cfg) {
         const c = Object.assign({}, cfg || {});
         c.enabled = !!c.enabled;
@@ -210,6 +220,7 @@
         c.wantTop = Number.isFinite(+c.wantTop) ? +c.wantTop : 10;
         c.cssTopVar = safeStr(c.cssTopVar) || "";
         c.priority = Number.isFinite(+c.priority) ? +c.priority : 999;
+        c.group = safeStr(c.group) || "";
         bars.set(String(id), c);
         API.recalc();
       },
@@ -218,12 +229,13 @@
         API.recalc();
       },
       recalc() {
-        const gap = cssNum("--rlcTickerGap", 10);
         const gapRaw = (() => {
           try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
           catch (_) { return ""; }
         })();
-        if (!gapRaw) setVar("--rlcTickerGap", `${gap}px`);
+        if (!gapRaw) setVar("--rlcTickerGap", "10px");
+
+        const gap = cssNum("--rlcTickerGap", 10);
 
         const enabled = Array.from(bars.entries())
           .map(([id, c]) => ({ id, ...c }))
@@ -233,17 +245,33 @@
           ? Math.min(...enabled.map(b => Number.isFinite(b.wantTop) ? b.wantTop : 10))
           : cssNum("--rlcTickerTop", 10);
 
-        enabled.sort((a, b) => (a.priority - b.priority) || String(a.id).localeCompare(String(b.id)));
-
-        let y = 0;
+        // Agrupa por group (si existe), si no => id único
+        const rowsMap = new Map();
         for (const b of enabled) {
-          const top = baseTop + y;
-          if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
-          y += b.height + gap;
+          const rowKey = b.group ? `g:${b.group}` : `i:${b.id}`;
+          if (!rowsMap.has(rowKey)) rowsMap.set(rowKey, []);
+          rowsMap.get(rowKey).push(b);
         }
 
-        const totalH = enabled.length ? Math.max(0, y - gap) : 0;
+        const rows = Array.from(rowsMap.entries()).map(([rowKey, list]) => {
+          const pri = Math.min(...list.map(x => x.priority));
+          const wantTopRow = Math.min(...list.map(x => x.wantTop));
+          const h = Math.max(...list.map(x => x.height));
+          return { rowKey, list, priority: pri, wantTop: wantTopRow, height: h };
+        });
 
+        rows.sort((a, b) => (a.priority - b.priority) || String(a.rowKey).localeCompare(String(b.rowKey)));
+
+        let y = 0;
+        for (const row of rows) {
+          const top = baseTop + y;
+          for (const b of row.list) {
+            if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
+          }
+          y += row.height + gap;
+        }
+
+        const totalH = rows.length ? Math.max(0, y - gap) : 0;
         setVar("--rlcTickerTop", `${baseTop}px`);
         setVar("--rlcTickerH", `${totalH}px`);
       }
@@ -268,14 +296,26 @@
   };
 
   // ───────────────────────────────────────── UI / CSS
+  const SPLIT_MQ = "(min-width: 980px)";
+  const isSplit = () => {
+    try { return !!window.matchMedia && window.matchMedia(SPLIT_MQ).matches; }
+    catch (_) { return false; }
+  };
+
+  function ensureHostPositioning(host) {
+    if (!host) return;
+    try {
+      const cs = getComputedStyle(host);
+      if (cs && cs.position === "static") host.style.position = "relative";
+    } catch (_) {}
+  }
+
   function injectStyles() {
     if (qs("#rlcNewsTickerStyle")) return;
 
     const st = document.createElement("style");
     st.id = "rlcNewsTickerStyle";
     st.textContent = `
-#stage.stage{ position: relative; }
-
 #rlcNewsTicker{
   position: absolute;
   left: 10px;
@@ -390,6 +430,14 @@
   #rlcNewsTicker .track{ animation: none !important; transform:none !important; }
 }
 
+/* ✅ Split: NEWS a la derecha (>=980px) */
+@media ${SPLIT_MQ}{
+  #rlcNewsTicker{
+    left: calc(50% + 6px);
+    right: 10px;
+  }
+}
+
 /* Compat: empuja vote/ads por debajo de TODAS las barras */
 #voteBox, .vote{
   top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
@@ -415,6 +463,7 @@
     if (root) return root;
 
     const host = pickHost();
+    ensureHostPositioning(host);
 
     root = document.createElement("div");
     root.id = "rlcNewsTicker";
@@ -438,24 +487,29 @@
     return root;
   }
 
-  function setVisible(on) {
-    const root = ensureUI();
-    if (!root) return;
-
-    root.classList.toggle("hidden", !on);
-
+  function registerBar(on) {
     try {
+      ensureUiBars();
+      const group = isSplit() ? "topline" : "";
       g.RLCUiBars && g.RLCUiBars.set("news", {
         enabled: !!on,
         wantTop: CFG.topPx,
         height: 34,
         cssTopVar: "--rlcNewsTop",
-        priority: 10
+        priority: 10,
+        group
       });
     } catch (_) {}
   }
 
-  // ───────────────────────────────────────── Fetch robusto (text/json)
+  function setVisible(on) {
+    const root = ensureUI();
+    if (!root) return;
+    root.classList.toggle("hidden", !on);
+    registerBar(on);
+  }
+
+  // ───────────────────────────────────────── Fetch robusto
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -683,8 +737,6 @@
       `&sort=HybridRel` +
       `&timespan=${encodeURIComponent(CFG.timespan)}` +
       `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`;
-
-    log("GDELT URL:", url);
 
     const data = await fetchJsonRobust(url);
     const errMsg = safeStr(data?.error || data?.message || data?.status || "");
@@ -988,7 +1040,7 @@
     domObs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // ───────────────────────────────────────── Cache headlines (namespaced)
+  // ───────────────────────────────────────── Cache headlines
   function cacheKey() {
     const srcKey = (CFG.sources || []).join(",");
     return `${CFG.timespan}|src=${srcKey}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
@@ -1020,7 +1072,6 @@
       const cache = readCache();
       const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
       if (cache && cache.key === key && (Date.now() - (cache.ts || 0) <= maxAge)) {
-        log("cache hit", { key, KEY });
         setTickerItems(cache.items);
         return;
       }
@@ -1036,7 +1087,6 @@
       setTickerItems(bi);
       writeCache(key, bi);
     } catch (e) {
-      log("refresh error:", e?.message || e);
       const cache = readCache();
       if (cache?.items?.length) setTickerItems(cache.items);
       else setTickerItems([]);
@@ -1096,6 +1146,16 @@
         if (stored) applyCfg(stored, false);
       }
     });
+
+    // Re-registro de barra si cambia split
+    try {
+      const mm = window.matchMedia && window.matchMedia(SPLIT_MQ);
+      if (mm) {
+        const onCh = () => { registerBar(CFG.enabled); try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {} };
+        if (mm.addEventListener) mm.addEventListener("change", onCh);
+        else if (mm.addListener) mm.addListener(onCh);
+      }
+    } catch (_) {}
 
     setupHideOnVote();
     watchForVoteBox();

@@ -1,11 +1,10 @@
-/* econTickerControl.js — RLC Econ Ticker Control v1.1.0 (COMPAT HARDENED: KEY+LEGACY + MULTI-BUS + COPY URL)
+/* econTickerControl.js — RLC Econ Ticker Control v1.2.0
    ✅ Solo para control.html
    ✅ Guarda config en localStorage (por key y legacy)
    ✅ Emite config por BroadcastChannel (namespaced + legacy/base) + postMessage fallback
    ✅ Soporta #ctlEconCopyUrl para generar URL del player con params del econ ticker
-   ✅ Compat EXACTA con econTicker.js v1.0.0 (ECON_CFG + campos cfg)
-   ✅ Sin duplicar BroadcastChannel base (antes se abría 2 veces el mismo)
-   ✅ Soporta opcionalmente textarea JSON de clocks: #ctlEconClocksJson (si existe)
+   ✅ Compat EXACTA con econTicker.js v1.0.2 (ECON_CFG + campos cfg)
+   ✅ Inyecta UI en Control Room si faltan los elementos (cards)
 */
 
 (() => {
@@ -13,13 +12,14 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_ECON_TICKER_CONTROL_LOADED_V110";
+  const LOAD_GUARD = "__RLC_ECON_TICKER_CONTROL_LOADED_V120";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
   const CFG_KEY_BASE = "rlc_econ_cfg_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
+  const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
   const num = (v, fb) => {
@@ -70,7 +70,8 @@
 
   function normalizeMode(v) {
     const s = safeStr(v).toLowerCase();
-    return (s === "sincelast") ? "sinceLast" : (s === "sinceLast") ? "sinceLast" : "daily";
+    if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sinceLast") return "sinceLast";
+    return "daily";
   }
 
   function normalizeClocks(list) {
@@ -173,6 +174,126 @@
     el.classList.toggle("pill--bad", !ok);
   }
 
+  function ensureCtlStyles() {
+    if (qs("#rlcCtlEconStyle")) return;
+    const st = document.createElement("style");
+    st.id = "rlcCtlEconStyle";
+    st.textContent = `
+/* Econ Ticker Control UI (auto-injected safe styles) */
+.rlcCtlCard h3{ margin:0 0 10px; font:900 12px/1 ui-sans-serif,system-ui; letter-spacing:.12em; text-transform:uppercase; opacity:.9 }
+.rlcCtlGrid{ display:grid; gap:10px; grid-template-columns: 1fr 1fr; }
+.rlcCtlRow{ display:flex; flex-direction:column; gap:6px; }
+.rlcCtlRow label{ font:800 11px/1.1 ui-sans-serif,system-ui; opacity:.75; letter-spacing:.06em; text-transform:uppercase; }
+.rlcCtlRow input, .rlcCtlRow select, .rlcCtlRow textarea{
+  width:100%; padding:10px 10px; border-radius:10px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.24);
+  color: rgba(255,255,255,.92);
+  outline:none;
+}
+.rlcCtlRow textarea{ min-height:130px; resize:vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; }
+.rlcCtlBtns{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+.rlcCtlBtn{
+  padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.92);
+  cursor:pointer; font:850 12px/1 ui-sans-serif,system-ui;
+}
+.rlcCtlBtn:hover{ background: rgba(255,255,255,.10); }
+.rlcCtlFull{ grid-column: 1 / -1; }
+@media (max-width: 720px){
+  .rlcCtlGrid{ grid-template-columns: 1fr; }
+}
+`.trim();
+    document.head.appendChild(st);
+  }
+
+  function ensurePanel() {
+    // Si ya existe el panel, ok
+    if (qs("#ctlEconApply") && qs("#ctlEconOn")) return;
+
+    ensureCtlStyles();
+
+    const grid = qs(".controlGrid") || qs(".control-grid") || qs("main .controlGrid") || qs("main") || document.body;
+
+    const card = document.createElement("div");
+    card.className = "card rlcCtlCard";
+    card.id = "ctlEconCard";
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <h3>ECON TICKER</h3>
+        <div class="pill mono" id="ctlEconStatus">Econ: —</div>
+      </div>
+
+      <div class="rlcCtlGrid">
+        <div class="rlcCtlRow">
+          <label>Enabled</label>
+          <select id="ctlEconOn">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Hide on vote</label>
+          <select id="ctlEconHideOnVote">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Speed (px/s)</label>
+          <input id="ctlEconSpeed" type="number" min="20" max="140" step="1" />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Refresh (mins)</label>
+          <input id="ctlEconRefresh" type="number" min="1" max="20" step="1" />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Top (px)</label>
+          <input id="ctlEconTop" type="number" min="0" max="120" step="1" />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Mode</label>
+          <select id="ctlEconMode">
+            <option value="daily">daily</option>
+            <option value="sinceLast">sinceLast</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Clocks</label>
+          <select id="ctlEconClocks">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow rlcCtlFull">
+          <label>Items (JSON array)</label>
+          <textarea id="ctlEconItems" spellcheck="false"></textarea>
+        </div>
+
+        <div class="rlcCtlRow rlcCtlFull">
+          <label>Clocks (JSON array) (opcional)</label>
+          <textarea id="ctlEconClocksJson" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div class="rlcCtlBtns">
+        <button class="rlcCtlBtn" id="ctlEconApply">Aplicar</button>
+        <button class="rlcCtlBtn" id="ctlEconReset">Reset</button>
+        <button class="rlcCtlBtn" id="ctlEconCopyUrl">Copiar URL player</button>
+      </div>
+    `.trim();
+
+    // Inserta al final (no rompe tu layout actual)
+    grid.appendChild(card);
+  }
+
   function applyUIFromCfg(cfg) {
     const c = normalizeCfg(cfg);
 
@@ -184,7 +305,7 @@
     const mode = qs("#ctlEconMode");
     const clocksOnOff = qs("#ctlEconClocks");
     const itemsTa = qs("#ctlEconItems");
-    const clocksTa = qs("#ctlEconClocksJson"); // ✅ opcional
+    const clocksTa = qs("#ctlEconClocksJson");
 
     if (on) on.value = (c.enabled ? "on" : "off");
     if (speed) speed.value = String(c.speedPxPerSec);
@@ -217,7 +338,6 @@
     const mode = safeStr(qs("#ctlEconMode")?.value || DEFAULTS.mode);
     const showClocks = (qs("#ctlEconClocks")?.value || "on") !== "off";
 
-    // items JSON
     let items;
     const itemsTa = qs("#ctlEconItems");
     if (itemsTa) {
@@ -225,7 +345,6 @@
       if (Array.isArray(parsed)) items = parsed;
     }
 
-    // clocks JSON (opcional)
     let clocks;
     const clocksTa = qs("#ctlEconClocksJson");
     if (clocksTa) {
@@ -270,7 +389,6 @@
   function buildPlayerUrlWithEcon(cfg) {
     const u = new URL(location.href);
     u.pathname = u.pathname.replace(/[^/]*$/, "index.html");
-
     if (KEY) u.searchParams.set("key", KEY);
 
     // ✅ Params EXACTOS econTicker.js
@@ -285,7 +403,6 @@
     return u.toString();
   }
 
-  // Debounce simple
   let tDeb = 0;
   function debounce(fn, ms = 160) {
     return () => {
@@ -295,7 +412,9 @@
   }
 
   function boot() {
-    // Si no existe el bloque econ, salimos sin romper nada
+    ensurePanel();
+
+    // Si sigue sin existir, salimos sin romper
     if (!qs("#ctlEconApply") || !qs("#ctlEconOn")) return;
 
     const saved = normalizeCfg(readCfgFirst() || DEFAULTS);
@@ -349,7 +468,6 @@
       el.addEventListener("input", () => applyDebounced());
     }
 
-    // Reflejar UI si cambia en otra pestaña
     window.addEventListener("storage", (e) => {
       if (!e || !e.key) return;
       if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
@@ -358,7 +476,6 @@
       }
     });
 
-    // Sync inicial
     try { sendCfg(saved); } catch (_) {}
   }
 

@@ -1,16 +1,14 @@
-/* econTicker.js — RLC Global Econ Ticker v1.0.1 (FREE + KEY NAMESPACE + FLAGS + CLOCKS + UI BARS FIX)
-   ✅ KEY namespace (bus + storage + cache): rlc_bus_v1:{key}, rlc_econ_cfg_v1:{key}, rlc_econ_cache_v1:{key}
+/* econTicker.js — RLC Global Econ Ticker v1.0.2
+   ✅ KEY namespace (bus + storage + cache)
    ✅ Fuente FREE: Stooq (CSV) + robust fetch (direct -> AllOrigins -> r.jina.ai)
    ✅ Iconos FREE: Simple Icons (CDN) + favicon domain fallback + glyph fallback
    ✅ Hora + bandera por activo (timeZone + country)
    ✅ Hide on vote (#voteBox)
-   ✅ Stack correcto con News/Econ: RLCUiBars (fallback incluido)
-   ✅ No pisa --rlcTickerH a mano (se calcula según barras activas)
-
-   URL params:
-     - ?econ=0 (OFF)
+   ✅ RLCUiBars v2 (group) para split (NEWS derecha + ECON izquierda)
+   ✅ URL params:
+     - ?econ=0 (OFF) / ?econ=1 (FORCE ON)
      - ?econSpeed=55
-     - ?econRefresh=2  (min)
+     - ?econRefresh=2
      - ?econTop=10
      - ?econHideOnVote=0/1
      - ?econMode=daily|sinceLast
@@ -23,7 +21,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_ECON_TICKER_LOADED_V101";
+  const LOAD_GUARD = "__RLC_ECON_TICKER_LOADED_V102";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -91,23 +89,31 @@
     return !!(msg && msg.key === KEY);
   }
 
-  // ───────────────────────────────────────── RLCUiBars fallback (stack de barras)
+  // ───────────────────────────────────────── RLCUiBars v2 (con group)
   function ensureUiBars() {
-    if (g.RLCUiBars && typeof g.RLCUiBars.set === "function") return;
+    const exists = g.RLCUiBars && typeof g.RLCUiBars.set === "function" && typeof g.RLCUiBars.recalc === "function";
+    if (exists && g.RLCUiBars.__rlcVer === 2) return;
 
     const bars = new Map();
+
+    const safeNum = (x, fb) => {
+      const n = parseFloat(String(x ?? "").trim());
+      return Number.isFinite(n) ? n : fb;
+    };
+
     const cssNum = (varName, fb) => {
       try {
         const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-        const n = parseFloat(v);
-        return Number.isFinite(n) ? n : fb;
+        return safeNum(v, fb);
       } catch (_) { return fb; }
     };
+
     const setVar = (name, val) => {
       try { document.documentElement.style.setProperty(name, val); } catch (_) {}
     };
 
     const API = {
+      __rlcVer: 2,
       set(id, cfg) {
         const c = Object.assign({}, cfg || {});
         c.enabled = !!c.enabled;
@@ -115,6 +121,7 @@
         c.wantTop = Number.isFinite(+c.wantTop) ? +c.wantTop : 10;
         c.cssTopVar = safeStr(c.cssTopVar) || "";
         c.priority = Number.isFinite(+c.priority) ? +c.priority : 999;
+        c.group = safeStr(c.group) || "";
         bars.set(String(id), c);
         API.recalc();
       },
@@ -123,13 +130,13 @@
         API.recalc();
       },
       recalc() {
-        const gap = cssNum("--rlcTickerGap", 10);
-        // si no existe, lo seteamos a default
         const gapRaw = (() => {
           try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
           catch (_) { return ""; }
         })();
-        if (!gapRaw) setVar("--rlcTickerGap", `${gap}px`);
+        if (!gapRaw) setVar("--rlcTickerGap", "10px");
+
+        const gap = cssNum("--rlcTickerGap", 10);
 
         const enabled = Array.from(bars.entries())
           .map(([id, c]) => ({ id, ...c }))
@@ -139,17 +146,32 @@
           ? Math.min(...enabled.map(b => Number.isFinite(b.wantTop) ? b.wantTop : 10))
           : cssNum("--rlcTickerTop", 10);
 
-        enabled.sort((a, b) => (a.priority - b.priority) || String(a.id).localeCompare(String(b.id)));
-
-        let y = 0;
+        const rowsMap = new Map();
         for (const b of enabled) {
-          const top = baseTop + y;
-          if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
-          y += b.height + gap;
+          const rowKey = b.group ? `g:${b.group}` : `i:${b.id}`;
+          if (!rowsMap.has(rowKey)) rowsMap.set(rowKey, []);
+          rowsMap.get(rowKey).push(b);
         }
 
-        const totalH = enabled.length ? Math.max(0, y - gap) : 0;
+        const rows = Array.from(rowsMap.entries()).map(([rowKey, list]) => {
+          const pri = Math.min(...list.map(x => x.priority));
+          const wantTopRow = Math.min(...list.map(x => x.wantTop));
+          const h = Math.max(...list.map(x => x.height));
+          return { rowKey, list, priority: pri, wantTop: wantTopRow, height: h };
+        });
 
+        rows.sort((a, b) => (a.priority - b.priority) || String(a.rowKey).localeCompare(String(b.rowKey)));
+
+        let y = 0;
+        for (const row of rows) {
+          const top = baseTop + y;
+          for (const b of row.list) {
+            if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
+          }
+          y += row.height + gap;
+        }
+
+        const totalH = rows.length ? Math.max(0, y - gap) : 0;
         setVar("--rlcTickerTop", `${baseTop}px`);
         setVar("--rlcTickerH", `${totalH}px`);
       }
@@ -178,12 +200,9 @@
     items: [
       { id:"btc",  label:"BTC/USD", stooq:"btcusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"bitcoin" },
       { id:"eth",  label:"ETH/USD", stooq:"ethusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"ethereum" },
-
       { id:"eurusd", label:"EUR/USD", stooq:"eurusd", kind:"fx", currency:"USD", decimals:4, country:"EU", tz:"Europe/Brussels", iconSlug:"euro" },
-
       { id:"aapl", label:"AAPL", stooq:"aapl.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"apple", domain:"apple.com" },
       { id:"tsla", label:"TSLA", stooq:"tsla.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"tesla", domain:"tesla.com" },
-
       { id:"spx",  label:"S&P 500", stooq:"^spx", kind:"index", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"📈" },
       { id:"gold", label:"GOLD", stooq:"gc.f", kind:"commodity", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"🪙" }
     ]
@@ -191,7 +210,6 @@
 
   function normalizeMode(v) {
     const s = safeStr(v).toLowerCase();
-    // ✅ FIX: antes comparaba con "sinceLast" y nunca entraba
     return (s === "sincelast" || s === "since_last" || s === "since-last") ? "sinceLast" : "daily";
   }
 
@@ -249,6 +267,10 @@
 
   function cfgFromUrl() {
     const out = {};
+
+    // ✅ FIX: permitir forzar ON desde URL
+    if (P.econ === "1" || P.econ === "true") out.enabled = true;
+
     if (P.speed) out.speedPxPerSec = clamp(num(P.speed, DEFAULTS.speedPxPerSec), 20, 140);
     if (P.refresh) out.refreshMins = clamp(num(P.refresh, DEFAULTS.refreshMins), 1, 20);
     if (P.top) out.topPx = clamp(num(P.top, DEFAULTS.topPx), 0, 120);
@@ -272,14 +294,26 @@
   let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
 
   // ───────────────────────────────────────── UI / CSS
+  const SPLIT_MQ = "(min-width: 980px)";
+  const isSplit = () => {
+    try { return !!window.matchMedia && window.matchMedia(SPLIT_MQ).matches; }
+    catch (_) { return false; }
+  };
+
+  function ensureHostPositioning(host) {
+    if (!host) return;
+    try {
+      const cs = getComputedStyle(host);
+      if (cs && cs.position === "static") host.style.position = "relative";
+    } catch (_) {}
+  }
+
   function injectStyles() {
     if (qs("#rlcEconTickerStyle")) return;
 
     const st = document.createElement("style");
     st.id = "rlcEconTickerStyle";
     st.textContent = `
-#stage.stage{ position: relative; }
-
 #rlcEconTicker{
   position: absolute;
   left: 10px;
@@ -413,7 +447,15 @@
   #rlcEconTicker .track{ animation: none !important; transform:none !important; }
 }
 
-/* Compat: empuja vote/ads por debajo de TODAS las barras (news/econ/...) */
+/* ✅ Split: ECON a la izquierda (>=980px) */
+@media ${SPLIT_MQ}{
+  #rlcEconTicker{
+    left: 10px;
+    right: calc(50% + 6px);
+  }
+}
+
+/* Compat: empuja vote/ads por debajo de TODAS las barras */
 #voteBox, .vote{
   top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
 }
@@ -438,6 +480,7 @@
     if (root) return root;
 
     const host = pickHost();
+    ensureHostPositioning(host);
 
     root = document.createElement("div");
     root.id = "rlcEconTicker";
@@ -459,10 +502,23 @@
 
     host.insertBefore(root, host.firstChild);
 
-    // ✅ fallback de iconos (captura), funciona aunque se clonen nodos
     installImgFallback(root);
-
     return root;
+  }
+
+  function registerBar(on) {
+    try {
+      ensureUiBars();
+      const group = isSplit() ? "topline" : "";
+      g.RLCUiBars && g.RLCUiBars.set("econ", {
+        enabled: !!on,
+        wantTop: CFG.topPx,
+        height: 34,
+        cssTopVar: "--rlcEconTop",
+        priority: 20,
+        group
+      });
+    } catch (_) {}
   }
 
   function setVisible(on) {
@@ -470,20 +526,10 @@
     if (!root) return;
 
     root.classList.toggle("hidden", !on);
-
-    // registrar barra en el stack
-    try {
-      g.RLCUiBars && g.RLCUiBars.set("econ", {
-        enabled: !!on,
-        wantTop: CFG.topPx,
-        height: 34,
-        cssTopVar: "--rlcEconTop",
-        priority: 20
-      });
-    } catch (_) {}
+    registerBar(on);
   }
 
-  // ───────────────────────────────────────── Fetch robusto (igual filosofía)
+  // ───────────────────────────────────────── Fetch robusto
   async function fetchText(url, timeoutMs = 9000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -520,7 +566,7 @@
     throw lastErr || new Error("fetchTextRobust failed");
   }
 
-  // ───────────────────────────────────────── Utils: flags + clocks + fmt
+  // ───────────────────────────────────────── Utils
   function flagEmoji(country2) {
     const cc = safeStr(country2).toUpperCase();
     if (!cc) return "🏳️";
@@ -563,7 +609,7 @@
     return c ? (c + " ") : "";
   }
 
-  // ───────────────────────────────────────── Icons (FREE)
+  // ───────────────────────────────────────── Icons
   function simpleIconUrl(slug) {
     const s = safeStr(slug).toLowerCase();
     if (!s) return "";
@@ -592,7 +638,6 @@
     return { type: "glyph", glyph };
   }
 
-  // ✅ Fallback de iconos por error en captura (sobrevive a clones)
   function installImgFallback(root) {
     if (!root || root.__rlcImgFallbackInstalled) return;
     root.__rlcImgFallbackInstalled = true;
@@ -619,7 +664,7 @@
     }, true);
   }
 
-  // ───────────────────────────────────────── Stooq fetch
+  // ───────────────────────────────────────── Stooq
   function stooqLastUrl(sym) {
     return `https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`;
   }
@@ -667,7 +712,6 @@
     const idxDate = head.findIndex(h => h.toLowerCase() === "date");
     if (idxClose < 0) return null;
 
-    // filas de datos
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
       const r = csvSplitRow(lines[i]);
@@ -677,18 +721,12 @@
     }
     if (rows.length < 2) return null;
 
-    // detecta si viene ASC o DESC por fecha
     const first = rows[0].date;
     const last = rows[rows.length - 1].date;
-    const isDesc = (first > last); // YYYY-MM-DD lexicográfico ok
+    const isDesc = (first > last);
 
-    if (isDesc) {
-      // rows[0] latest, rows[1] prev
-      return Number.isFinite(rows[1]?.close) ? rows[1].close : rows[0].close;
-    } else {
-      // rows[last] latest, rows[last-1] prev
-      return Number.isFinite(rows[rows.length - 2]?.close) ? rows[rows.length - 2].close : rows[rows.length - 1].close;
-    }
+    if (isDesc) return Number.isFinite(rows[1]?.close) ? rows[1].close : rows[0].close;
+    return Number.isFinite(rows[rows.length - 2]?.close) ? rows[rows.length - 2].close : rows[rows.length - 1].close;
   }
 
   // ───────────────────────────────────────── Cache
@@ -922,7 +960,7 @@
     domObs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // ───────────────────────────────────────── Refresh loop
+  // ───────────────────────────────────────── Refresh
   let refreshTimer = null;
   let refreshInFlight = false;
 
@@ -1022,7 +1060,7 @@
     };
   }
 
-  async function refresh(force = false) {
+  async function refresh() {
     if (!CFG.enabled) { setVisible(false); return; }
     setVisible(true);
 
@@ -1032,8 +1070,7 @@
     try {
       const model = await buildModel();
       setTickerItems(model);
-    } catch (e) {
-      log("refresh error:", e?.message || e);
+    } catch (_) {
       const cache = readCache();
       const ck = cacheKey();
       const map = (cache && cache.key === ck && cache.map) ? cache.map : {};
@@ -1071,7 +1108,7 @@
   function startTimer() {
     if (refreshTimer) clearInterval(refreshTimer);
     const every = Math.max(60000, CFG.refreshMins * 60 * 1000);
-    refreshTimer = setInterval(() => refresh(false), every);
+    refreshTimer = setInterval(() => refresh(), every);
   }
 
   function applyCfg(nextCfg, persist = false) {
@@ -1085,7 +1122,7 @@
 
     setupHideOnVote();
     startTimer();
-    refresh(true);
+    refresh();
   }
 
   function onBusMessage(msg, isMain) {
@@ -1120,10 +1157,20 @@
       }
     });
 
+    // Re-registro si cambia split
+    try {
+      const mm = window.matchMedia && window.matchMedia(SPLIT_MQ);
+      if (mm) {
+        const onCh = () => { registerBar(CFG.enabled); try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {} };
+        if (mm.addEventListener) mm.addEventListener("change", onCh);
+        else if (mm.addListener) mm.addListener(onCh);
+      }
+    } catch (_) {}
+
     setupHideOnVote();
     watchForVoteBox();
 
-    try { refresh(false); } catch (_) {}
+    try { refresh(); } catch (_) {}
     log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
   }
 

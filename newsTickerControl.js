@@ -1,15 +1,14 @@
-/* newsTickerControl.js — RLC News Ticker Control v1.4.0 (COMPAT HARDENED: KEY+LEGACY + MULTI-BUS + COPY URL)
+/* newsTickerControl.js — RLC News Ticker Control v1.5.0
    ✅ Solo para control.html
    ✅ Guarda config en localStorage (por key y legacy/base)
    ✅ Emite config por BroadcastChannel (namespaced + legacy/base) + postMessage fallback
    ✅ Soporta #ctlTickerCopyUrl para generar URL del player con params del ticker
    ✅ Debounce en input para no spamear BC
-   ✅ Compat EXACTA con newsTicker.js v1.5.0:
+   ✅ Compat EXACTA con newsTicker.js v1.5.2:
         - type: "TICKER_CFG"
         - cfg: enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan,
                bilingual, translateMax, sources[]
-   ✅ Añade soporte opcional UI para sources:
-        - input/textarea #ctlTickerSources (CSV: "gdelt,bbc,dw,...")
+   ✅ Inyecta UI en Control Room si faltan los elementos (cards)
 */
 
 (() => {
@@ -17,7 +16,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKER_CONTROL_LOADED_V140";
+  const LOAD_GUARD = "__RLC_TICKER_CONTROL_LOADED_V150";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -44,7 +43,7 @@
   const bcNs = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE) : null;
 
-  // ✅ Storage keys (NS + legacy/base)
+  // ✅ Storage keys
   const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
   const CFG_KEY_LEGACY = CFG_KEY_BASE;
 
@@ -61,7 +60,6 @@
     bilingual: true,
     translateMax: 10,
 
-    // ✅ newsTicker.js soporta sources[]
     sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
   };
 
@@ -155,6 +153,130 @@
     el.classList.toggle("pill--bad", !ok);
   }
 
+  function ensureCtlStyles() {
+    if (qs("#rlcCtlTickerStyle")) return;
+    const st = document.createElement("style");
+    st.id = "rlcCtlTickerStyle";
+    st.textContent = `
+/* News Ticker Control UI (auto-injected safe styles) */
+.rlcCtlCard h3{ margin:0 0 10px; font:900 12px/1 ui-sans-serif,system-ui; letter-spacing:.12em; text-transform:uppercase; opacity:.9 }
+.rlcCtlGrid{ display:grid; gap:10px; grid-template-columns: 1fr 1fr; }
+.rlcCtlRow{ display:flex; flex-direction:column; gap:6px; }
+.rlcCtlRow label{ font:800 11px/1.1 ui-sans-serif,system-ui; opacity:.75; letter-spacing:.06em; text-transform:uppercase; }
+.rlcCtlRow input, .rlcCtlRow select, .rlcCtlRow textarea{
+  width:100%; padding:10px 10px; border-radius:10px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.24);
+  color: rgba(255,255,255,.92);
+  outline:none;
+}
+.rlcCtlRow textarea{ min-height:90px; resize:vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; }
+.rlcCtlBtns{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+.rlcCtlBtn{
+  padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.92);
+  cursor:pointer; font:850 12px/1 ui-sans-serif,system-ui;
+}
+.rlcCtlBtn:hover{ background: rgba(255,255,255,.10); }
+.rlcCtlFull{ grid-column: 1 / -1; }
+@media (max-width: 720px){
+  .rlcCtlGrid{ grid-template-columns: 1fr; }
+}
+`.trim();
+    document.head.appendChild(st);
+  }
+
+  function ensurePanel() {
+    if (qs("#ctlTickerApply") && qs("#ctlTickerOn")) return;
+
+    ensureCtlStyles();
+
+    const grid = qs(".controlGrid") || qs(".control-grid") || qs("main .controlGrid") || qs("main") || document.body;
+
+    const card = document.createElement("div");
+    card.className = "card rlcCtlCard";
+    card.id = "ctlTickerCard";
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <h3>NEWS TICKER</h3>
+        <div class="pill mono" id="ctlTickerStatus">Ticker: —</div>
+      </div>
+
+      <div class="rlcCtlGrid">
+        <div class="rlcCtlRow">
+          <label>Enabled</label>
+          <select id="ctlTickerOn">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Language</label>
+          <select id="ctlTickerLang">
+            <option value="auto">auto</option>
+            <option value="en">en</option>
+            <option value="es">es</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Speed (px/s)</label>
+          <input id="ctlTickerSpeed" type="number" min="20" max="140" step="1" />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Refresh (mins)</label>
+          <input id="ctlTickerRefresh" type="number" min="3" max="60" step="1" />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Top (px)</label>
+          <input id="ctlTickerTop" type="number" min="0" max="120" step="1" />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Hide on vote</label>
+          <select id="ctlTickerHideOnVote">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Timespan</label>
+          <input id="ctlTickerSpan" placeholder="1d / 12h / 30min / 1w..." />
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Bilingual</label>
+          <select id="ctlTickerBilingual">
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </div>
+
+        <div class="rlcCtlRow">
+          <label>Translate max</label>
+          <input id="ctlTickerTranslateMax" type="number" min="0" max="22" step="1" />
+        </div>
+
+        <div class="rlcCtlRow rlcCtlFull">
+          <label>Sources (CSV)</label>
+          <input id="ctlTickerSources" placeholder="gdelt,googlenews,bbc,dw,guardian" />
+        </div>
+      </div>
+
+      <div class="rlcCtlBtns">
+        <button class="rlcCtlBtn" id="ctlTickerApply">Aplicar</button>
+        <button class="rlcCtlBtn" id="ctlTickerReset">Reset</button>
+        <button class="rlcCtlBtn" id="ctlTickerCopyUrl">Copiar URL player</button>
+      </div>
+    `.trim();
+
+    grid.appendChild(card);
+  }
+
   function applyUIFromCfg(cfg) {
     const c = normalizeCfg(cfg);
 
@@ -166,10 +288,9 @@
     const hideOnVote = qs("#ctlTickerHideOnVote");
     const span = qs("#ctlTickerSpan");
 
-    // opcionales
     const bilingualEl = qs("#ctlTickerBilingual");
     const transEl = qs("#ctlTickerTranslateMax");
-    const sourcesEl = qs("#ctlTickerSources"); // ✅ opcional (CSV)
+    const sourcesEl = qs("#ctlTickerSources");
 
     if (on) on.value = (c.enabled ? "on" : "off");
     if (lang) lang.value = c.lang;
@@ -203,7 +324,6 @@
 
     const bilingual = bilingualEl ? ((bilingualEl.value || "on") !== "off") : undefined;
     const translateMax = transEl ? num(transEl.value, DEFAULTS.translateMax) : undefined;
-
     const sources = sourcesEl ? normalizeSources(sourcesEl.value) : undefined;
 
     return normalizeCfg({
@@ -247,8 +367,10 @@
 
     if (KEY) u.searchParams.set("key", KEY);
 
-    // ✅ Params EXACTOS newsTicker.js parseParams
+    // ✅ Forzable por URL
     u.searchParams.set("ticker", cfg.enabled ? "1" : "0");
+
+    // ✅ Params EXACTOS newsTicker.js parseParams
     u.searchParams.set("tickerLang", cfg.lang);
     u.searchParams.set("tickerSpeed", String(cfg.speedPxPerSec));
     u.searchParams.set("tickerRefresh", String(cfg.refreshMins));
@@ -259,14 +381,12 @@
     u.searchParams.set("tickerBilingual", cfg.bilingual ? "1" : "0");
     u.searchParams.set("tickerTranslateMax", String(cfg.translateMax));
 
-    // ✅ sources (siempre coherente con whitelist)
     const src = normalizeSources(cfg.sources);
     u.searchParams.set("tickerSources", src.join(","));
 
     return u.toString();
   }
 
-  // Debounce simple
   let tDeb = 0;
   function debounce(fn, ms = 160) {
     return () => {
@@ -276,7 +396,8 @@
   }
 
   function boot() {
-    // Si no existe el bloque ticker, salimos sin romper nada
+    ensurePanel();
+
     if (!qs("#ctlTickerApply") || !qs("#ctlTickerOn")) return;
 
     const saved = normalizeCfg(readCfgFirst() || DEFAULTS);
@@ -329,7 +450,6 @@
 
       el.addEventListener("change", () => doApply(true));
       el.addEventListener("input", () => {
-        // input continuo solo si es INPUT/TEXTAREA (evita “spam” raro en selects)
         const tag = (el.tagName || "").toUpperCase();
         if (tag === "INPUT" || tag === "TEXTAREA") applyDebounced();
       });
@@ -343,7 +463,6 @@
       }
     });
 
-    // Sync inicial
     try { sendCfg(saved); } catch (_) {}
   }
 
