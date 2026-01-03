@@ -1,4 +1,4 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.4 -->
+<!-- index.html — Random Live Cams (PLAYER) v2.3.5 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -12,10 +12,10 @@
   <title>Random Live Cams</title>
   <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts, ads notice, ticker y modo catálogo." />
 
-  <script>window.APP_VERSION = "2.3.4";</script>
+  <script>window.APP_VERSION = "2.3.5";</script>
 
   <!-- Cache-bust -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.4" />
+  <link rel="stylesheet" href="./styles.css?v=2.3.5" />
 
   <!-- REPAIR MODE: index.html?repair=1 -->
   <script>
@@ -59,8 +59,17 @@
   <style>
     html,body{height:100%}
     body{margin:0}
+    /* 🔒 Alturas robustas (Opera GX / móviles) */
+    body{min-height:100vh; min-height:100svh; min-height:100dvh; overflow:hidden; overscroll-behavior:none;}
 
-    #stage{isolation:isolate; position:relative; overflow:hidden}
+    #stage{
+      isolation:isolate;
+      position:relative;
+      overflow:hidden;
+      height:100vh;
+      height:100svh;
+      height:100dvh;
+    }
     #stage .layer{position:absolute;inset:0}
     #stage .layer-media{z-index:1}
     #fallback{z-index:5; pointer-events:auto}
@@ -72,26 +81,26 @@
       left:10px!important;right:10px!important;
       top:var(--rlcTickerTop,10px)!important;
       z-index:2147483647!important;
-      pointer-events:none; /* ✅ no bloquea clicks */
+      pointer-events:none!important;
     }
 
-    /* ✅ ECON ticker fixed fuera de stacking/overflow (debajo del news ticker) */
+    /* ✅ ECON ticker fixed debajo del news ticker */
     #rlcEconTicker{
       position:fixed!important;
       left:10px!important;right:10px!important;
       top:calc(var(--rlcTickerTop,10px) + var(--rlcTickerH,0px) + var(--rlcEconGap,10px))!important;
       z-index:2147483646!important;
-      pointer-events:none!important; /* ✅ no bloquea clicks */
+      pointer-events:none!important;
     }
 
     /* placeholder catálogo */
     #rlcCatalog{position:absolute;inset:0;z-index:2;display:none;pointer-events:none}
-    #rlcCatalog.on{display:block;pointer-events:auto} /* ✅ clickable solo ON */
+    #rlcCatalog.on{display:block;pointer-events:auto}
 
     /* countdown mínimo */
     #rlcCountdown{
       position:absolute;z-index:50;
-      top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+      top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset, 0px));
       right:max(14px, env(safe-area-inset-right));
       display:flex;flex-direction:column;gap:6px;
       padding:10px 12px;border-radius:14px;
@@ -107,10 +116,49 @@
     #rlcCountdown .lbl{font:950 12px/1 ui-sans-serif,system-ui;letter-spacing:.14em;opacity:.92;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:8px}
     #rlcCountdown .lbl::before{content:"";width:8px;height:8px;border-radius:999px;background:var(--news-red);box-shadow:0 0 0 3px rgba(255,55,95,.18),0 0 16px rgba(255,55,95,.45)}
     #rlcCountdown .time{font:950 20px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;letter-spacing:.02em;font-variant-numeric:tabular-nums}
-    #rlcCountdown.tr{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));right:max(14px, env(safe-area-inset-right));left:auto;bottom:auto}
-    #rlcCountdown.tl{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));left:max(14px, env(safe-area-inset-left));right:auto;bottom:auto}
+    #rlcCountdown.tr{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px));right:max(14px, env(safe-area-inset-right));left:auto;bottom:auto}
+    #rlcCountdown.tl{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px));left:max(14px, env(safe-area-inset-left));right:auto;bottom:auto}
     #rlcCountdown.br{bottom:max(14px, env(safe-area-inset-bottom));right:max(14px, env(safe-area-inset-right));top:auto;left:auto}
     #rlcCountdown.bl{bottom:max(14px, env(safe-area-inset-bottom));left:max(14px, env(safe-area-inset-left));top:auto;right:auto}
+
+    /* ✅ Diagnóstico overlay (si un JS peta) */
+    #rlcDiag{
+      position:fixed; inset:14px;
+      z-index:2147483645;
+      display:none;
+      pointer-events:auto;
+    }
+    #rlcDiag.on{display:block}
+    #rlcDiag .card{
+      max-width:980px;
+      margin:0 auto;
+      background:rgba(10,14,22,.86);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:16px;
+      box-shadow:0 18px 60px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    #rlcDiag .hdr{
+      padding:12px 14px;
+      font:950 12px/1 ui-sans-serif,system-ui;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      background:linear-gradient(90deg, rgba(255,59,59,.20), rgba(55,214,255,.12));
+      border-bottom:1px solid rgba(255,255,255,.12);
+    }
+    #rlcDiag pre{
+      margin:0;
+      padding:12px 14px;
+      white-space:pre-wrap;
+      font:600 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+      color:rgba(255,255,255,.92);
+    }
+    #rlcDiag .tip{
+      padding:10px 14px 14px;
+      color:rgba(255,255,255,.70);
+      border-top:1px solid rgba(255,255,255,.10);
+      font:650 12px/1.3 ui-sans-serif,system-ui;
+    }
   </style>
 </head>
 
@@ -228,24 +276,60 @@
   <div id="rlcNewsTicker" aria-label="News ticker" aria-live="polite"></div>
   <div id="rlcEconTicker" aria-label="Econ ticker" aria-live="polite"></div>
 
+  <!-- ✅ Diagnóstico (si peta JS) -->
+  <div id="rlcDiag" aria-live="polite">
+    <div class="card">
+      <div class="hdr">Diagnóstico (PLAYER)</div>
+      <pre id="rlcDiagText"></pre>
+      <div class="tip">Tip: prueba <b>index.html?repair=1</b> para limpiar cachés.</div>
+    </div>
+  </div>
+
+  <!-- Captura errores JS y los muestra en pantalla (PLAYER) -->
+  <script>
+    (() => {
+      const qs = (s) => document.querySelector(s);
+      const showDiag = (msg) => {
+        const box = qs("#rlcDiag");
+        const pre = qs("#rlcDiagText");
+        if (pre) pre.textContent = msg;
+        if (box) box.classList.add("on");
+      };
+      window.addEventListener("error", (e) => {
+        const lines = [
+          `[${new Date().toISOString()}] window.error`,
+          `message: ${String(e.message || "")}`,
+          `file: ${String(e.filename || "")}:${String(e.lineno || "")}:${String(e.colno || "")}`,
+          `stack: ${e.error && e.error.stack ? e.error.stack : "(no stack)"}`
+        ];
+        showDiag(lines.join("\n"));
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        const r = e.reason;
+        const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
+        showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
+      });
+    })();
+  </script>
+
   <!-- Data -->
-  <script defer src="./cams.js?v=2.3.4"></script>
-  <script defer src="./music.js?v=2.3.4"></script>
+  <script defer src="./cams.js?v=2.3.5"></script>
+  <script defer src="./music.js?v=2.3.5"></script>
 
   <!-- Weather + hora -->
-  <script defer src="./weatherClock.js?v=2.3.4"></script>
+  <script defer src="./weatherClock.js?v=2.3.5"></script>
 
   <!-- News ticker -->
-  <script defer src="./newsTicker.js?v=2.3.4"></script>
+  <script defer src="./newsTicker.js?v=2.3.5"></script>
 
   <!-- ✅ Econ ticker -->
-  <script defer src="./econTicker.js?v=2.3.4"></script>
+  <script defer src="./econTicker.js?v=2.3.5"></script>
 
   <!-- Catálogo CCTV -->
-  <script defer src="./catalogView.js?v=2.3.4"></script>
+  <script defer src="./catalogView.js?v=2.3.5"></script>
 
   <!-- Main player -->
-  <script defer src="./app.js?v=2.3.4"></script>
+  <script defer src="./app.js?v=2.3.5"></script>
 
   <!-- Countdown bootstrap -->
   <script>
