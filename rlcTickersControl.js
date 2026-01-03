@@ -1,9 +1,11 @@
-/* rlcTickersControl.js — RLC Unified Tickers Control v2.3.5
+/* rlcTickersControl.js — RLC Unified Tickers Control v2.0.0
+   ✅ Unifica:
+      - newsTickerControl.js (v1.5.x)
+      - econTickerControl.js (v1.2.x)
    ✅ Solo para control.html
    ✅ Storage por key + legacy/base
    ✅ BroadcastChannel namespaced + legacy + postMessage fallback
    ✅ Inyecta cards si faltan (no rompe tu Control Room)
-   ✅ FIX: botón extra “Copiar URL player (NEWS+ECON)” para no liarte
 */
 
 (() => {
@@ -11,7 +13,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_CONTROL_LOADED_V235";
+  const LOAD_GUARD = "__RLC_TICKERS_CONTROL_LOADED_V200";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -139,14 +141,6 @@
     try { window.postMessage(msg, "*"); } catch (_) {}
   }
 
-  // ───────────────────────── URL builder base
-  function basePlayerUrl() {
-    const u = new URL(location.href);
-    u.pathname = u.pathname.replace(/[^/]*$/, "index.html");
-    if (KEY) u.searchParams.set("key", KEY);
-    return u;
-  }
-
   // ======================================================================
   // NEWS CONTROL
   // ======================================================================
@@ -163,8 +157,10 @@
       topPx: 10,              // 0..120
       hideOnVote: true,
       timespan: "1d",
+
       bilingual: true,
       translateMax: 10,
+
       sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
     };
 
@@ -294,7 +290,7 @@
         <div class="rlcCtlBtns">
           <button class="rlcCtlBtn" id="ctlTickerApply">Aplicar</button>
           <button class="rlcCtlBtn" id="ctlTickerReset">Reset</button>
-          <button class="rlcCtlBtn" id="ctlTickerCopyUrl">Copiar URL player (NEWS)</button>
+          <button class="rlcCtlBtn" id="ctlTickerCopyUrl">Copiar URL player</button>
         </div>
       `.trim();
 
@@ -356,7 +352,9 @@
     }
 
     function buildPlayerUrlWithTicker(cfg) {
-      const u = basePlayerUrl();
+      const u = new URL(location.href);
+      u.pathname = u.pathname.replace(/[^/]*$/, "index.html");
+      if (KEY) u.searchParams.set("key", KEY);
 
       u.searchParams.set("ticker", cfg.enabled ? "1" : "0");
       u.searchParams.set("tickerLang", cfg.lang);
@@ -444,11 +442,7 @@
       try { sendMsg("TICKER_CFG", saved); } catch (_) {}
     }
 
-    function getCfg() {
-      return normalizeCfg(readCfg(CFG_KEY_NS, CFG_KEY_LEGACY) || DEFAULTS);
-    }
-
-    return { boot, getCfg };
+    return { boot };
   })();
 
   // ======================================================================
@@ -616,7 +610,7 @@
         <div class="rlcCtlBtns">
           <button class="rlcCtlBtn" id="ctlEconApply">Aplicar</button>
           <button class="rlcCtlBtn" id="ctlEconReset">Reset</button>
-          <button class="rlcCtlBtn" id="ctlEconCopyUrl">Copiar URL player (ECON)</button>
+          <button class="rlcCtlBtn" id="ctlEconCopyUrl">Copiar URL player</button>
         </div>
       `.trim();
 
@@ -693,7 +687,9 @@
     }
 
     function buildPlayerUrlWithEcon(cfg) {
-      const u = basePlayerUrl();
+      const u = new URL(location.href);
+      u.pathname = u.pathname.replace(/[^/]*$/, "index.html");
+      if (KEY) u.searchParams.set("key", KEY);
 
       u.searchParams.set("econ", cfg.enabled ? "1" : "0");
       u.searchParams.set("econSpeed", String(cfg.speedPxPerSec));
@@ -772,69 +768,13 @@
       try { sendMsg("ECON_CFG", saved); } catch (_) {}
     }
 
-    function getCfg() {
-      return normalizeCfg(readCfg(CFG_KEY_NS, CFG_KEY_LEGACY) || DEFAULTS);
-    }
-
-    return { boot, getCfg };
+    return { boot };
   })();
-
-  // ───────────────────────── Extra: Copiar URL con TODO (NEWS+ECON)
-  function ensureCopyAllButton() {
-    const tickerCard = qs("#ctlTickerCard .rlcCtlBtns");
-    if (!tickerCard) return;
-    if (qs("#ctlTickersCopyAll")) return;
-
-    const btn = document.createElement("button");
-    btn.className = "rlcCtlBtn";
-    btn.id = "ctlTickersCopyAll";
-    btn.textContent = "Copiar URL player (NEWS+ECON)";
-    tickerCard.appendChild(btn);
-
-    btn.addEventListener("click", async () => {
-      const n = NEWS.getCfg();
-      const e = ECON.getCfg();
-
-      const u = new URL(location.href);
-      u.pathname = u.pathname.replace(/[^/]*$/, "index.html");
-      if (KEY) u.searchParams.set("key", KEY);
-
-      // NEWS
-      u.searchParams.set("ticker", n.enabled ? "1" : "0");
-      u.searchParams.set("tickerLang", n.lang);
-      u.searchParams.set("tickerSpeed", String(n.speedPxPerSec));
-      u.searchParams.set("tickerRefresh", String(n.refreshMins));
-      u.searchParams.set("tickerTop", String(n.topPx));
-      u.searchParams.set("tickerHideOnVote", n.hideOnVote ? "1" : "0");
-      u.searchParams.set("tickerSpan", n.timespan);
-      u.searchParams.set("tickerBilingual", n.bilingual ? "1" : "0");
-      u.searchParams.set("tickerTranslateMax", String(n.translateMax));
-      u.searchParams.set("tickerSources", (n.sources || []).join(","));
-
-      // ECON
-      u.searchParams.set("econ", e.enabled ? "1" : "0");
-      u.searchParams.set("econSpeed", String(e.speedPxPerSec));
-      u.searchParams.set("econRefresh", String(e.refreshMins));
-      u.searchParams.set("econTop", String(e.topPx));
-      u.searchParams.set("econHideOnVote", e.hideOnVote ? "1" : "0");
-      u.searchParams.set("econMode", e.mode);
-      u.searchParams.set("econClocks", e.showClocks ? "1" : "0");
-
-      const ok = await copyToClipboard(u.toString());
-      const st = qs("#ctlTickerStatus");
-      if (st) st.textContent = ok ? "URL completa copiada ✅" : "No se pudo copiar ❌";
-      setTimeout(() => {
-        const st2 = qs("#ctlTickerStatus");
-        if (st2) st2.textContent = `Ticker: ${n.enabled ? "ON" : "OFF"} · ${KEY ? `KEY:${KEY}` : "SIN KEY"}`;
-      }, 900);
-    });
-  }
 
   // ───────────────────────── boot
   function boot() {
     NEWS.boot();
     ECON.boot();
-    ensureCopyAllButton();
   }
 
   if (document.readyState === "loading") {
