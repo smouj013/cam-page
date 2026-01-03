@@ -1,12 +1,9 @@
-/* rlcTickers.js — RLC Unified Tickers v2.0.0 (NEWS + ECON)
-   ✅ Unifica:
-      - newsTicker.js (v1.6.x)
-      - econTicker.js (v1.0.x)
-   ✅ KEY namespace: rlc_bus_v1:{key}, cfg/cache por {key} + legacy
-   ✅ Split layout >=980px: ECON izquierda + NEWS derecha (mismo “row” en RLCUiBars)
-   ✅ Stack layout <980px: NEWS arriba + ECON abajo (RLCUiBars)
+/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.1.0 (NO RLCUiBars)
+   ✅ NEWS + ECON con MISMO markup + MISMA piel (Neo-Atlas)
+   ✅ Siempre full-width y en stack: NEWS arriba, ECON abajo
+   ✅ Calcula y aplica: --rlcNewsTop, --rlcEconTop, --rlcTickerH
    ✅ Robust fetch: direct -> AllOrigins -> r.jina.ai
-   ✅ No rompe tu CSS: solo inyecta “split fixes” + estilo base del ECON (porque no existía)
+   ✅ No rompe IDs/clases existentes: #rlcNewsTicker #rlcEconTicker, .tickerInner/.tickerBadge/.tickerText/.tickerMarquee
 */
 
 (() => {
@@ -14,7 +11,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V200";
+  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V210";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers
@@ -73,22 +70,16 @@
 
   // ───────────────────────── Bus + storage keys (namespaced + legacy)
   const BUS_BASE = "rlc_bus_v1";
-
   const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE) : null;
 
   function keyOk(msg, fromNamespacedChannel) {
     if (!KEY) return true;
-    if (fromNamespacedChannel) return true; // ya viene por rlc_bus_v1:{key}
+    if (fromNamespacedChannel) return true;
     return !!(msg && msg.key === KEY);
   }
-
-  const SPLIT_MQ = "(min-width: 980px)";
-  const isSplit = () => {
-    try { return !!window.matchMedia && window.matchMedia(SPLIT_MQ).matches; }
-    catch (_) { return false; }
-  };
 
   // ───────────────────────── Robust fetch
   async function fetchText(url, timeoutMs = 9000) {
@@ -100,15 +91,14 @@
       return await r.text();
     } finally { clearTimeout(t); }
   }
-  function allOrigins(url) {
-    return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-  }
-  function jina(url) {
+  const allOrigins = (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+  const jina = (url) => {
     const u = safeStr(url);
     if (u.startsWith("https://")) return `https://r.jina.ai/https://${u.slice("https://".length)}`;
     if (u.startsWith("http://"))  return `https://r.jina.ai/http://${u.slice("http://".length)}`;
     return `https://r.jina.ai/https://${u}`;
-  }
+  };
+
   async function fetchTextRobust(url) {
     const tries = [
       () => fetchText(url),
@@ -131,19 +121,14 @@
     const s = safeStr(txt);
     if (!s) return null;
 
-    // JSONP wrapper: foo({...})
     const m = s.match(/^[a-zA-Z_$][\w$]*\(([\s\S]+)\)\s*;?\s*$/);
-    if (m && m[1]) {
-      try { return JSON.parse(m[1]); } catch (_) {}
-    }
+    if (m && m[1]) { try { return JSON.parse(m[1]); } catch (_) {} }
 
     try { return JSON.parse(s); } catch (_) {}
 
     const a = s.indexOf("{");
     const b = s.lastIndexOf("}");
-    if (a >= 0 && b > a) {
-      try { return JSON.parse(s.slice(a, b + 1)); } catch (_) {}
-    }
+    if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch (_) {} }
     return null;
   }
 
@@ -154,7 +139,6 @@
       () => fetchText(jina(url))
     ];
     let lastErr = null;
-
     for (const fn of tries) {
       try {
         const txt = await fn();
@@ -166,118 +150,18 @@
     throw lastErr || new Error("fetchJsonRobust failed");
   }
 
-  // ───────────────────────── RLCUiBars v2
-  function ensureUiBars() {
-    const ok = g.RLCUiBars && typeof g.RLCUiBars.set === "function" && typeof g.RLCUiBars.recalc === "function" && g.RLCUiBars.__rlcVer === 2;
-    if (ok) return;
-
-    const bars = new Map();
-
-    const safeNum = (x, fb) => {
-      const n = parseFloat(String(x ?? "").trim());
-      return Number.isFinite(n) ? n : fb;
-    };
-    const cssNum = (varName, fb) => {
-      try {
-        const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-        return safeNum(v, fb);
-      } catch (_) { return fb; }
-    };
-    const setVar = (name, val) => {
-      try { document.documentElement.style.setProperty(name, val); } catch (_) {}
-    };
-
-    const API = {
-      __rlcVer: 2,
-      set(id, cfg) {
-        const c = Object.assign({}, cfg || {});
-        c.enabled = !!c.enabled;
-        c.height = Number.isFinite(+c.height) ? +c.height : 0;
-        c.wantTop = Number.isFinite(+c.wantTop) ? +c.wantTop : 10;
-        c.cssTopVar = safeStr(c.cssTopVar) || "";
-        c.priority = Number.isFinite(+c.priority) ? +c.priority : 999;
-        c.group = safeStr(c.group) || "";
-        bars.set(String(id), c);
-        API.recalc();
-      },
-      remove(id) {
-        bars.delete(String(id));
-        API.recalc();
-      },
-      recalc() {
-        // gap default
-        const gapRaw = (() => {
-          try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
-          catch (_) { return ""; }
-        })();
-        if (!gapRaw) setVar("--rlcTickerGap", "12px");
-
-        const gap = cssNum("--rlcTickerGap", 12);
-
-        const enabled = Array.from(bars.entries())
-          .map(([id, c]) => ({ id, ...c }))
-          .filter(b => b.enabled);
-
-        const baseTop = enabled.length
-          ? Math.min(...enabled.map(b => Number.isFinite(b.wantTop) ? b.wantTop : 10))
-          : cssNum("--rlcTickerTop", 10);
-
-        const rowsMap = new Map();
-        for (const b of enabled) {
-          const rowKey = b.group ? `g:${b.group}` : `i:${b.id}`;
-          if (!rowsMap.has(rowKey)) rowsMap.set(rowKey, []);
-          rowsMap.get(rowKey).push(b);
-        }
-
-        const rows = Array.from(rowsMap.entries()).map(([rowKey, list]) => {
-          const pri = Math.min(...list.map(x => x.priority));
-          const wantTopRow = Math.min(...list.map(x => x.wantTop));
-          const h = Math.max(...list.map(x => x.height));
-          return { rowKey, list, priority: pri, wantTop: wantTopRow, height: h };
-        });
-
-        rows.sort((a, b) => (a.priority - b.priority) || String(a.rowKey).localeCompare(String(b.rowKey)));
-
-        let y = 0;
-        for (const row of rows) {
-          const top = baseTop + y;
-          for (const b of row.list) {
-            if (b.cssTopVar) setVar(b.cssTopVar, `${top}px`);
-          }
-          y += row.height + gap;
-        }
-
-        const totalH = rows.length ? Math.max(0, y - gap) : 0;
-        setVar("--rlcTickerTop", `${baseTop}px`);
-        setVar("--rlcTickerH", `${totalH}px`);
-      }
-    };
-
-    g.RLCUiBars = API;
+  // ───────────────────────── Shared DOM utils
+  function sanitizeUrl(u) {
+    const s = safeStr(u);
+    if (!s) return "";
+    try {
+      const url = new URL(s, location.href);
+      const p = url.protocol.toLowerCase();
+      if (p === "http:" || p === "https:") return url.toString();
+      return "";
+    } catch (_) { return ""; }
   }
 
-  // ───────────────────────── Split layout patch (solo “colocación”)
-  function injectSplitFixesOnce() {
-    if (qs("#rlcTickersSplitFix")) return;
-    const st = document.createElement("style");
-    st.id = "rlcTickersSplitFix";
-    st.textContent = `
-/* Split layout (>=980px): ECON izquierda / NEWS derecha, misma fila */
-@media (min-width: 980px){
-  #rlcEconTicker{
-    right: calc(50% + 8px) !important;
-    left: 10px !important;
-  }
-  #rlcNewsTicker{
-    left: calc(50% + 8px) !important;
-    right: 10px !important;
-  }
-}
-`.trim();
-    document.head.appendChild(st);
-  }
-
-  // ───────────────────────── Hide on vote shared helper
   function isElementVisible(el) {
     if (!el) return false;
     const cs = window.getComputedStyle(el);
@@ -286,6 +170,53 @@
     const r = el.getBoundingClientRect();
     return (r.width > 0 && r.height > 0);
   }
+
+  // ───────────────────────── Layout (NO RLCUiBars)
+  const LAYOUT = (() => {
+    function cssPx(varName, fb) {
+      try {
+        const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        const n = parseFloat(String(v).replace("px", "").trim());
+        return Number.isFinite(n) ? n : fb;
+      } catch (_) { return fb; }
+    }
+    function setVar(name, val) {
+      try { document.documentElement.style.setProperty(name, val); } catch (_) {}
+    }
+
+    // newsCfgTop / econCfgTop: topPx individuales (si ambos ON, se usa el menor para alinear el bloque)
+    function apply({ newsOn, econOn, newsCfgTop, econCfgTop }) {
+      const barH = cssPx("--rlcBarH", 34);
+      const gap = cssPx("--rlcTickerGap", cssPx("--rlcTickerGap", 12)) || 12;
+
+      const onN = !!newsOn;
+      const onE = !!econOn;
+
+      const baseTop =
+        (onN && onE) ? Math.min(newsCfgTop ?? 10, econCfgTop ?? 10)
+        : (onN ? (newsCfgTop ?? 10)
+        : (onE ? (econCfgTop ?? 10) : (newsCfgTop ?? econCfgTop ?? 10)));
+
+      const newsTop = baseTop;
+      const econTop = baseTop + (onN ? (barH + gap) : 0);
+
+      const count = (onN ? 1 : 0) + (onE ? 1 : 0);
+      const totalH = (count === 0) ? 0 : (count * barH + ((count > 1) ? gap : 0));
+
+      setVar("--rlcTickerTop", `${baseTop}px`);
+      setVar("--rlcNewsTop", `${newsTop}px`);
+      setVar("--rlcEconTop", `${econTop}px`);
+      setVar("--rlcTickerH", `${totalH}px`);
+
+      // útil para debug visual si quieres
+      try {
+        document.documentElement.dataset.rlcNewsOn = onN ? "1" : "0";
+        document.documentElement.dataset.rlcEconOn = onE ? "1" : "0";
+      } catch (_) {}
+    }
+
+    return { apply };
+  })();
 
   // ======================================================================
   // NEWS TICKER
@@ -317,10 +248,8 @@
       topPx: 10,              // 0..120
       hideOnVote: true,
       timespan: "1d",
-
       bilingual: true,
       translateMax: 10,
-
       sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
     };
 
@@ -377,6 +306,7 @@
         const arr = P.tickerSources.split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
         if (arr.length) out.sources = arr;
       }
+      if (P.ticker === "0") out.enabled = false;
       return out;
     }
 
@@ -389,10 +319,8 @@
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
       c.hideOnVote = (c.hideOnVote !== false);
       c.timespan = normalizeTimespan(c.timespan);
-
       c.bilingual = (c.bilingual !== false);
       c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
-
       c.sources = normalizeSources(c.sources);
       return c;
     }
@@ -407,11 +335,7 @@
 
     let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
 
-    // UI
     function ensureUI() {
-      ensureUiBars();
-      injectSplitFixesOnce();
-
       let root = qs("#rlcNewsTicker");
       if (root) return root;
 
@@ -433,26 +357,10 @@
       return root;
     }
 
-    function registerBar(on) {
-      try {
-        ensureUiBars();
-        const group = isSplit() ? "topline" : "";
-        g.RLCUiBars.set("news", {
-          enabled: !!on,
-          wantTop: CFG.topPx,
-          height: 34,
-          cssTopVar: "--rlcNewsTop",
-          priority: 10,
-          group
-        });
-      } catch (_) {}
-    }
-
     function setVisible(on) {
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
-      registerBar(on);
     }
 
     function uiLangEffective() {
@@ -466,7 +374,6 @@
       else label.textContent = (uiLangEffective() === "en") ? "NEWS" : "NOTICIAS";
     }
 
-    // helpers
     function uniqBy(arr, keyFn) {
       const seen = new Set();
       const out = [];
@@ -511,17 +418,6 @@
       if (!src) return "NEWS";
       const cleaned = src.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
       return cleaned.toUpperCase().slice(0, 18);
-    }
-
-    function sanitizeUrl(u) {
-      const s = safeStr(u);
-      if (!s) return "";
-      try {
-        const url = new URL(s, location.href);
-        const p = url.protocol.toLowerCase();
-        if (p === "http:" || p === "https:") return url.toString();
-        return "";
-      } catch (_) { return ""; }
     }
 
     // translation cache
@@ -602,7 +498,6 @@
       return "";
     }
 
-    // fetch headlines
     async function getHeadlinesFromGdelt() {
       const q = API.gdelt.query_en;
       const finalQ = `(${q}) sourcelang:eng`;
@@ -741,7 +636,6 @@
       return out;
     }
 
-    // render
     function buildSegment(items) {
       const uiLang = uiLangEffective();
       const list = (Array.isArray(items) && items.length) ? items : [
@@ -830,7 +724,6 @@
       }
     }
 
-    // cache
     function cacheKey() {
       const srcKey = (CFG.sources || []).join(",");
       return `${CFG.timespan}|src=${srcKey}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
@@ -908,7 +801,6 @@
       try {
         const en = await getHeadlinesEnMixed();
         const bi = await makeBilingual(en);
-
         setTickerItems(bi);
         writeCache(ck, bi);
       } catch (e) {
@@ -934,8 +826,6 @@
       if (!CFG.enabled) setVisible(false);
       else setVisible(true);
 
-      try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {}
-
       setupHideOnVote();
       startTimer();
       refresh(true);
@@ -950,7 +840,7 @@
     }
 
     function boot() {
-      if (P.ticker === "0") return; // OFF by URL
+      if (P.ticker === "0") { CFG.enabled = false; }
       ensureUI();
       applyCfg(CFG, false);
 
@@ -962,24 +852,17 @@
 
       refresh(false);
 
-      // re-register on split changes
-      try {
-        const mm = window.matchMedia && window.matchMedia(SPLIT_MQ);
-        if (mm) {
-          const onCh = () => { registerBar(CFG.enabled); try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {} };
-          if (mm.addEventListener) mm.addEventListener("change", onCh);
-          else if (mm.addListener) mm.addListener(onCh);
-        }
-      } catch (_) {}
-
       log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
     }
 
-    return { boot, onMessage, applyCfg };
+    function getCfg() { return CFG; }
+    function isOn() { return !!CFG.enabled; }
+
+    return { boot, onMessage, applyCfg, getCfg, isOn };
   })();
 
   // ======================================================================
-  // ECON TICKER
+  // ECON TICKER (mismo markup que NEWS)
   // ======================================================================
   const ECON = (() => {
     const CFG_KEY_BASE = "rlc_econ_cfg_v1";
@@ -1002,14 +885,12 @@
       hideOnVote: true,
       mode: "daily",       // daily|sinceLast
       showClocks: true,
-
       clocks: [
         { label: "MAD", country: "ES", tz: "Europe/Madrid" },
         { label: "NY",  country: "US", tz: "America/New_York" },
         { label: "LDN", country: "GB", tz: "Europe/London" },
         { label: "TYO", country: "JP", tz: "Asia/Tokyo" }
       ],
-
       items: [
         { id:"btc",  label:"BTC/USD", stooq:"btcusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"bitcoin" },
         { id:"eth",  label:"ETH/USD", stooq:"ethusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"ethereum" },
@@ -1023,8 +904,12 @@
 
     function normalizeMode(v) {
       const s = safeStr(v).toLowerCase();
-      if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sinceLast") return "sinceLast";
-      return "daily";
+      if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sincelast") return "sinceLast";
+      if (s === "sincelast" || s === "sincelast") return "sinceLast";
+      if (s === "sincelast") return "sinceLast";
+      if (s === "sinceLast") return "sinceLast";
+      if (s === "since_last" || s === "since-last") return "sinceLast";
+      return (s === "sincelast") ? "sinceLast" : (s === "sinceLast" ? "sinceLast" : (s === "daily" ? "daily" : "daily"));
     }
 
     function normalizeClocks(list) {
@@ -1071,7 +956,7 @@
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 20);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
       c.hideOnVote = (c.hideOnVote !== false);
-      c.mode = normalizeMode(c.mode);
+      c.mode = (safeStr(c.mode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
       c.showClocks = (c.showClocks !== false);
       c.clocks = normalizeClocks(c.clocks);
       c.items = normalizeItems(c.items);
@@ -1085,9 +970,10 @@
       if (P.econTop) out.topPx = clamp(num(P.econTop, DEFAULTS.topPx), 0, 120);
       if (P.econHideOnVote === "0") out.hideOnVote = false;
       if (P.econHideOnVote === "1") out.hideOnVote = true;
-      if (P.econMode) out.mode = normalizeMode(P.econMode);
+      if (P.econMode) out.mode = (safeStr(P.econMode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
       if (P.econClocks === "0") out.showClocks = false;
       if (P.econClocks === "1") out.showClocks = true;
+      if (P.econ === "0") out.enabled = false;
       return out;
     }
 
@@ -1102,160 +988,20 @@
 
     let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
 
-    // ───────────────────────── ECON CSS (base) + uses UiBars vars
-    function injectEconStylesOnce() {
-      if (qs("#rlcEconTickerStyle")) return;
-
-      const st = document.createElement("style");
-      st.id = "rlcEconTickerStyle";
-      st.textContent = `
-#rlcEconTicker{
-  position: fixed;
-  left: 10px; right: 10px;
-  top: var(--rlcEconTop, var(--rlcTickerTop, 10px));
-  height: 34px;
-  z-index: 999999;
-  display:flex; align-items:center;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(10,14,20,.88), rgba(8,10,14,.78));
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: 0 14px 40px rgba(0,0,0,.45);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  overflow: hidden;
-  pointer-events: auto;
-}
-#rlcEconTicker.hidden{ display:none !important; }
-
-#rlcEconTicker .label{
-  flex: 0 0 auto;
-  height: 100%;
-  display:flex; align-items:center; gap: 8px;
-  padding: 0 12px;
-  border-right: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(90deg, rgba(25,226,138,.22), rgba(25,226,138,0));
-  font: 900 12px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,.92);
-  user-select:none;
-  white-space: nowrap;
-}
-#rlcEconTicker .dot{
-  width: 8px; height: 8px; border-radius: 999px;
-  background: #19e28a;
-  box-shadow: 0 0 0 3px rgba(25,226,138,.18), 0 0 16px rgba(25,226,138,.45);
-}
-
-#rlcEconTicker .viewport{
-  position: relative;
-  overflow:hidden;
-  height: 100%;
-  flex: 1 1 auto;
-  display:flex; align-items:center;
-}
-#rlcEconTicker .fadeL,
-#rlcEconTicker .fadeR{
-  position:absolute; top:0; bottom:0; width: 46px;
-  z-index: 2; pointer-events:none;
-}
-#rlcEconTicker .fadeL{ left:0; background: linear-gradient(90deg, rgba(8,10,14,1), rgba(8,10,14,0)); }
-#rlcEconTicker .fadeR{ right:0; background: linear-gradient(270deg, rgba(8,10,14,1), rgba(8,10,14,0)); }
-
-#rlcEconTicker .track{
-  position: relative;
-  z-index: 1;
-  display:flex; align-items:center; gap: 14px;
-  white-space: nowrap;
-  will-change: transform;
-  transform: translate3d(0,0,0);
-  animation: rlcEconMove var(--rlcTickerDur, 60s) linear infinite;
-}
-#rlcEconTicker:hover .track{ animation-play-state: paused; }
-
-#rlcEconTicker .seg{
-  display:flex; align-items:center; gap: 14px;
-  white-space: nowrap;
-}
-#rlcEconTicker .item{
-  display:inline-flex;
-  align-items:center;
-  gap: 10px;
-  font: 800 12px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  color: rgba(255,255,255,.92);
-  text-decoration: none;
-  opacity: .92;
-}
-#rlcEconTicker .item:hover{ opacity: 1; text-decoration: underline; }
-#rlcEconTicker .sep{
-  width: 5px; height: 5px; border-radius:999px;
-  background: rgba(255,255,255,.28);
-  box-shadow: 0 0 0 3px rgba(255,255,255,.06);
-}
-
-#rlcEconTicker .ico{
-  width: 18px; height: 18px; border-radius: 6px;
-  display:inline-flex; align-items:center; justify-content:center;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.12);
-  overflow:hidden;
-  flex: 0 0 auto;
-}
-#rlcEconTicker .ico img{
-  width: 16px; height: 16px; object-fit: contain;
-  filter: invert(1);
-  opacity: .95;
-}
-#rlcEconTicker .ico .glyph{ font-size: 14px; line-height: 1; }
-
-#rlcEconTicker .nm{ font-weight: 950; letter-spacing: .02em; }
-#rlcEconTicker .px{ font-variant-numeric: tabular-nums; opacity: .92; }
-#rlcEconTicker .chg{ font-variant-numeric: tabular-nums; opacity: .92; }
-#rlcEconTicker .chg.up{ color:#19e28a; }
-#rlcEconTicker .chg.down{ color:#ff5a5a; }
-#rlcEconTicker .meta{
-  display:inline-flex; align-items:center; gap:6px;
-  opacity: .70;
-  font-weight: 850;
-}
-#rlcEconTicker .flag{ font-size: 14px; line-height: 1; }
-#rlcEconTicker .clk{ font-variant-numeric: tabular-nums; }
-
-@keyframes rlcEconMove{
-  from{ transform: translate3d(0,0,0); }
-  to{ transform: translate3d(var(--rlcTickerEnd, -1200px),0,0); }
-}
-
-@media (prefers-reduced-motion: reduce){
-  #rlcEconTicker .track{ animation: none !important; transform:none !important; }
-}
-`.trim();
-
-      document.head.appendChild(st);
-    }
-
     function ensureUI() {
-      ensureUiBars();
-      injectSplitFixesOnce();
-      injectEconStylesOnce();
-
       let root = qs("#rlcEconTicker");
       if (root) return root;
 
       root = document.createElement("div");
       root.id = "rlcEconTicker";
+      root.setAttribute("role", "region");
       root.setAttribute("aria-label", "Ticker económico");
+
       root.innerHTML = `
-        <div class="label" title="Mercados">
-          <span class="dot" aria-hidden="true"></span>
-          <span id="rlcEconTickerLabel">MARKETS · MERCADOS</span>
-        </div>
-        <div class="viewport">
-          <div class="fadeL" aria-hidden="true"></div>
-          <div class="fadeR" aria-hidden="true"></div>
-          <div class="track" id="rlcEconTickerTrack" aria-live="polite">
-            <div class="seg" id="rlcEconTickerSeg"></div>
-            <div class="seg" id="rlcEconTickerSeg2" aria-hidden="true"></div>
+        <div class="tickerInner">
+          <div class="tickerBadge"><span id="rlcEconTickerLabel">MARKETS · MERCADOS</span></div>
+          <div class="tickerText">
+            <div class="tickerMarquee" id="rlcEconMarquee" aria-live="polite"></div>
           </div>
         </div>
       `.trim();
@@ -1264,26 +1010,10 @@
       return root;
     }
 
-    function registerBar(on) {
-      try {
-        ensureUiBars();
-        const group = isSplit() ? "topline" : "";
-        g.RLCUiBars.set("econ", {
-          enabled: !!on,
-          wantTop: CFG.topPx,
-          height: 34,
-          cssTopVar: "--rlcEconTop",
-          priority: 20, // debajo del news en stack; mismo row en split por group
-          group
-        });
-      } catch (_) {}
-    }
-
     function setVisible(on) {
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
-      registerBar(on);
     }
 
     // ───────────────────────── Flags + clocks + fmt
@@ -1329,7 +1059,7 @@
       return c ? (c + " ") : "";
     }
 
-    // ───────────────────────── Icons (FREE)
+    // Icons (FREE)
     function simpleIconUrl(slug) {
       const s = safeStr(slug).toLowerCase();
       if (!s) return "";
@@ -1359,36 +1089,28 @@
     }
 
     // ───────────────────────── Stooq
-    function stooqLastUrl(sym) {
-      return `https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`;
-    }
-    function stooqDailyUrl(sym) {
-      return `https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`;
-    }
+    const stooqLastUrl  = (sym) => `https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`;
+    const stooqDailyUrl = (sym) => `https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`;
 
-    function csvLineSplit(text) {
-      return String(text || "").trim().split(/\r?\n/).filter(Boolean);
-    }
-    function csvSplitRow(line) {
-      return String(line || "").split(",").map(s => s.trim());
-    }
-    function toNum(v) {
+    const csvLineSplit = (text) => String(text || "").trim().split(/\r?\n/).filter(Boolean);
+    const csvSplitRow  = (line) => String(line || "").split(",").map(s => s.trim());
+    const toNum = (v) => {
       const s = String(v ?? "").trim();
       if (!s || s === "N/D" || s === "ND" || s === "NA") return null;
       const n = parseFloat(s.replace(",", "."));
       return Number.isFinite(n) ? n : null;
-    }
+    };
 
     async function getLastClose(sym) {
       const txt = await fetchTextRobust(stooqLastUrl(sym));
       const lines = csvLineSplit(txt);
       if (lines.length < 2) throw new Error("CSV short");
       const head = csvSplitRow(lines[0]);
-      const row = csvSplitRow(lines[1]);
+      const row  = csvSplitRow(lines[1]);
 
       const idxClose = head.findIndex(h => h.toLowerCase() === "close");
-      const idxDate = head.findIndex(h => h.toLowerCase() === "date");
-      const idxTime = head.findIndex(h => h.toLowerCase() === "time");
+      const idxDate  = head.findIndex(h => h.toLowerCase() === "date");
+      const idxTime  = head.findIndex(h => h.toLowerCase() === "time");
 
       const close = toNum(row[idxClose]);
       const dt = `${row[idxDate] || ""} ${row[idxTime] || ""}`.trim();
@@ -1416,10 +1138,10 @@
     }
 
     // cache
-    function cacheKey() {
+    const cacheKey = () => {
       const list = (CFG.items || []).map(x => safeStr(x.stooq)).join(",");
       return `m=${CFG.mode}|list=${list}`;
-    }
+    };
 
     function readCache() {
       const c = readJson(CACHE_KEY_NS) || readJson(CACHE_KEY_LEGACY);
@@ -1439,7 +1161,7 @@
       return t;
     }
 
-    // clock live updater (no fetch)
+    // clocks live updater (no fetch)
     let clockTimer = null;
     function startClockTimer() {
       if (clockTimer) return;
@@ -1448,70 +1170,63 @@
           const nodes = document.querySelectorAll("[data-rlc-tz][data-rlc-clock='1']");
           nodes.forEach((n) => {
             const tz = n.getAttribute("data-rlc-tz") || "UTC";
-            const label = n.getAttribute("data-rlc-label") || "";
-            n.textContent = label ? `${label} ${fmtTime(tz)}` : fmtTime(tz);
+            n.textContent = fmtTime(tz);
           });
         } catch (_) {}
       }, 1000);
     }
 
-    function buildItemsDOM(model) {
-      const frag = document.createDocumentFragment();
-      const pushSep = () => {
-        const sep = document.createElement("span");
-        sep.className = "sep";
-        sep.setAttribute("aria-hidden", "true");
-        frag.appendChild(sep);
-      };
+    // Render (mismo estilo que NEWS)
+    function buildSegment(model) {
+      const seg = document.createElement("span");
+      seg.className = "tkSeg";
 
       let first = true;
+      const addSep = () => {
+        const s = document.createElement("span");
+        s.className = "tkSep";
+        s.textContent = "•";
+        seg.appendChild(s);
+      };
 
       // clocks
       if (CFG.showClocks && Array.isArray(model.clocks) && model.clocks.length) {
         for (const c of model.clocks) {
-          if (!first) pushSep();
+          if (!first) addSep();
           first = false;
 
-          const a = document.createElement("a");
-          a.className = "item";
-          a.href = "#";
-          a.addEventListener("click", (e) => e.preventDefault());
+          const el = document.createElement("span");
+          el.className = "tkItem";
 
           const meta = document.createElement("span");
-          meta.className = "meta";
-
-          const flag = document.createElement("span");
-          flag.className = "flag";
-          flag.textContent = flagEmoji(c.country);
+          meta.className = "tkMeta";
+          meta.textContent = `${flagEmoji(c.country)} ${c.label || "CLK"} `;
 
           const clk = document.createElement("span");
-          clk.className = "clk";
+          clk.className = "tkMeta";
           clk.setAttribute("data-rlc-clock", "1");
           clk.setAttribute("data-rlc-tz", c.tz || "UTC");
-          clk.setAttribute("data-rlc-label", c.label || "");
-          clk.textContent = `${c.label || "CLK"} ${fmtTime(c.tz || "UTC")}`;
+          clk.textContent = fmtTime(c.tz || "UTC");
 
-          meta.appendChild(flag);
-          meta.appendChild(clk);
-          a.appendChild(meta);
-
-          frag.appendChild(a);
+          el.appendChild(meta);
+          el.appendChild(clk);
+          seg.appendChild(el);
         }
       }
 
       // assets
-      for (const it of model.items || []) {
-        if (!first) pushSep();
+      for (const it of (model.items || [])) {
+        if (!first) addSep();
         first = false;
 
         const a = document.createElement("a");
-        a.className = "item";
+        a.className = "tkItem";
         a.href = `https://stooq.com/q/?s=${encodeURIComponent(it.stooq)}`;
         a.target = "_blank";
         a.rel = "noreferrer noopener";
 
         const icoWrap = document.createElement("span");
-        icoWrap.className = "ico";
+        icoWrap.className = "tkIco";
         const ic = iconFor(it);
 
         if (ic.type === "img") {
@@ -1524,7 +1239,7 @@
             try {
               img.remove();
               const sp = document.createElement("span");
-              sp.className = "glyph";
+              sp.className = "tkGlyph";
               sp.textContent = safeStr(it.glyph) || guessGlyph(it.kind);
               icoWrap.appendChild(sp);
             } catch (_) {}
@@ -1532,21 +1247,21 @@
           icoWrap.appendChild(img);
         } else {
           const sp = document.createElement("span");
-          sp.className = "glyph";
+          sp.className = "tkGlyph";
           sp.textContent = ic.glyph;
           icoWrap.appendChild(sp);
         }
 
         const nm = document.createElement("span");
-        nm.className = "nm";
+        nm.className = "tkNm";
         nm.textContent = clampLen(it.label || it.stooq.toUpperCase(), 18);
 
         const px = document.createElement("span");
-        px.className = "px";
+        px.className = "tkPx";
         px.textContent = it.priceText || "—";
 
         const chg = document.createElement("span");
-        chg.className = "chg";
+        chg.className = "tkChg";
         if (it.changeText) {
           chg.textContent = it.changeText;
           if (it.changeDir === "up") chg.classList.add("up");
@@ -1556,21 +1271,8 @@
         }
 
         const meta = document.createElement("span");
-        meta.className = "meta";
-
-        const flag = document.createElement("span");
-        flag.className = "flag";
-        flag.textContent = flagEmoji(it.country);
-
-        const clk = document.createElement("span");
-        clk.className = "clk";
-        clk.setAttribute("data-rlc-clock", "1");
-        clk.setAttribute("data-rlc-tz", it.tz || "UTC");
-        clk.setAttribute("data-rlc-label", "");
-        clk.textContent = fmtTime(it.tz || "UTC");
-
-        meta.appendChild(flag);
-        meta.appendChild(clk);
+        meta.className = "tkMeta";
+        meta.textContent = `${flagEmoji(it.country)} ${fmtTime(it.tz || "UTC")}`;
 
         a.appendChild(icoWrap);
         a.appendChild(nm);
@@ -1578,49 +1280,39 @@
         if (it.changeText) a.appendChild(chg);
         a.appendChild(meta);
 
-        frag.appendChild(a);
+        seg.appendChild(a);
       }
 
-      return frag;
+      return seg;
     }
 
     function setTickerItems(model) {
       const root = ensureUI();
-      const track = qs("#rlcEconTickerTrack", root);
-      const seg1 = qs("#rlcEconTickerSeg", root);
-      const seg2 = qs("#rlcEconTickerSeg2", root);
-      const viewport = track ? track.parentElement : null;
-      if (!root || !track || !seg1 || !seg2) return;
+      const marquee = qs("#rlcEconMarquee", root);
+      if (!marquee) return;
 
-      // stop animation
-      track.style.animation = "none";
-      void track.offsetHeight;
+      marquee.innerHTML = "";
 
-      seg1.innerHTML = "";
-      seg2.innerHTML = "";
+      const seg1 = buildSegment(model);
+      const seg2 = seg1.cloneNode(true);
 
-      seg1.appendChild(buildItemsDOM(model));
+      marquee.appendChild(seg1);
+      marquee.appendChild(seg2);
+
       startClockTimer();
 
-      const vw = viewport ? (viewport.clientWidth || 900) : 900;
+      const textWrap = marquee.parentElement;
+      const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
+      const w = Math.max(300, seg1.scrollWidth || 300);
 
-      // Si queda corto, duplica contenido (rápido y efectivo)
-      let guard = 0;
-      while ((seg1.scrollWidth || 0) < vw * 1.15 && guard < 8) {
-        seg1.innerHTML += seg1.innerHTML;
-        guard++;
+      if (w > vw * 1.05) {
+        root.setAttribute("data-marquee", "1");
+        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+        root.style.setProperty("--rlcTickerDur", `${durSec}s`);
+      } else {
+        root.setAttribute("data-marquee", "0");
+        root.style.removeProperty("--rlcTickerDur");
       }
-      seg2.innerHTML = seg1.innerHTML;
-
-      const segW = Math.max(1200, seg1.scrollWidth || 1200);
-      const endPx = -segW;
-      const durSec = Math.max(18, Math.min(220, Math.abs(endPx) / CFG.speedPxPerSec));
-
-      track.style.setProperty("--rlcTickerEnd", `${endPx}px`);
-      track.style.setProperty("--rlcTickerDur", `${durSec}s`);
-
-      // restart animation
-      requestAnimationFrame(() => { track.style.animation = ""; });
     }
 
     // hide-on-vote
@@ -1658,7 +1350,6 @@
       domObs.observe(document.documentElement, { childList: true, subtree: true });
     }
 
-    // model build
     async function buildModel() {
       const items = CFG.items || [];
       const cache = readCache();
@@ -1691,19 +1382,12 @@
               try {
                 const dailyTxt = await fetchTextRobust(stooqDailyUrl(sym));
                 prev = parseDailyPrevClose(dailyTxt);
-              } catch (_) {
-                prev = null;
-              }
+              } catch (_) { prev = null; }
             } else {
               prev = (cached && Number.isFinite(cached.price)) ? cached.price : null;
             }
 
-            map[sym] = {
-              ts: Date.now(),
-              price,
-              prev: Number.isFinite(prev) ? prev : null,
-              dt
-            };
+            map[sym] = { ts: Date.now(), price, prev: Number.isFinite(prev) ? prev : null, dt };
           } catch (e) {
             err = String(e?.message || e || "");
             if (cached && Number.isFinite(cached.price)) {
@@ -1731,12 +1415,7 @@
             log("quote fail", sym, err);
           }
 
-          outItems.push(Object.assign({}, it, {
-            priceText,
-            changeText,
-            changeDir,
-            _dt: dt
-          }));
+          outItems.push(Object.assign({}, it, { priceText, changeText, changeDir, _dt: dt }));
         }
       }
 
@@ -1749,10 +1428,7 @@
 
       writeCache(ck, map);
 
-      return {
-        clocks: CFG.clocks || [],
-        items: outItems
-      };
+      return { clocks: CFG.clocks || [], items: outItems };
     }
 
     // refresh loop
@@ -1771,36 +1447,7 @@
         setTickerItems(model);
       } catch (e) {
         log("refresh error:", e?.message || e);
-
-        // fallback desde cache
-        const cache = readCache();
-        const ck = cacheKey();
-        const map = (cache && cache.key === ck && cache.map) ? cache.map : {};
-        const fallback = {
-          clocks: CFG.clocks || [],
-          items: (CFG.items || []).map(it => {
-            const c = map[it.stooq] || {};
-            const price = Number.isFinite(c.price) ? c.price : null;
-            const prev = Number.isFinite(c.prev) ? c.prev : null;
-
-            let priceText = "—";
-            let changeText = "";
-            let changeDir = "";
-
-            if (Number.isFinite(price)) {
-              priceText = `${currencyPrefix(it.currency)}${fmtNum(price, it.decimals)}`;
-              if (Number.isFinite(prev) && prev !== 0) {
-                const d = price - prev;
-                const p = (d / prev) * 100;
-                const sign = (d > 0) ? "+" : (d < 0) ? "−" : "";
-                changeText = `${sign}${fmtNum(Math.abs(d), 2)} (${sign}${Math.abs(p).toFixed(2)}%)`;
-                changeDir = (d > 0) ? "up" : (d < 0) ? "down" : "";
-              }
-            }
-            return Object.assign({}, it, { priceText, changeText, changeDir });
-          })
-        };
-        setTickerItems(fallback);
+        setTickerItems({ clocks: CFG.clocks || [], items: [] });
       } finally {
         refreshInFlight = false;
       }
@@ -1819,8 +1466,6 @@
       if (!CFG.enabled) setVisible(false);
       else setVisible(true);
 
-      try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {}
-
       setupHideOnVote();
       startTimer();
       refresh();
@@ -1835,7 +1480,7 @@
     }
 
     function boot() {
-      if (P.econ === "0") return; // OFF by URL
+      if (P.econ === "0") { CFG.enabled = false; }
       ensureUI();
       applyCfg(CFG, false);
 
@@ -1844,34 +1489,42 @@
 
       refresh();
 
-      // re-register on split changes
-      try {
-        const mm = window.matchMedia && window.matchMedia(SPLIT_MQ);
-        if (mm) {
-          const onCh = () => { registerBar(CFG.enabled); try { g.RLCUiBars && g.RLCUiBars.recalc(); } catch (_) {} };
-          if (mm.addEventListener) mm.addEventListener("change", onCh);
-          else if (mm.addListener) mm.addListener(onCh);
-        }
-      } catch (_) {}
-
       log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
     }
 
-    return { boot, onMessage, applyCfg };
+    function getCfg() { return CFG; }
+    function isOn() { return !!CFG.enabled; }
+
+    return { boot, onMessage, applyCfg, getCfg, isOn };
   })();
 
-  // ───────────────────────── Message routing (one bus for both)
+  // ───────────────────────── Layout sync (stack always)
+  function syncLayout() {
+    const nCfg = NEWS.getCfg ? NEWS.getCfg() : null;
+    const eCfg = ECON.getCfg ? ECON.getCfg() : null;
+
+    LAYOUT.apply({
+      newsOn: NEWS.isOn ? NEWS.isOn() : !!nCfg?.enabled,
+      econOn: ECON.isOn ? ECON.isOn() : !!eCfg?.enabled,
+      newsCfgTop: nCfg?.topPx ?? 10,
+      econCfgTop: eCfg?.topPx ?? 10
+    });
+  }
+
+  // ───────────────────────── Message routing
   function onBusMessage(msg, fromNamespaced) {
     NEWS.onMessage(msg, fromNamespaced);
     ECON.onMessage(msg, fromNamespaced);
+    // tras aplicar cfg por bus, re-stack
+    setTimeout(syncLayout, 0);
   }
 
   function boot() {
-    ensureUiBars();
-
-    // Boot each module
     NEWS.boot();
     ECON.boot();
+
+    // primer layout
+    syncLayout();
 
     // Bus listeners
     try {
@@ -1886,20 +1539,31 @@
       onBusMessage(msg, false);
     });
 
-    // storage sync (both cfg types)
+    // storage sync (cfg)
     window.addEventListener("storage", (e) => {
       if (!e || !e.key) return;
-      // NEWS
+
       if (e.key.startsWith("rlc_ticker_cfg_v1")) {
-        const stored = readJson(KEY ? `rlc_ticker_cfg_v1:${KEY}` : "rlc_ticker_cfg_v1") || readJson("rlc_ticker_cfg_v1");
+        const stored =
+          readJson(KEY ? `rlc_ticker_cfg_v1:${KEY}` : "rlc_ticker_cfg_v1") ||
+          readJson("rlc_ticker_cfg_v1");
         if (stored) NEWS.applyCfg(stored, false);
+        setTimeout(syncLayout, 0);
       }
-      // ECON
+
       if (e.key.startsWith("rlc_econ_cfg_v1")) {
-        const stored = readJson(KEY ? `rlc_econ_cfg_v1:${KEY}` : "rlc_econ_cfg_v1") || readJson("rlc_econ_cfg_v1");
+        const stored =
+          readJson(KEY ? `rlc_econ_cfg_v1:${KEY}` : "rlc_econ_cfg_v1") ||
+          readJson("rlc_econ_cfg_v1");
         if (stored) ECON.applyCfg(stored, false);
+        setTimeout(syncLayout, 0);
       }
     });
+
+    // por si cambia el tamaño/zoom (Opera GX…)
+    window.addEventListener("resize", () => {
+      syncLayout();
+    }, { passive: true });
   }
 
   if (document.readyState === "loading") {
