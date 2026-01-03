@@ -10,6 +10,13 @@
       - setShown añade aria-hidden y refuerzo de display:none
       - guardas extra en filtros / listas vacías
       - voteUi ahora soporta fase PRE (solo auto). Por defecto: comportamiento idéntico (PRE=0).
+   ✅ Compat UI (HUD footer):
+      - Space: play/pause
+      - N: siguiente
+      - P: anterior
+      - H: ocultar/mostrar HUD
+      - I: detalles (collapse/expand)
+      - C: chat on/off
 */
 (() => {
   "use strict";
@@ -122,7 +129,7 @@
       seed: u.searchParams.get("seed") || "",
       autoskip: parseBoolParam(u.searchParams.get("autoskip") ?? "1", true),
       mode: (u.searchParams.get("mode") || "").toLowerCase(),
-      debug: (u.searchParams.get("debug") === "1"),
+      debug: parseBoolParam(u.searchParams.get("debug"), false) || (u.searchParams.get("debug") === "1"),
       key,
       allowLegacy,
 
@@ -1118,8 +1125,8 @@
   let votePreActiveSec = 0;
 
   let voteCmdStr = String(P.voteCmd || "!next,!cam|!stay,!keep").trim();
-  let cmdYes = new Set(["!next","!cam"]);
-  let cmdNo = new Set(["!stay","!keep"]);
+  let cmdYes = new Set(["!next", "!cam"]);
+  let cmdNo = new Set(["!stay", "!keep"]);
 
   let voteSessionActive = false;
   let votePhase = "idle"; // idle | pre | lead | vote
@@ -1138,8 +1145,8 @@
     const parts = voteCmdStr.split("|");
     const a = (parts[0] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
     const b = (parts[1] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-    cmdYes = new Set(a.length ? a : ["!next","!cam"]);
-    cmdNo = new Set(b.length ? b : ["!stay","!keep"]);
+    cmdYes = new Set(a.length ? a : ["!next", "!cam"]);
+    cmdNo = new Set(b.length ? b : ["!stay", "!keep"]);
   }
   parseVoteCmds(voteCmdStr);
 
@@ -1276,7 +1283,7 @@
 
     const now = Date.now();
     const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
+    const no0 = [...cmdNo][0] || "!stay";
 
     if (votePhase === "pre") {
       const remToStart = Math.max(0, Math.ceil(((voteStartsAt || now) - now) / 1000));
@@ -1345,7 +1352,7 @@
       voteStartSequence(voteWindowSegSec, 0, 0);
 
       const yes0 = [...cmdYes][0] || "!next";
-      const no0  = [...cmdNo][0]  || "!stay";
+      const no0 = [...cmdNo][0] || "!stay";
       botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSegSec}s`);
     }
   }
@@ -1412,7 +1419,7 @@
     const st = document.createElement("style");
     st.id = "rlcTagVoteStyles";
     st.textContent =
-      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none}" +
+      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none;display:none}" +
       ".rlcTagVoteCard{background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.12);border-radius:18px;box-shadow:0 16px 46px rgba(0,0,0,.40);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 14px}" +
       ".rlcTagVoteTop{display:flex;justify-content:space-between;align-items:center;gap:12px}.rlcTagVoteTitle{font-weight:900;font-size:13px;color:rgba(255,255,255,.95)}" +
       ".rlcTagVoteTime{font-weight:900;font-size:12px;color:rgba(255,255,255,.85)}.rlcTagVoteHint{margin-top:4px;font-size:12px;color:rgba(255,255,255,.78)}" +
@@ -1689,7 +1696,7 @@
     lastHelpAt = now;
 
     const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
+    const no0 = [...cmdNo][0] || "!stay";
     botSay(`🛰️ Comandos: !now · !help · Vota: ${yes0} / ${no0} · Pedir voto: !callvote (5) · TagVote: !tagvote (5) y luego !1 !2 !3`);
   }
 
@@ -1788,13 +1795,13 @@
     const start = el.volume;
     const end = clamp(+targetVol || 0, 0, 1);
     const dur = clamp(ms | 0, 0, 2000);
-    if (dur <= 0) { try { el.volume = end; } catch(_) {} return; }
+    if (dur <= 0) { try { el.volume = end; } catch (_) {} return; }
     const t0 = Date.now();
     const timer = setInterval(() => {
       const k = clamp((Date.now() - t0) / dur, 0, 1);
       const v = start + (end - start) * k;
-      try { el.volume = clamp(v, 0, 1); } catch(_) {}
-      if (k >= 1) { try { clearInterval(timer); } catch(_) {} }
+      try { el.volume = clamp(v, 0, 1); } catch (_) {}
+      if (k >= 1) { try { clearInterval(timer); } catch (_) {} }
     }, 40);
   }
 
@@ -1816,7 +1823,7 @@
     if (!bgmEnabled || !bgmList.length || !bgmEl) return;
     try {
       if (!bgmEl.src) bgmLoadTrack(bgmIdx);
-      try { bgmEl.volume = 0; } catch(_) {}
+      try { bgmEl.volume = 0; } catch (_) {}
       const p = bgmEl.play();
       if (p && typeof p.then === "function") await p;
       fadeAudioTo(bgmEl, bgmVol, 320);
@@ -1829,7 +1836,7 @@
     try {
       if (bgmEl) {
         fadeAudioTo(bgmEl, 0, 220);
-        setTimeout(() => { try { bgmEl.pause(); } catch(_) {} }, 240);
+        setTimeout(() => { try { bgmEl.pause(); } catch (_) {} }, 240);
       }
     } catch (_) {}
     bgmPlaying = false;
@@ -2529,10 +2536,29 @@
     const t = (e.target && e.target.tagName) ? String(e.target.tagName).toLowerCase() : "";
     if (t === "input" || t === "textarea" || (e.target && e.target.isContentEditable)) return;
 
-    if (e.key === "ArrowRight") { e.preventDefault(); nextCam("key"); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); prevCam(); }
-    else if (e.key === " " || e.code === "Space") { e.preventDefault(); togglePlay(); }
-    else if (e.key.toLowerCase() === "h") { setHudHidden(!hud?.classList?.contains?.("hidden")); }
+    const k = String(e.key || "");
+    const low = k.toLowerCase();
+
+    if (k === "ArrowRight") { e.preventDefault(); nextCam("key"); return; }
+    if (k === "ArrowLeft") { e.preventDefault(); prevCam(); return; }
+
+    if (k === " " || e.code === "Space") { e.preventDefault(); togglePlay(); return; }
+
+    // HUD: H hide/show, I details (collapse)
+    if (low === "h") { e.preventDefault(); setHudHidden(!hud?.classList?.contains?.("hidden")); return; }
+    if (low === "i") {
+      e.preventDefault();
+      const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
+      setHudCollapsed(!collapsed);
+      return;
+    }
+
+    // N/P
+    if (low === "n") { e.preventDefault(); nextCam("key_n"); return; }
+    if (low === "p") { e.preventDefault(); prevCam(); return; }
+
+    // C chat toggle
+    if (low === "c") { e.preventDefault(); chatSetEnabled(!chatEnabled); return; }
   });
 
   // ───────────────────────── Main tick loop ─────────────────────────
@@ -2576,7 +2602,7 @@
 
         const wAuto = clamp(voteWindowSegSec | 0, 5, 180);
         const leadAuto = clamp(voteLeadSegSec | 0, 0, 30);
-        const uiAuto = clamp(voteUiSegSec | 0, 0, 300); // 0 => no PRE (pero aquí normalmente ya viene resuelto)
+        const uiAuto = clamp(voteUiSegSec | 0, 0, 300);
         voteStartSequence(wAuto, leadAuto, uiAuto);
       }
     }
