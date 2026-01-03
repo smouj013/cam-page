@@ -1312,6 +1312,47 @@ input[type="range"]{ accent-color: var(--accent); }
   }
 }
 
+/* ─────────────────────────────────────────────────────────────
+   RLC Neo-Atlas — Ticker Stack Patch (NO RLCUiBars) v3.5.2
+   ✅ Fuerza: full-width + stack (NEWS arriba, ECON abajo)
+   ✅ Fallbacks correctos si JS aún no ha seteado variables
+   PÉGALO AL FINAL de styles.css
+───────────────────────────────────────────────────────────── */
+
+:root{
+  /* Base top del bloque de tickers (JS lo ajusta también) */
+  --rlcTickerTop: 10px;
+
+  /* Si no existe, definimos gap explícito */
+  --rlcTickerGap: 12px;
+
+  /* Estado calculado por JS (altura total de barras activas) */
+  --rlcTickerH: 0px;
+}
+
+/* Fallbacks de top: stack siempre */
+#rlcNewsTicker{
+  top: var(--rlcNewsTop, var(--rlcTickerTop, 0px)) !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+#rlcEconTicker{
+  top: var(
+    --rlcEconTop,
+    calc(var(--rlcNewsTop, var(--rlcTickerTop, 0px)) + var(--rlcBarH) + var(--ticker-gap))
+  ) !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
+/* ✅ Desactiva el split >=980px aunque exista antes en el CSS */
+@media (min-width: 980px){
+  #rlcEconTicker,
+  #rlcNewsTicker{
+    left: 0 !important;
+    right: 0 !important;
+  }
+}
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle, .card, .pill{ transition: none !important; }
