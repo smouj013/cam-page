@@ -1,4 +1,4 @@
-/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY 500 + CATALOG 4-UP) v2.3.4
+/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY 500 + CATALOG 4-UP) v2.3.5
    ✅ Mantiene tus cams existentes (mismos ids) como "seed"
    ✅ VIDEO ONLY: NO exporta cams "image" (solo "youtube" y "hls")
    ✅ Sanitizador:
@@ -37,7 +37,7 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // Guard anti doble carga
-  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V234_VIDEOONLY_AUTODISCOVERY500_CATALOG4";
+  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V235_VIDEOONLY_AUTODISCOVERY500_CATALOG4";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -49,6 +49,7 @@
   const CATALOG_PAGE_SIZE = 4;
 
   // Cache: si existe y es “reciente”, se usa inmediatamente (mejor UX)
+  // (Mantengo la key para NO romper cache previo)
   const CACHE_KEY = "rlc_cam_cache_v1_500";
   const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12h
 
@@ -77,7 +78,25 @@
   const HARD_FAILSAFE_ALT_FILL = true;
 
   // Queries “webcam” (multi-idioma) — evitamos “tour/walk”
+  // ✅ Añadido: Venezuela + White House / Washington DC (prioridad)
   const DISCOVERY_QUERIES = [
+    // --- Prioridad USA (White House / DC) ---
+    "white house live cam",
+    "white house webcam live",
+    "washington dc live cam",
+    "washington dc webcam live",
+    "the white house live camera",
+    "pennsylvania avenue live cam",
+    // --- Prioridad Venezuela ---
+    "venezuela live webcam",
+    "venezuela webcam en vivo",
+    "caracas live cam",
+    "caracas webcam en vivo",
+    "isla margarita live webcam",
+    "margarita island webcam en vivo",
+    "porlamar live webcam",
+    "playa el yaque live webcam",
+    // --- Genéricas (las tuyas) ---
     "live webcam",
     "webcam live",
     "webcam en vivo",
@@ -140,7 +159,9 @@
   ];
 
   const KNOWN_WEBCAM_BRANDS = [
-    "earthcam","skylinewebcams","ozolio","webcams","railcam"
+    "earthcam","skylinewebcams","ozolio","webcams","railcam",
+    // ✅ añadido (aparece mucho como autor)
+    "earthtv","earth tv","ip cam","ipcamlive","ipcam"
   ];
 
   // ─────────────────────────────────────────────────────────────
@@ -263,6 +284,29 @@
       originUrl: "https://www.youtube.com/watch?v=YRZMwOqHIEE",
       tags: ["beach","brazil"]
     },
+
+    // ✅ USA — CASA BLANCA (v2.3.5)
+    {
+      id: "us_white_house_earthtv",
+      title: "White House — Live Cam",
+      place: "Washington, D.C., USA",
+      source: "earthTV (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "XaI4meBJr20",
+      originUrl: "https://www.youtube.com/watch?v=XaI4meBJr20",
+      tags: ["usa","washington","white_house","landmark"]
+    },
+    {
+      id: "us_white_house_earthtv_alt",
+      title: "White House (Alt) — Live Cam",
+      place: "Washington, D.C., USA",
+      source: "earthTV (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "5OYlzN9cr5w",
+      originUrl: "https://www.youtube.com/watch?v=5OYlzN9cr5w",
+      tags: ["usa","washington","white_house","landmark","alt"]
+    },
+
     // (VIDEO ONLY) — entradas image se ignorarán en export
     {
       id: "grand_canyon_entrance_img",
