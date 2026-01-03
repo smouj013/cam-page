@@ -1,16 +1,18 @@
-/* control.js — RLC Control v2.3.6 (NEWSROOM/BROADCAST)
-   ✅ FULL + HARDENED + NO DUPES + UPDATE-AWARE:
-   - DOM-ready REAL (si carga en <head> sin defer, recachea IDs en boot) ✅
-   - Anti-duplicidad entre versiones: singleton con destroy() (la nueva versión sustituye a la vieja) ✅
+/* control.js — RLC Control v2.3.7 (NEWSROOM/BROADCAST)
+   ✅ FULL + HARDENED + NO DUPES + UPDATE-AWARE
+   - DOM-ready real (safe en <head> sin defer) ✅
+   - Anti-duplicidad entre versiones: singleton con destroy() ✅
    - Fuerza modo control (body.mode-control) ✅
    - Null-safe extremo (IDs opcionales no rompen) ✅
    - BC + localStorage fallback + compat legacy ✅
    - Bot IRC (OAuth) + anti-spam ✅
    - ADS (lead + dur store) + bridge events -> bot ✅
    - Ticker cfg + Countdown cfg ✅
-   - Helix Auto Title: timeout claro + 429 backoff real + anti-spam intentos ✅
+   - Helix Auto Title: timeout claro + 429 backoff real + anti-spam ✅
    - Update awareness: SW update + mismatch player/control + click-to-reload ✅
    - NO toca ni borra datos existentes del bot ✅
+   - FIX: compareVer/_verParts (brace bug) ✅
+   - UX: precarga adDur desde store si UI vacía ✅
 */
 
 (() => {
@@ -18,14 +20,18 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.6");
+  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.7");
 
   // ───────────────────────── Version helpers
   function _verParts(v) {
     const m = String(v || "").trim().match(/^(\d+)\.(\d+)\.(\d+)/);
     if (!m) return [0, 0, 0];
-    return [parseInt(m[1], 10) || 0, parseInt(m[2], 10) || 0, parseInt(m[3], 10) || 0];
-    }
+    return [
+      parseInt(m[1], 10) || 0,
+      parseInt(m[2], 10) || 0,
+      parseInt(m[3], 10) || 0
+    ];
+  }
   function compareVer(a, b) {
     const A = _verParts(a), B = _verParts(b);
     for (let i = 0; i < 3; i++) {
@@ -119,7 +125,6 @@
       t = setTimeout(() => {
         try { fn(...args); } catch (e) { console.error(e); }
       }, ms);
-      // note: no disposer needed; timer dies with page
     };
   }
 
@@ -154,7 +159,10 @@
   function ensureControlMode() {
     try {
       const p = String(location.pathname || "").toLowerCase();
-      const looksControl = p.endsWith("/control.html") || p.endsWith("control.html") || p.endsWith("/control");
+      const looksControl =
+        p.endsWith("/control.html") || p.endsWith("control.html") ||
+        p.endsWith("/control") || p.endsWith("control");
+
       if (looksControl) document.body?.classList?.add("mode-control");
 
       if (document.body?.classList?.contains("mode-control")) {
@@ -220,7 +228,7 @@
     const msg = {
       type: "cmd",
       ts: Date.now(),
-      mid: `${Date.now()}_${Math.random().toString(16).slice(2)}`, // ayuda dedupe
+      mid: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
       cmd,
       payload: payload || {}
     };
@@ -228,14 +236,13 @@
 
     const raw = JSON.stringify(msg);
 
-    // Mantengo compat (keyed + legacy) pero el player debería dedupear por mid/ts.
+    // compat (keyed + legacy)
     lsSet(CMD_KEY, raw);
     lsSet(CMD_KEY_LEGACY, raw);
     busPost(msg);
   }
 
   // ───────────────────────── DOM cache (✅ REAL DOM-ready safe)
-  // Todos son "let" y se asignan en cacheDom() dentro de boot().
   let
     ctlStatus, ctlNowTitle, ctlNowPlace, ctlNowTimer, ctlOrigin,
     ctlPrev, ctlPlay, ctlNext, ctlShuffle,
@@ -376,7 +383,7 @@
     ctlBusName = qs("#ctlBusName");
   }
 
-  // Data lists (se refrescan en boot/heartbeat)
+  // Data lists
   let allCams = [];
   let bgmList = [];
   let _lastCamRef = null;
@@ -1337,7 +1344,7 @@
     const cam = st.cam || {};
     try { if (ctlNowTitle) ctlNowTitle.textContent = String(cam.title || "—"); } catch (_) {}
     try { if (ctlNowPlace) ctlNowPlace.textContent = String(cam.place || "—"); } catch (_) {}
-    try { if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS(st.remaining || 0); } catch (_) {}
+    try { if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS((st.remaining ?? 0) | 0); } catch (_) {}
 
     if (ctlOrigin) {
       const url = String(cam.originUrl || "");
@@ -1349,7 +1356,6 @@
     // Mismatch Control/Player
     const pv = String(st.version || "");
     if (pv && compareVer(pv, APP_VERSION) > 0) {
-      // Player más nuevo => sugiere update
       markUpdateAvailable(`Player v${pv} > Control v${APP_VERSION}`);
     } else if (!updateAvailable) {
       setStatus(`Conectado · Control v${APP_VERSION} · Player v${pv || "?"} · ${String(st.owner ? "OWNER" : "VIEW")}`, true);
@@ -1396,7 +1402,7 @@
     if (!msg || typeof msg !== "object") return;
     if (msg.type !== "cmd") return;
 
-    // dedupe básico (si llega por BC + storage, etc.)
+    // dedupe básico (BC + storage)
     const sig = sigOf(`${msg.mid || ""}|${msg.ts || ""}|${msg.cmd || ""}|${JSON.stringify(msg.payload || {})}`);
     const now = Date.now();
     if (sig && sig === lastSeenCmdSig && (now - lastSeenCmdAt) < 1200) return;
@@ -1490,19 +1496,6 @@
     if (ctlAlertsOn) sendCmd("SET_ALERTS", { enabled: (ctlAlertsOn.value !== "off") });
   }
 
-  function applyAdsSettings() {
-    const enabled = ctlAdsOn ? (ctlAdsOn.value !== "off") : true;
-    const adLead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
-    const adDurSec = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 3600);
-    const showDuring = ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true;
-    const chatText = String(ctlAdChatText?.value || "").trim();
-
-    sendCmd("SET_ADS", { enabled, adLead, showDuring, chatText });
-
-    try { lsSet((KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1"), JSON.stringify({ adDurSec })); } catch (_) {}
-    syncPreviewUrl();
-  }
-
   function loadAdDurStore() {
     try {
       const raw = lsGet(KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1");
@@ -1510,6 +1503,19 @@
       const d = clamp(parseInt(String(j?.adDurSec || "0"), 10) || 0, 5, 3600);
       return d || 30;
     } catch (_) { return 30; }
+  }
+
+  function applyAdsSettings() {
+    const enabled = ctlAdsOn ? (ctlAdsOn.value !== "off") : true;
+    const adLead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
+    const adDurSec = clamp(parseInt(ctlAdDur?.value || String(loadAdDurStore()), 10) || 30, 5, 3600);
+    const showDuring = ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true;
+    const chatText = String(ctlAdChatText?.value || "").trim();
+
+    sendCmd("SET_ADS", { enabled, adLead, showDuring, chatText });
+
+    try { lsSet((KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1"), JSON.stringify({ adDurSec })); } catch (_) {}
+    syncPreviewUrl();
   }
 
   function adNoticeNow() {
@@ -1801,9 +1807,17 @@
 
       try { reg.addEventListener("updatefound", onUpdateFound); } catch (_) {}
 
-      // disposer
       disposers.push(() => {
         try { reg.removeEventListener("updatefound", onUpdateFound); } catch (_) {}
+      });
+
+      // Si cambia controller => hay versión nueva controlando (opcional)
+      const onControllerChange = () => {
+        markUpdateAvailable("Update activo (controller)");
+      };
+      try { navigator.serviceWorker.addEventListener("controllerchange", onControllerChange); } catch (_) {}
+      disposers.push(() => {
+        try { navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange); } catch (_) {}
       });
     }).catch(() => {});
   }
@@ -1831,6 +1845,13 @@
     if (ctlBusName) {
       try { ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS; } catch (_) {}
     }
+
+    // precargar adDur desde store si la UI viene vacía
+    try {
+      if (ctlAdDur && (!ctlAdDur.value || !String(ctlAdDur.value).trim())) {
+        ctlAdDur.value = String(loadAdDurStore());
+      }
+    } catch (_) {}
 
     syncTickerUIFromStore();
     syncCountdownUIFromStore();
@@ -1868,17 +1889,20 @@
     try { bot?.close?.(); } catch (_) {}
     bot = null;
 
-    // quitar listeners
     for (let i = disposers.length - 1; i >= 0; i--) {
       try { disposers[i]?.(); } catch (_) {}
     }
     disposers.length = 0;
 
-    // limpiar singleton (opcional)
     try {
       if (g[SINGLETON_KEY] === instance) g[SINGLETON_KEY] = null;
     } catch (_) {}
   };
+
+  // Limpieza al salir
+  listen(window, "beforeunload", () => {
+    try { instance.destroy?.(); } catch (_) {}
+  });
 
   onReady(boot);
 })();
