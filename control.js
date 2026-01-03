@@ -64,10 +64,12 @@
   }
 
   function debounce(fn, ms = 160) {
-    let t = null;
+    let t = 0;
     return (...args) => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => { t = null; fn(...args); }, ms);
+      try { clearTimeout(t); } catch (_) {}
+      t = setTimeout(() => {
+        try { fn(...args); } catch (e) { console.error(e); }
+      }, ms);
     };
   }
 
