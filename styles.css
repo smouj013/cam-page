@@ -1,9 +1,9 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.4.1 (NEWSROOM/BROADCAST) — FULL
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.5.0 (NEWSROOM/BROADCAST) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
-   ✅ Mantiene: --ui-top-offset robusto + line-clamp + FIX WX CHIP
-   ✅ Incluye estilos para #rlcNewsTicker (si existe) + fallbacks Opera/Safari
-   ✅ Reduce “glitch” por mask/backdrop/mix-blend en navegadores raros (Opera GX incluido)
+   ✅ Tema unificado “Neo-Atlas Newsroom” (misma piel en Player + Control)
+   ✅ Ticker top (#rlcNewsTicker) + --ui-top-offset robusto (sin :has / con :has)
+   ✅ Animaciones suaves + fallbacks Opera GX / Safari / sin backdrop / sin mix-blend / sin mask
 */
 
 /* ───────────────────────── Theme Tokens ───────────────────────── */
@@ -11,48 +11,50 @@
   /* Base */
   --bg: #04060b;
   --bg2:#060a12;
+  --bg3:#070b14;
 
-  /* Panel */
-  --panel: rgba(12,16,24,.56);
+  /* Panels (glass) */
+  --panel:  rgba(12,16,24,.56);
   --panel2: rgba(12,16,24,.72);
   --panel3: rgba(12,16,24,.86);
 
   /* Borders */
-  --stroke: rgba(255,255,255,.10);
+  --stroke:  rgba(255,255,255,.10);
   --stroke2: rgba(255,255,255,.14);
   --stroke3: rgba(255,255,255,.18);
 
   /* Text */
-  --text: rgba(255,255,255,.92);
-  --muted: rgba(255,255,255,.66);
+  --text:   rgba(255,255,255,.92);
+  --muted:  rgba(255,255,255,.66);
   --muted2: rgba(255,255,255,.48);
 
-  /* Accent (mint/cyan “atlas”) */
-  --accent: #25f3a6;
-  --accent2:#4dd7ff;
-  --danger: #ff4d6d;
-  --warn: #ffcc4d;
+  /* Accent (atlas) */
+  --accent:  #25f3a6;
+  --accent2: #4dd7ff;
+  --danger:  #ff4d6d;
+  --warn:    #ffcc4d;
 
-  /* “Broadcast / News” */
-  --news-red: #ff375f;
-  --news-red2: rgba(255,55,95,.22);
-  --news-blue: rgba(77,215,255,.22);
-  --news-mint: rgba(37,243,166,.20);
+  /* Newsroom accents */
+  --news-red:   #ff375f;
+  --news-red2:  rgba(255,55,95,.22);
+  --news-blue:  rgba(77,215,255,.22);
+  --news-mint:  rgba(37,243,166,.20);
 
-  --news-bg-top: rgba(10,14,20,.88);
-  --news-bg-bot: rgba(8,10,14,.78);
+  --news-bg-top: rgba(10,14,20,.90);
+  --news-bg-bot: rgba(8,10,14,.80);
 
-  /* Glass */
-  --glass: rgba(255,255,255,.055);
+  /* Glass helpers */
+  --glass:  rgba(255,255,255,.055);
   --glass2: rgba(255,255,255,.075);
 
-  /* Radius & shadow */
-  --r: 16px;
+  /* Radius & shadows */
+  --r:    16px;
   --r-sm: 12px;
   --r-lg: 20px;
 
-  --shadow: 0 18px 60px rgba(0,0,0,.45);
-  --shadow-soft: 0 12px 34px rgba(0,0,0,.28);
+  --shadow:       0 18px 60px rgba(0,0,0,.45);
+  --shadow-soft:  0 12px 34px rgba(0,0,0,.28);
+  --shadow-tight: 0 10px 26px rgba(0,0,0,.22);
 
   /* Typography */
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
@@ -70,7 +72,7 @@
   --letter: .01em;
 
   /* Motion */
-  --ease-out: cubic-bezier(.2,.9,.2,1);
+  --ease-out:  cubic-bezier(.2,.9,.2,1);
   --ease-soft: cubic-bezier(.22,.7,.2,1);
   --dur-1: 120ms;
   --dur-2: 220ms;
@@ -81,12 +83,12 @@
   --hudMarqueeDur: 12s;
 
   /* Ticker (Top) */
-  --ticker-h: var(--rlcTickerH, 34px);
+  --ticker-h:   var(--rlcTickerH, 34px);
   --ticker-gap: var(--rlcTickerGap, 12px);
 
   /* Broadcast overlays */
   --grain-opacity: .10;
-  --scan-opacity: .07;
+  --scan-opacity:  .07;
   --vignette-opacity: .42;
 
   /* ───────────────────────── Ticker stacking (ROBUST) ─────────────────────────
@@ -143,6 +145,11 @@ body[data-ticker="0"]{
   from{ transform: translate3d(0,0,0); }
   to{ transform: translate3d(-50%,0,0); }
 }
+@keyframes rlcCardSheen{
+  0%{ transform: translate3d(-120%,0,0); opacity: 0; }
+  18%{ opacity: .18; }
+  100%{ transform: translate3d(120%,0,0); opacity: 0; }
+}
 
 /* ───────────────────────── Base / Reset ───────────────────────── */
 *{ box-sizing: border-box; }
@@ -156,7 +163,7 @@ body{
   font-family: var(--sans);
   line-height: var(--line);
   letter-spacing: var(--letter);
-  overflow: hidden;
+  overflow: hidden; /* Player: fixed stage */
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -229,6 +236,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 #rlcNewsTicker.hidden{ display:none !important; }
 
+#rlcNewsTicker::after{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  pointer-events:none;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.20), transparent);
+  filter: blur(10px);
+  opacity: 0;
+  animation: rlcStudioSweep 8.5s var(--ease-soft) infinite;
+}
+
 #rlcNewsTicker .tickerInner{
   display:flex;
   align-items:center;
@@ -295,20 +313,24 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   color: var(--text);
 
   background:
-    linear-gradient(rgba(255,255,255,.07), rgba(255,255,255,.05)) padding-box,
-    linear-gradient(135deg, rgba(77,215,255,.30), rgba(37,243,166,.26), rgba(255,255,255,.12)) border-box;
+    linear-gradient(rgba(255,255,255,.08), rgba(255,255,255,.05)) padding-box,
+    linear-gradient(135deg, rgba(77,215,255,.34), rgba(37,243,166,.28), rgba(255,255,255,.12)) border-box;
 
-  box-shadow: 0 10px 26px rgba(0,0,0,.22);
-  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out);
+  box-shadow: var(--shadow-tight);
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    filter var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out),
+    background var(--dur-2) var(--ease-out);
 }
-.btn:hover{ filter: brightness(1.07); box-shadow: 0 14px 34px rgba(0,0,0,.28); }
+.btn:hover{ filter: brightness(1.07); box-shadow: 0 14px 34px rgba(0,0,0,.28), 0 0 0 1px rgba(77,215,255,.10) inset; }
 .btn:active{ transform: translateY(1px); }
 .btn:disabled{ opacity: .55; cursor:not-allowed; filter: none; transform:none; }
 
 .btn.ghost{
   background:
-    linear-gradient(rgba(255,255,255,.05), rgba(255,255,255,.035)) padding-box,
-    linear-gradient(135deg, rgba(255,255,255,.18), rgba(255,255,255,.10)) border-box;
+    linear-gradient(rgba(255,255,255,.06), rgba(255,255,255,.04)) padding-box,
+    linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.10)) border-box;
   box-shadow: none;
 }
 .btn.full{ width:100%; }
@@ -321,7 +343,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   padding: 10px 12px;
   border-radius: var(--r-sm);
   outline:none;
-  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
 }
 .input::placeholder, textarea.input::placeholder{ color: rgba(255,255,255,.40); }
 .select:focus, .input:focus, textarea.input:focus{
@@ -334,8 +359,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   appearance:none;
   padding-right: 38px;
   background-image:
-    linear-gradient(45deg, transparent 50%, rgba(255,255,255,.70) 50%),
-    linear-gradient(135deg, rgba(255,255,255,.70) 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, rgba(255,255,255,.72) 50%),
+    linear-gradient(135deg, rgba(255,255,255,.72) 50%, transparent 50%);
   background-position:
     calc(100% - 18px) 50%,
     calc(100% - 13px) 50%;
@@ -363,18 +388,18 @@ input[type="range"]{ accent-color: var(--accent); }
   inset: 0;
   overflow: hidden;
 
-  /* Fondo “estudio” */
+  /* Fondo “estudio” unificado */
   background:
     radial-gradient(1100px 650px at 50% 18%, rgba(77,215,255,.13), transparent 58%),
     radial-gradient(900px 720px at 78% 78%, rgba(37,243,166,.11), transparent 62%),
     radial-gradient(1000px 820px at 16% 84%, rgba(140,120,255,.09), transparent 62%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0, rgba(255,255,255,.035) 1px, transparent 1px, transparent 52px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.028) 0, rgba(255,255,255,.028) 1px, transparent 1px, transparent 52px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.030) 0, rgba(255,255,255,.030) 1px, transparent 1px, transparent 52px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.024) 0, rgba(255,255,255,.024) 1px, transparent 1px, transparent 52px),
     repeating-linear-gradient(180deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 2px, transparent 2px, transparent 10px),
     linear-gradient(180deg, var(--bg), var(--bg2));
 }
 
-/* Vignette + noise + scanlines sobre TODO el escenario (muy sutil) */
+/* Vignette + scanlines (muy sutil) */
 .stage::before{
   content:"";
   position:absolute;
@@ -395,8 +420,7 @@ input[type="range"]{ accent-color: var(--accent); }
   inset:-10%;
   pointer-events:none;
   z-index: 2;
-  background:
-    linear-gradient(110deg, transparent 0%, rgba(77,215,255,.16) 40%, rgba(255,55,95,.12) 55%, transparent 75%);
+  background: linear-gradient(110deg, transparent 0%, rgba(77,215,255,.16) 40%, rgba(255,55,95,.12) 55%, transparent 75%);
   filter: blur(18px);
   opacity: .0;
   animation: rlcStudioSweep 6.8s var(--ease-soft) infinite;
@@ -445,7 +469,7 @@ input[type="range"]{ accent-color: var(--accent); }
   border: 1px solid transparent;
   background:
     linear-gradient(var(--panel3), var(--panel3)) padding-box,
-    linear-gradient(135deg, rgba(77,215,255,.32), rgba(37,243,166,.26), rgba(255,255,255,.12)) border-box;
+    linear-gradient(135deg, rgba(77,215,255,.34), rgba(37,243,166,.28), rgba(255,255,255,.12)) border-box;
 
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
@@ -477,7 +501,7 @@ input[type="range"]{ accent-color: var(--accent); }
   overflow: hidden;
 
   border-radius: 14px;
-  border: 1px solid var(--stroke);
+  border: 1px solid rgba(255,255,255,.10);
   background: linear-gradient(180deg, var(--news-bg-top), var(--news-bg-bot));
   box-shadow: var(--shadow-soft);
 
@@ -527,7 +551,7 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 0 12px;
   border-radius: 999px;
 
-  border: 1px solid var(--stroke);
+  border: 1px solid rgba(255,255,255,.10);
   background: linear-gradient(90deg, var(--news-red2), rgba(255,55,95,0));
   color: rgba(255,255,255,.92);
 
@@ -558,7 +582,6 @@ input[type="range"]{ accent-color: var(--accent); }
   display: -webkit-box;
   -webkit-box-orient: vertical;
 
-  /* Standard + WebKit (no rompe si no existe line-clamp) */
   line-clamp: 2;
   -webkit-line-clamp: 2;
 
@@ -573,7 +596,7 @@ input[type="range"]{ accent-color: var(--accent); }
   -webkit-line-clamp: 1;
 }
 
-/* ✅ HUD TITLE TICKER (solo si data-marquee="1") */
+/* HUD TITLE TICKER (solo si data-marquee="1") */
 .hud.hud--collapsed .hudTitle[data-marquee="1"]{
   position: relative;
   display: block;
@@ -813,7 +836,7 @@ input[type="range"]{ accent-color: var(--accent); }
   pointer-events:none;
 
   border-radius: 14px;
-  border: 1px solid var(--stroke);
+  border: 1px solid rgba(255,255,255,.10);
   background: linear-gradient(180deg, var(--news-bg-top), rgba(8,10,14,.70));
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(12px);
@@ -871,7 +894,7 @@ input[type="range"]{ accent-color: var(--accent); }
   border-radius: 999px;
   background: rgba(255,255,255,.075);
   overflow:hidden;
-  border: 1px solid rgba(255,255,255,.08);
+  border:  1px solid rgba(255,255,255,.08);
 }
 .voteBarFill{
   position:absolute;
@@ -906,8 +929,6 @@ input[type="range"]{ accent-color: var(--accent); }
   z-index: 8;
   pointer-events:none;
 }
-
-/* “Tarjeta” genérica si el overlay usa un div dentro */
 #adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
 #rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *,
 .adBox > *, .adsBox > *, .adOverlay > *, .adsOverlay > *, .adNotice > *, .adsNotice > *, .alertBox > *, .alertsBox > *, .alertOverlay > *{
@@ -976,17 +997,25 @@ input[type="range"]{ accent-color: var(--accent); }
 
 /* ───────────────────────── CONTROL ROOM ───────────────────────── */
 .mode-control{
-  overflow:auto;
+  overflow:auto; /* Control: scroll normal */
+  scrollbar-gutter: stable both-edges;
   background:
-    radial-gradient(900px 620px at 22% 12%, rgba(77,215,255,.10), transparent 60%),
-    radial-gradient(980px 720px at 82% 82%, rgba(37,243,166,.10), transparent 60%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.03) 0, rgba(255,255,255,.03) 1px, transparent 1px, transparent 58px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.02) 0, rgba(255,255,255,.02) 1px, transparent 1px, transparent 58px),
+    radial-gradient(900px 620px at 22% 12%, rgba(77,215,255,.12), transparent 60%),
+    radial-gradient(980px 720px at 82% 82%, rgba(37,243,166,.12), transparent 60%),
+    radial-gradient(900px 500px at 60% 10%, rgba(255,55,95,.10), transparent 62%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.030) 0, rgba(255,255,255,.030) 1px, transparent 1px, transparent 58px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.022) 0, rgba(255,255,255,.022) 1px, transparent 1px, transparent 58px),
     linear-gradient(180deg, #03050a, #050812);
 }
 .mode-control .stage, .mode-control .layer, .mode-control .layer-media, .mode-control .layer-ui{ display:none !important; }
 
 .controlWrap{ max-width: 1240px; margin: 0 auto; padding: 16px; }
+
+/* ✅ Blindaje: el header del control NO debe ser sticky */
+.mode-control .controlHeader{
+  position: relative !important;
+  top: auto !important;
+}
 
 .controlHeader{
   display:flex;
@@ -1049,7 +1078,7 @@ input[type="range"]{ accent-color: var(--accent); }
   border: 1px solid transparent;
   background:
     linear-gradient(rgba(255,255,255,.040), rgba(255,255,255,.030)) padding-box,
-    linear-gradient(135deg, rgba(255,255,255,.14), rgba(77,215,255,.18), rgba(37,243,166,.14)) border-box;
+    linear-gradient(135deg, rgba(255,255,255,.14), rgba(77,215,255,.20), rgba(37,243,166,.14)) border-box;
 
   box-shadow: 0 14px 44px rgba(0,0,0,.28);
   padding: 12px;
@@ -1057,9 +1086,35 @@ input[type="range"]{ accent-color: var(--accent); }
   -webkit-backdrop-filter: blur(12px);
   overflow: visible;
 
-  transition: transform var(--dur-2) var(--ease-out), filter var(--dur-2) var(--ease-out);
+  position: relative;
+  transition: transform var(--dur-2) var(--ease-out), filter var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
 }
-.card:hover{ transform: translate3d(0,-2px,0); filter: brightness(1.02); }
+.card::before{
+  content:"";
+  position:absolute;
+  left: 10px;
+  right: 10px;
+  top: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255,55,95,.70), rgba(77,215,255,.70), rgba(37,243,166,.65));
+  opacity: .78;
+}
+.card::after{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  pointer-events:none;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent);
+  filter: blur(10px);
+  opacity: 0;
+  animation: rlcCardSheen 10s var(--ease-soft) infinite;
+}
+.card:hover{
+  transform: translate3d(0,-2px,0);
+  filter: brightness(1.02);
+  box-shadow: 0 18px 56px rgba(0,0,0,.32), 0 0 0 1px rgba(77,215,255,.06) inset;
+}
 
 .cardTitle{
   font-weight: 950;
@@ -1178,7 +1233,7 @@ input[type="range"]{ accent-color: var(--accent); }
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle, .card, .pill{ transition: none !important; }
-  .badge::before, #rlcHudWx, .progressBar::after, .stage::after{ animation: none !important; }
+  .badge::before, #rlcHudWx, .progressBar::after, .stage::after, .card::after, #rlcNewsTicker::after{ animation: none !important; }
   .fallbackCard, .hud, .vote, #rlcChatList > *{ animation: none !important; }
   #rlcNewsTicker[data-marquee="1"] .tickerMarquee{ animation: none !important; }
 }
