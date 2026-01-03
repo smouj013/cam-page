@@ -1,15 +1,16 @@
-/* catalogView.js — RLC Catalog View v1.1.3
-   ✅ Catálogo 2x2 (4 cams)
-   ✅ Modo "follow": SOLO 1 tile sigue al state (los demás no cambian)
-   ✅ Modo "sync": rotan las 4 a la vez (comportamiento antiguo)
-   ✅ Slots "sticky" guardados en localStorage (por KEY)
-   ✅ Click-to-cycle: cambia SOLO ese tile a la siguiente cam (opcional) (SHIFT => anterior)
+/* catalogView.js — RLC Catalog View v1.2.0 (MULTI-TILES)
+   ✅ Catálogo en rejilla configurable (N tiles)
+   ✅ Modo "follow": SOLO 1 tile (followSlot) sigue al state (los demás quedan sticky)
+   ✅ Modo "sync": rotan TODOS los tiles a la vez (estilo antiguo)
+   ✅ Slots "sticky" guardados en localStorage (por KEY) y migran de 4 => N
+   ✅ Click-to-cycle: cambia SOLO ese tile a la siguiente cam (SHIFT => anterior)
    ✅ ytCookies: true => youtube.com/embed (permite login/Premium si existe)
    ✅ Oculta HUD single cuando catálogo ON + avisa a otros módulos ("rlc_catalog_mode")
-   ✅ Si existe window.RLCWx.getSummaryForCam(), muestra temp+hora por tile:
+   ✅ WX por tile si existe window.RLCWx.getSummaryForCam():
       - NO placeholders ("…")
-      - Solo se ve si hay datos válidos (temp+time). Si falla => se oculta
+      - Solo visible con datos válidos (temp+time)
       - Refresh suave cada X segundos, sin flicker
+   ✅ Compat total: recibe CFG vieja (quad 4) y funciona como antes
 */
 
 (() => {
@@ -17,7 +18,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V113";
+  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V120";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Keys / Bus
@@ -50,22 +51,43 @@
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
+  // ───────────────────────── Layout presets
+  const LAYOUTS = {
+    quad:    { tiles: 4,  cols: 2, rows: 2 },
+    six:     { tiles: 6,  cols: 3, rows: 2 },
+    nine:    { tiles: 9,  cols: 3, rows: 3 },
+    twelve:  { tiles: 12, cols: 4, rows: 3 },
+    sixteen: { tiles: 16, cols: 4, rows: 4 }
+  };
+
+  function autoGridForTiles(tiles) {
+    const t = clamp((parseInt(tiles, 10) || 4), 1, 25);
+    const cols = clamp(Math.ceil(Math.sqrt(t)), 1, 6);
+    const rows = clamp(Math.ceil(t / cols), 1, 6);
+    return { tiles: t, cols, rows };
+  }
+
   // ───────────────────────── Config
   const DEFAULTS = {
     enabled: false,
-    layout: "quad",
+
+    // NUEVO multi-tiles
+    layout: "quad",     // quad|six|nine|twelve|sixteen|custom
+    tiles: 4,           // 1..25
+    cols: 2,            // 1..6
+    rows: 2,            // 1..6
+
     gapPx: 8,
     labels: true,
     muted: true,
 
     mode: "follow",     // "follow" | "sync"
-    followSlot: 0,      // 0..3
-    ytCookies: true,    // true => youtube.com/embed (cookies)
-    clickCycle: true,   // click en tile => next cam
+    followSlot: 0,      // 0..tiles-1
+    ytCookies: true,
+    clickCycle: true,
 
-    // Opcionales (si no vienen, se usan defaults y no rompen nada)
-    wxTiles: true,      // WX en cada tile (si existe RLCWx)
-    wxRefreshSec: 30    // refresh suave
+    wxTiles: true,
+    wxRefreshSec: 30
   };
 
   function readJson(key) {
@@ -83,16 +105,49 @@
   function normalizeCfg(inCfg) {
     const c = Object.assign({}, DEFAULTS, inCfg || {});
     c.enabled = (c.enabled === true);
-    c.layout = "quad";
 
+    // compat: si te llega cfg vieja sin tiles/cols/rows, queda en quad
     c.gapPx = clamp(parseInt(c.gapPx, 10) || DEFAULTS.gapPx, 0, 24);
     c.labels = (c.labels !== false);
     c.muted = (c.muted !== false);
 
     const mode = safeStr(c.mode).toLowerCase();
     c.mode = (mode === "sync") ? "sync" : "follow";
-    c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, 3);
 
+    let layout = safeStr(c.layout).toLowerCase();
+
+    // layout numérico "10" => custom auto
+    if (layout && /^\d+$/.test(layout)) {
+      const g0 = autoGridForTiles(parseInt(layout, 10));
+      c.layout = "custom";
+      c.tiles = g0.tiles;
+      c.cols = g0.cols;
+      c.rows = g0.rows;
+    } else if (layout in LAYOUTS) {
+      const p = LAYOUTS[layout];
+      c.layout = layout;
+      c.tiles = p.tiles;
+      c.cols = p.cols;
+      c.rows = p.rows;
+    } else {
+      c.layout = "custom";
+      const g1 = autoGridForTiles(c.tiles);
+      c.tiles = g1.tiles;
+
+      c.cols = clamp((parseInt(c.cols, 10) || g1.cols), 1, 6);
+      c.rows = clamp((parseInt(c.rows, 10) || g1.rows), 1, 6);
+
+      if ((c.cols * c.rows) < c.tiles) {
+        c.rows = clamp(Math.ceil(c.tiles / c.cols), 1, 6);
+        if ((c.cols * c.rows) < c.tiles) {
+          const g2 = autoGridForTiles(c.tiles);
+          c.cols = g2.cols;
+          c.rows = g2.rows;
+        }
+      }
+    }
+
+    c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, Math.max(0, (c.tiles | 0) - 1));
     c.ytCookies = (c.ytCookies !== false);
     c.clickCycle = (c.clickCycle !== false);
 
@@ -153,9 +208,7 @@
   width: 100%;
   height: 100%;
   display:grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: var(--rlcCatalogGap, 8px);
+  gap: 8px;
 }
 
 #rlcCatalog .slot{
@@ -165,6 +218,13 @@
   background: #05070b;
   border: 1px solid rgba(255,255,255,.10);
   box-shadow: 0 18px 55px rgba(0,0,0,.55);
+}
+
+/* clave: en catálogo, los medios NO capturan el click (clickCycle funciona siempre) */
+#rlcCatalog.on .slot iframe,
+#rlcCatalog.on .slot video,
+#rlcCatalog.on .slot img{
+  pointer-events:none;
 }
 
 #rlcCatalog .slot iframe,
@@ -230,36 +290,54 @@
     document.head.appendChild(st);
   }
 
-  function ensureCatalogRoot() {
+  function gridHtml(count) {
+    const n = clamp((parseInt(count, 10) || 4), 1, 25);
+    let out = `<div class="grid">`;
+    for (let i = 0; i < n; i++) {
+      out += `
+        <div class="slot" data-slot="${i}">
+          <iframe class="m iframe" title="Catalog Cam ${i}" referrerpolicy="strict-origin-when-cross-origin"
+            allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+          <video class="m video" autoplay muted playsinline webkit-playsinline></video>
+          <img class="m img" alt="Catalog snapshot" />
+          <div class="tag">
+            <div class="chip small" data-chip="n">CAM ${i + 1}</div>
+            <div class="chip" data-chip="t">—</div>
+            <div class="chip wx" data-chip="wx" style="display:none"></div>
+          </div>
+        </div>
+      `;
+    }
+    out += `</div>`;
+    return out.trim();
+  }
+
+  function ensureCatalogRoot(countWanted) {
     injectStylesOnce();
 
+    const count = clamp((parseInt(countWanted, 10) || 4), 1, 25);
+
     let root = qs("#rlcCatalog");
-    if (root) return root;
-
     const stage = qs("#stage") || document.body;
-
-    root = document.createElement("div");
-    root.id = "rlcCatalog";
-    root.innerHTML = `
-      <div class="grid">
-        ${[0,1,2,3].map(i => `
-          <div class="slot" data-slot="${i}">
-            <iframe class="m iframe" title="Catalog Cam ${i}" referrerpolicy="strict-origin-when-cross-origin"
-              allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-            <video class="m video" autoplay muted playsinline webkit-playsinline></video>
-            <img class="m img" alt="Catalog snapshot" />
-            <div class="tag">
-              <div class="chip small" data-chip="n">CAM ${i+1}</div>
-              <div class="chip" data-chip="t">—</div>
-              <div class="chip wx" data-chip="wx" style="display:none"></div>
-            </div>
-          </div>
-        `).join("")}
-      </div>
-    `.trim();
-
     const mediaLayer = qs("#stage .layer.layer-media") || stage;
-    mediaLayer.appendChild(root);
+
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "rlcCatalog";
+      mediaLayer.appendChild(root);
+    }
+
+    const prev = parseInt(root.dataset.rlcSlots || "0", 10) || 0;
+    const hasGrid = !!root.querySelector(".grid");
+
+    // si está vacío/roto o cambia el número => reconstruir
+    if (!hasGrid || prev !== count) {
+      root.innerHTML = gridHtml(count);
+      root.dataset.rlcSlots = String(count);
+      // rehook clicks tras rebuild
+      root.dataset.rlcClicksHooked = "0";
+    }
+
     return root;
   }
 
@@ -274,7 +352,7 @@
 
   // ✅ ocultar HUD single
   let _hudEl = null;
-  let _hudPrevDisplay = null; // null => “no capturado aún”
+  let _hudPrevDisplay = null;
   function findHudEl() {
     return qs(".hud") || qs("#hud") || qs("#rlcHud") || null;
   }
@@ -309,12 +387,13 @@
     return -1;
   }
 
-  function pick4(list, baseIdx) {
-    const n = list.length;
-    if (!n) return [];
+  function pickN(list, baseIdx, n) {
+    const total = list.length;
+    const N = clamp((parseInt(n, 10) || 4), 1, 25);
+    if (!total) return [];
     const out = [];
-    let idx = (baseIdx >= 0 ? baseIdx : 0) % n;
-    for (let k = 0; k < 4; k++) out.push(list[(idx + k) % n]);
+    let idx = (baseIdx >= 0 ? baseIdx : 0) % total;
+    for (let k = 0; k < N; k++) out.push(list[(idx + k) % total]);
     return out;
   }
 
@@ -422,7 +501,6 @@
     const chip = slotEl.querySelector('[data-chip="wx"]');
     if (!chip) return;
 
-    // si labels off o wxTiles off => ocultar
     if (!CFG.labels || !CFG.wxTiles) {
       hideWxChip(slotEl);
       slotObj._wxCamId = "";
@@ -443,7 +521,6 @@
       return;
     }
 
-    // ✅ cam nueva: oculto hasta tener datos válidos (NO placeholders)
     hideWxChip(slotEl);
     slotObj._wxCamId = camId;
 
@@ -456,7 +533,6 @@
       if (chip.dataset.wxTok !== tok) return;
       if (chip.dataset.wxCamId !== camId) return;
 
-      // ✅ solo visible con temp+time válidos
       if (!sum || !sum.temp || !sum.time) {
         hideWxChip(slotEl);
         return;
@@ -488,7 +564,6 @@
       return;
     }
 
-    // ✅ refresh sin flicker: NO ocultar antes de tiempo
     const tok = String((parseInt(chip.dataset.wxTok || "0", 10) || 0) + 1);
     chip.dataset.wxTok = tok;
     chip.dataset.wxCamId = camId;
@@ -508,7 +583,6 @@
       chip.style.display = "";
     } catch (_) {
       if (chip.dataset.wxTok !== tok) return;
-      // si ya había un texto válido, no lo mates por un fallo puntual
       if (!chip.textContent) hideWxChip(slotEl);
     }
   }
@@ -559,7 +633,10 @@
 
       const Hls = g.Hls;
       if (Hls && Hls.isSupported && Hls.isSupported()) {
-        const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        let hls = null;
+        try { hls = new Hls({ enableWorker: true, lowLatencyMode: true }); } catch (_) { hls = null; }
+        if (!hls) { slotEl.classList.add("offline"); return; }
+
         slot._hls = hls;
         try {
           hls.loadSource(urlRaw);
@@ -589,10 +666,10 @@
     }
   }
 
-  function buildSlots() {
-    const root = ensureCatalogRoot();
+  function buildSlots(root, count) {
+    const n = clamp((parseInt(count, 10) || 4), 1, 25);
     const out = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < n; i++) {
       const el = root.querySelector(`.slot[data-slot="${i}"]`);
       if (!el) continue;
       out.push({
@@ -601,7 +678,6 @@
         video: el.querySelector("video"),
         img: el.querySelector("img"),
         _hls: null,
-
         _camRef: null,
         _wxCamId: ""
       });
@@ -609,16 +685,22 @@
     return out;
   }
 
-  // ───────────────────────── Sticky slots
-  function loadSlotIds() {
+  // ───────────────────────── Sticky slots (multi)
+  function loadSlotIds(nWanted) {
+    const n = clamp((parseInt(nWanted, 10) || 4), 1, 25);
     const obj = readJson(SLOTS_KEY);
-    const arr = Array.isArray(obj?.ids) ? obj.ids : null;
-    if (!arr || arr.length !== 4) return null;
-    return arr.map(x => String(x || ""));
+    const arr = Array.isArray(obj?.ids) ? obj.ids.map(x => String(x || "")) : null;
+    if (!arr || !arr.length) return null;
+
+    // migración: 4 => N o N => 4
+    const out = arr.slice(0, n);
+    while (out.length < n) out.push("");
+    return out;
   }
 
   function saveSlotIds(ids) {
-    writeJson(SLOTS_KEY, { ts: Date.now(), ids: (ids || []).slice(0, 4) });
+    const arr = Array.isArray(ids) ? ids.map(x => String(x || "")) : [];
+    writeJson(SLOTS_KEY, { ts: Date.now(), ids: arr.slice(0, 25) });
   }
 
   function ensureUnique(ids) {
@@ -632,24 +714,11 @@
     return ids;
   }
 
-  function initSlotsFromState(list) {
-    let idx = -1;
-    const camId = lastState?.cam?.id;
-
-    if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
-    if (idx < 0) idx = findIndexById(list, camId);
-
-    const picked = pick4(list, idx);
-    const ids = picked.map(c => String(c?.id || ""));
-    saveSlotIds(ids);
-    return ids;
-  }
-
   function fillMissingSlots(list, ids) {
     const used = new Set(ids.filter(Boolean));
     let ptr = 0;
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < ids.length; i++) {
       const id = String(ids[i] || "");
       if (id && findIndexById(list, id) >= 0) continue;
 
@@ -670,15 +739,45 @@
     return ids;
   }
 
-  // ───────────────────────── Main (root + state)
-  const root = ensureCatalogRoot();
-  let slots = buildSlots();
+  function initSlotsFromState(list, nTiles) {
+    let idx = -1;
+    const camId = lastState?.cam?.id;
+
+    if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
+    if (idx < 0) idx = findIndexById(list, camId);
+
+    const picked = pickN(list, idx, nTiles);
+    const ids = picked.map(c => String(c?.id || ""));
+    saveSlotIds(ids);
+    return ids;
+  }
+
+  // ───────────────────────── Root + structure sync
+  let root = ensureCatalogRoot(CFG.tiles);
+  let slots = buildSlots(root, CFG.tiles);
 
   let lastCfgSig = "";
-  let lastRenderedIds = ["", "", "", ""];
+  let lastRenderedIds = Array(slots.length).fill("");
 
   function applyCfgToUI() {
-    root.style.setProperty("--rlcCatalogGap", `${CFG.gapPx}px`);
+    const grid = root.querySelector(".grid");
+    if (grid) {
+      // set por JS (más compatible que var() en repeat() en algunos navegadores)
+      grid.style.gap = `${CFG.gapPx}px`;
+      grid.style.gridTemplateColumns = `repeat(${CFG.cols | 0}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${CFG.rows | 0}, 1fr)`;
+    }
+  }
+
+  function syncDomToCfg() {
+    const want = clamp((CFG.tiles | 0), 1, 25);
+    root = ensureCatalogRoot(want);
+    slots = buildSlots(root, want);
+    if (lastRenderedIds.length !== slots.length) {
+      lastRenderedIds = Array(slots.length).fill("");
+    }
+    applyCfgToUI();
+    hookClicksOnce();
   }
 
   // WX refresh loop
@@ -706,7 +805,7 @@
     signalCatalogMode(!!on);
 
     if (on) {
-      applyCfgToUI();
+      syncDomToCfg();
       setSingleMediaVisible(false);
       startWxRefresh();
     } else {
@@ -732,6 +831,10 @@
 
   function cfgSig() {
     return [
+      `en=${CFG.enabled ? 1 : 0}`,
+      `tiles=${CFG.tiles | 0}`,
+      `c=${CFG.cols | 0}`,
+      `r=${CFG.rows | 0}`,
       `m=${CFG.muted ? 1 : 0}`,
       `l=${CFG.labels ? 1 : 0}`,
       `g=${CFG.gapPx | 0}`,
@@ -762,34 +865,41 @@
     const list = getCamList();
     if (!list.length) return;
 
+    // si cambió cfg (incluye tiles), resincroniza DOM
     const sig = cfgSig();
     const cfgChanged = (sig !== lastCfgSig);
-    if (cfgChanged) lastCfgSig = sig;
+    if (cfgChanged) {
+      lastCfgSig = sig;
+      syncDomToCfg();
+      // reset render cache al cambiar estructura fuerte
+      if (lastRenderedIds.length !== slots.length) lastRenderedIds = Array(slots.length).fill("");
+    }
 
-    let ids = loadSlotIds();
+    const nTiles = clamp((CFG.tiles | 0), 1, 25);
+
+    let ids = loadSlotIds(nTiles);
 
     if (CFG.mode === "sync") {
-      // rotan 4
+      // rotan N
       let idx = -1;
       const camId = lastState?.cam?.id;
       if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
       if (idx < 0) idx = findIndexById(list, camId);
 
-      const picked = pick4(list, idx);
+      const picked = pickN(list, idx, nTiles);
       ids = picked.map(c => String(c?.id || ""));
       ids = fillMissingSlots(list, ensureUnique(ids));
       saveSlotIds(ids);
     } else {
       // follow: solo un slot sigue el state
-      if (!ids) ids = initSlotsFromState(list);
+      if (!ids) ids = initSlotsFromState(list, nTiles);
       ids = fillMissingSlots(list, ensureUnique(ids));
 
       const cur = getCurrentCamFromState(list);
       const curId = String(cur?.id || "");
       if (curId) {
-        const fs = CFG.followSlot | 0;
+        const fs = clamp((CFG.followSlot | 0), 0, Math.max(0, nTiles - 1));
 
-        // si ya está en otro slot => swap
         const other = ids.findIndex((x, i) => x === curId && i !== fs);
         if (other >= 0) {
           const tmp = ids[fs];
@@ -808,7 +918,7 @@
     applyCfgToUI();
 
     // render solo tiles cambiados (o todos si cfg cambió)
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < slots.length; i++) {
       const id = String(ids?.[i] || "");
       if (!cfgChanged && id === lastRenderedIds[i]) continue;
 
@@ -836,8 +946,10 @@
     const list = getCamList();
     if (!list.length) return;
 
-    let ids = loadSlotIds();
-    if (!ids) ids = initSlotsFromState(list);
+    const nTiles = clamp((CFG.tiles | 0), 1, 25);
+
+    let ids = loadSlotIds(nTiles);
+    if (!ids) ids = initSlotsFromState(list, nTiles);
 
     const currentId = String(ids[slotIndex] || "");
     let idx = findIndexById(list, currentId);
@@ -849,7 +961,6 @@
     const nextId = String(next?.id || "");
     if (!nextId) return;
 
-    // evitar duplicados: si ya está en otro slot => swap
     const other = ids.findIndex((x, i) => x === nextId && i !== slotIndex);
     if (other >= 0) {
       const tmp = ids[slotIndex];
@@ -913,18 +1024,19 @@
     for (const s of slots) refreshWxChipSoft(s);
   });
 
-  // clicks (solo una vez)
+  // clicks (re-hook seguro)
   function hookClicksOnce() {
     if (root.dataset.rlcClicksHooked === "1") return;
     root.dataset.rlcClicksHooked = "1";
 
-    for (let i = 0; i < 4; i++) {
+    const n = slots.length;
+    for (let i = 0; i < n; i++) {
       const el = root.querySelector(`.slot[data-slot="${i}"]`);
       if (!el) continue;
 
       el.addEventListener("click", (ev) => {
         if (!CFG.enabled || !CFG.clickCycle) return;
-        const back = !!ev?.shiftKey; // SHIFT => atrás
+        const back = !!ev?.shiftKey;
         cycleSlot(i, back ? -1 : 1);
       });
     }
@@ -932,11 +1044,11 @@
 
   function boot() {
     CFG = normalizeCfg(loadCfg());
+    syncDomToCfg();
     setCatalogEnabled(CFG.enabled);
 
     lastState = readStateFromLS() || lastState;
 
-    hookClicksOnce();
     if (CFG.enabled) updateCatalog();
   }
 

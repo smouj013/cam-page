@@ -57,13 +57,16 @@
       --news-accent:#ff3b3b;--news-accent2:#37d6ff;--news-ok:#19e28a;--news-bad:#ff5a5a;
       --news-glow:0 18px 60px rgba(0,0,0,.55);--news-radius:16px;
     }
+
     body.mode-control{
       background:
         radial-gradient(1200px 900px at 20% 0%, rgba(55,214,255,.14), transparent 55%),
         radial-gradient(900px 700px at 85% 15%, rgba(255,59,59,.10), transparent 55%),
         linear-gradient(180deg,var(--news-bg0),var(--news-bg1) 35%,var(--news-bg2));
-      color:var(--news-text);overflow-x:hidden;
+      color:var(--news-text);
+      overflow-x:hidden;
     }
+
     body.mode-control::before{
       content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.75;
       background:
@@ -72,6 +75,7 @@
         linear-gradient(90deg, rgba(55,214,255,.08), transparent 35%, rgba(255,59,59,.07));
       mix-blend-mode:screen;
     }
+
     body.mode-control::after{
       content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.20;
       background:repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, rgba(255,255,255,0) 1px 18px);
@@ -80,17 +84,26 @@
     @keyframes rlcGridDrift{from{transform:translate3d(0,0,0)}to{transform:translate3d(-18px,0,0)}}
     @media (prefers-reduced-motion: reduce){body.mode-control::after{animation:none}}
     @supports not (mix-blend-mode: screen){body.mode-control::before{mix-blend-mode:normal;opacity:.28}}
+
     .controlWrap{position:relative;z-index:1}
+
+    /* ✅ FIX: el header YA NO es sticky (no se queda pegado / no “acompaña” al scroll) */
     .controlHeader{
-      position:sticky;top:0;z-index:5;
+      position:relative; /* antes: sticky */
+      top:auto;          /* antes: top:0 */
+      z-index:2;         /* no hace falta 5 si no es sticky */
       background:linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
       border:1px solid var(--news-stroke);box-shadow:var(--news-glow);
       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       border-radius:var(--news-radius);overflow:hidden;
       padding:14px 14px 12px;margin-bottom:14px;
     }
-    .controlHeader::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
-      background:linear-gradient(90deg, transparent, rgba(55,214,255,.45), rgba(255,59,59,.40), transparent);opacity:.65;}
+
+    .controlHeader::after{
+      content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+      background:linear-gradient(90deg, transparent, rgba(55,214,255,.45), rgba(255,59,59,.40), transparent);opacity:.65;
+    }
+
     .controlHeader::before{
       content:"LIVE • CONTROL ROOM";position:absolute;top:10px;right:12px;
       font:950 11px/1 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
@@ -98,33 +111,81 @@
       background:rgba(255,59,59,.18);border:1px solid rgba(255,59,59,.35);
       padding:6px 10px;border-radius:999px;
     }
+
     .controlTitle .kicker{color:rgba(255,255,255,.75);letter-spacing:.26em}
     .controlTitle .name{text-transform:uppercase;letter-spacing:.06em}
-    .card{background:var(--news-panel);border:1px solid var(--news-stroke);border-radius:var(--news-radius);
-      box-shadow:var(--news-glow);position:relative;overflow:hidden}
-    .card::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;
-      background:linear-gradient(90deg, rgba(255,59,59,.85), rgba(55,214,255,.85));opacity:.80}
+
+    .card{
+      background:var(--news-panel);
+      border:1px solid var(--news-stroke);
+      border-radius:var(--news-radius);
+      box-shadow:var(--news-glow);
+      position:relative;
+      overflow:hidden
+    }
+
+    .card::before{
+      content:"";position:absolute;left:0;right:0;top:0;height:3px;
+      background:linear-gradient(90deg, rgba(255,59,59,.85), rgba(55,214,255,.85));
+      opacity:.80
+    }
+
     .cardTitle{font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.86)}
-    .pill{border:1px solid var(--news-stroke2)!important;background:rgba(0,0,0,.28)!important;
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+
+    .pill{
+      border:1px solid var(--news-stroke2)!important;
+      background:rgba(0,0,0,.28)!important;
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)
+    }
+
     .pill--ok{border-color:rgba(25,226,138,.35)!important;box-shadow:0 0 0 1px rgba(25,226,138,.12) inset}
     .pill--bad{border-color:rgba(255,90,90,.40)!important;box-shadow:0 0 0 1px rgba(255,90,90,.12) inset}
-    .btn{border-radius:14px!important;border:1px solid rgba(255,255,255,.14)!important;
+
+    .btn{
+      border-radius:14px!important;
+      border:1px solid rgba(255,255,255,.14)!important;
       background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06))!important;
-      box-shadow:0 10px 30px rgba(0,0,0,.30)}
+      box-shadow:0 10px 30px rgba(0,0,0,.30)
+    }
+
     .btn.ghost{background:rgba(0,0,0,.18)!important;border-color:rgba(255,255,255,.12)!important}
-    .btn:hover{transform:translateY(-1px);border-color:rgba(55,214,255,.25)!important;
-      box-shadow:0 14px 36px rgba(0,0,0,.38),0 0 0 1px rgba(55,214,255,.08) inset}
-    .input,.select{border-radius:14px!important;border:1px solid rgba(255,255,255,.14)!important;
-      background:rgba(0,0,0,.18)!important;color:rgba(255,255,255,.92)!important}
+
+    .btn:hover{
+      transform:translateY(-1px);
+      border-color:rgba(55,214,255,.25)!important;
+      box-shadow:0 14px 36px rgba(0,0,0,.38),0 0 0 1px rgba(55,214,255,.08) inset
+    }
+
+    .input,.select{
+      border-radius:14px!important;
+      border:1px solid rgba(255,255,255,.14)!important;
+      background:rgba(0,0,0,.18)!important;
+      color:rgba(255,255,255,.92)!important
+    }
+
     .hint{color:var(--news-muted)}
-    #ctlSelect.select{padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto}
+
+    #ctlSelect.select{
+      padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto
+    }
     #ctlSelect option{padding:8px 10px;border-radius:10px}
     #ctlSelect option:checked{background:rgba(55,214,255,.22)}
-    #ctlDiagCard pre{border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.22);border-radius:12px;padding:10px 12px}
+
+    #ctlDiagCard pre{
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.22);
+      border-radius:12px;
+      padding:10px 12px
+    }
+
     .btn.full{display:block!important;width:100%!important}
+
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-      .controlHeader,.pill{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(10,14,22,.92)!important}
+      .controlHeader,.pill{
+        backdrop-filter:none!important;
+        -webkit-backdrop-filter:none!important;
+        background:rgba(10,14,22,.92)!important
+      }
     }
   </style>
 </head>

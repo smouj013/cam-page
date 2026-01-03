@@ -1,18 +1,14 @@
-/* catalogControl.js — RLC Catalog Control v1.2.0
+/* catalogControl.js — RLC Catalog Control v1.3.0 (MULTI-TILES)
    ✅ Solo para control.html
    ✅ Guarda config en localStorage (keyed + legacy)
    ✅ Emite config por BroadcastChannel (keyed + legacy)
    ✅ Boot sync: emite config al arrancar (para que el player se entere aunque no toques nada)
    ✅ Live apply suave (change/input con debounce)
-   ✅ Soporta nuevas opciones del Catalog View v1.1.3:
-      - mode: "follow" | "sync"
-      - followSlot: 0..3
-      - clickCycle: true/false
-      - ytCookies: true/false
-      - wxTiles: true/false
-      - wxRefreshSec: 10..180
-   ✅ No rompe si tu HTML no tiene los nuevos controles:
-      - Si faltan, usa defaults/guardado y no crashea
+   ✅ MULTI-TILES:
+      - layout presets: "quad"(4), "six"(6), "nine"(9), "twelve"(12), "sixteen"(16), "custom"
+      - tiles: 1..25
+      - cols/rows: 1..6 (auto-ajusta si cols*rows < tiles)
+   ✅ Compat total: si tu HTML NO tiene los nuevos controles => usa defaults/guardado y NO crashea
 */
 
 (() => {
@@ -20,7 +16,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_CONTROL_LOADED_V120";
+  const LOAD_GUARD = "__RLC_CATALOG_CONTROL_LOADED_V130";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Keys / Bus
@@ -54,17 +50,40 @@
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
+  // ───────────────────────── Layout presets
+  const LAYOUTS = {
+    quad:    { tiles: 4,  cols: 2, rows: 2 },
+    six:     { tiles: 6,  cols: 3, rows: 2 },
+    nine:    { tiles: 9,  cols: 3, rows: 3 },
+    twelve:  { tiles: 12, cols: 4, rows: 3 },
+    sixteen: { tiles: 16, cols: 4, rows: 4 }
+  };
+
+  function autoGridForTiles(tiles) {
+    const t = clamp((parseInt(tiles, 10) || 4), 1, 25);
+    // grid "bonito": cols ~ sqrt, rows derivado
+    const cols = clamp(Math.ceil(Math.sqrt(t)), 1, 6);
+    const rows = clamp(Math.ceil(t / cols), 1, 6);
+    return { tiles: t, cols, rows };
+  }
+
   // ───────────────────────── Defaults (compat + nuevas opciones)
   const DEFAULTS = {
     enabled: false,
-    layout: "quad",     // 2x2 (4)
+
+    // layout (nuevo)
+    layout: "quad",     // quad|six|nine|twelve|sixteen|custom
+    tiles: 4,           // 1..25
+    cols: 2,            // 1..6
+    rows: 2,            // 1..6
+
     gapPx: 8,
     labels: true,
     muted: true,
 
     // v1.1.x
     mode: "follow",     // "follow" | "sync"
-    followSlot: 0,      // 0..3
+    followSlot: 0,      // 0..tiles-1
     clickCycle: true,
     ytCookies: true,
 
@@ -91,16 +110,54 @@
 
     c.enabled = (c.enabled === true);
 
-    // layout fijo
-    c.layout = "quad";
-
+    // gap/flags
     c.gapPx = clamp(num(c.gapPx, DEFAULTS.gapPx), 0, 24);
     c.labels = (c.labels !== false);
     c.muted = (c.muted !== false);
 
+    // mode
     const mode = safeStr(c.mode).toLowerCase();
     c.mode = (mode === "sync") ? "sync" : "follow";
-    c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, 3);
+
+    // layout / tiles / cols / rows (compat + multi)
+    let layout = safeStr(c.layout).toLowerCase();
+
+    // si layout viene como número "10" => custom auto
+    if (layout && /^\d+$/.test(layout)) {
+      const g0 = autoGridForTiles(parseInt(layout, 10));
+      c.layout = "custom";
+      c.tiles = g0.tiles;
+      c.cols = g0.cols;
+      c.rows = g0.rows;
+    } else if (layout in LAYOUTS) {
+      const p = LAYOUTS[layout];
+      c.layout = layout;
+      c.tiles = p.tiles;
+      c.cols = p.cols;
+      c.rows = p.rows;
+    } else {
+      // custom / desconocido => intentar respetar tiles/cols/rows
+      c.layout = "custom";
+      const g1 = autoGridForTiles(c.tiles);
+      c.tiles = g1.tiles;
+
+      c.cols = clamp((parseInt(c.cols, 10) || g1.cols), 1, 6);
+      c.rows = clamp((parseInt(c.rows, 10) || g1.rows), 1, 6);
+
+      // asegurar capacidad
+      if ((c.cols * c.rows) < c.tiles) {
+        c.rows = clamp(Math.ceil(c.tiles / c.cols), 1, 6);
+        if ((c.cols * c.rows) < c.tiles) {
+          // último recurso
+          const g2 = autoGridForTiles(c.tiles);
+          c.cols = g2.cols;
+          c.rows = g2.rows;
+        }
+      }
+    }
+
+    // followSlot depende de tiles
+    c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, Math.max(0, (c.tiles | 0) - 1));
 
     c.clickCycle = (c.clickCycle !== false);
     c.ytCookies = (c.ytCookies !== false);
@@ -153,7 +210,6 @@
     const v = safeStr(el.value).toLowerCase();
     if (v === "on") return true;
     if (v === "off") return false;
-    // si el HTML usa checkbox accidentalmente
     if (typeof el.checked === "boolean") return !!el.checked;
     return fallbackBool;
   }
@@ -165,38 +221,77 @@
     if (typeof el.checked === "boolean") el.checked = !!bool;
   }
 
+  function setSelectValueIfExists(sel, value) {
+    const el = qs(sel);
+    if (!el) return;
+    const v = String(value ?? "");
+    // si el option no existe, no fuerces (evita romper selects viejos)
+    const has = Array.from(el.options || []).some(o => String(o.value) === v);
+    if (has) el.value = v;
+  }
+
+  function setInputValueIfExists(sel, value) {
+    const el = qs(sel);
+    if (!el) return;
+    try { el.value = String(value ?? ""); } catch (_) {}
+  }
+
+  function readFirstFoundValue(selectors, fallback) {
+    for (const sel of selectors) {
+      const el = qs(sel);
+      if (!el) continue;
+      const v = (el.value != null) ? el.value : "";
+      const s = safeStr(String(v));
+      if (s !== "") return s;
+    }
+    return fallback;
+  }
+
   function applyUIFromCfg(cfg) {
     const c = normalizeCfg(cfg);
 
-    // existentes v1.0.1
-    if (qs("#ctlCatalogOn")) writeOnOff("#ctlCatalogOn", c.enabled);
-    if (qs("#ctlCatalogLayout")) qs("#ctlCatalogLayout").value = "quad";
-    if (qs("#ctlCatalogGap")) qs("#ctlCatalogGap").value = String(c.gapPx);
-    if (qs("#ctlCatalogLabels")) writeOnOff("#ctlCatalogLabels", c.labels);
-    if (qs("#ctlCatalogMuted")) writeOnOff("#ctlCatalogMuted", c.muted);
+    // existentes
+    writeOnOff("#ctlCatalogOn", c.enabled);
+    setInputValueIfExists("#ctlCatalogGap", c.gapPx);
+    writeOnOff("#ctlCatalogLabels", c.labels);
+    writeOnOff("#ctlCatalogMuted", c.muted);
+
+    // layout (si existe select)
+    setSelectValueIfExists("#ctlCatalogLayout", c.layout);
 
     // nuevos (si existen)
-    if (qs("#ctlCatalogMode")) qs("#ctlCatalogMode").value = c.mode;               // follow/sync
-    if (qs("#ctlCatalogFollowSlot")) qs("#ctlCatalogFollowSlot").value = String(c.followSlot);
-    if (qs("#ctlCatalogClickCycle")) writeOnOff("#ctlCatalogClickCycle", c.clickCycle);
-    if (qs("#ctlCatalogYtCookies")) writeOnOff("#ctlCatalogYtCookies", c.ytCookies);
+    setInputValueIfExists("#ctlCatalogTiles", c.tiles);
+    setInputValueIfExists("#ctlCatalogCols", c.cols);
+    setInputValueIfExists("#ctlCatalogRows", c.rows);
 
-    if (qs("#ctlCatalogWxTiles")) writeOnOff("#ctlCatalogWxTiles", c.wxTiles);
-    if (qs("#ctlCatalogWxRefreshSec")) qs("#ctlCatalogWxRefreshSec").value = String(c.wxRefreshSec);
+    setSelectValueIfExists("#ctlCatalogMode", c.mode);
+    setInputValueIfExists("#ctlCatalogFollowSlot", c.followSlot);
+    writeOnOff("#ctlCatalogClickCycle", c.clickCycle);
+    writeOnOff("#ctlCatalogYtCookies", c.ytCookies);
 
-    setStatus(c.enabled ? "Catálogo: ON" : "Catálogo: OFF", c.enabled);
+    writeOnOff("#ctlCatalogWxTiles", c.wxTiles);
+    setInputValueIfExists("#ctlCatalogWxRefreshSec", c.wxRefreshSec);
+
+    setStatus(c.enabled ? `Catálogo: ON (${c.tiles})` : "Catálogo: OFF", c.enabled);
   }
 
   function collectCfgFromUI() {
-    const base = loadCfg(); // para no “perder” campos si faltan inputs
+    const base = loadCfg(); // para no perder campos si faltan inputs
 
-    // existentes v1.0.1
     const enabled = readOnOff("#ctlCatalogOn", base.enabled);
     const gapPx = num(qs("#ctlCatalogGap")?.value, base.gapPx);
     const labels = readOnOff("#ctlCatalogLabels", base.labels);
     const muted = readOnOff("#ctlCatalogMuted", base.muted);
 
-    // nuevos (si existen)
+    // layout
+    const layout = readFirstFoundValue(["#ctlCatalogLayout"], base.layout);
+
+    // tiles/cols/rows (opcional)
+    const tiles = num(readFirstFoundValue(["#ctlCatalogTiles", "#ctlCatalogCount", "#ctlCatalogCams"], ""), base.tiles);
+    const cols = num(readFirstFoundValue(["#ctlCatalogCols"], ""), base.cols);
+    const rows = num(readFirstFoundValue(["#ctlCatalogRows"], ""), base.rows);
+
+    // modo
     const modeEl = qs("#ctlCatalogMode");
     const mode = modeEl ? safeStr(modeEl.value).toLowerCase() : base.mode;
 
@@ -211,22 +306,23 @@
 
     return normalizeCfg({
       enabled,
-      layout: "quad",
+      layout,
+      tiles,
+      cols,
+      rows,
       gapPx,
       labels,
       muted,
-
       mode,
       followSlot,
       clickCycle,
       ytCookies,
-
       wxTiles,
       wxRefreshSec
     });
   }
 
-  // ───────────────────────── Debounce (para input events)
+  // ───────────────────────── Debounce
   function debounce(fn, waitMs = 140) {
     let t = null;
     return (...args) => {
@@ -237,39 +333,43 @@
 
   // ───────────────────────── Boot
   function boot() {
-    // Si no existe UI mínima, salimos sin romper
-    if (!qs("#ctlCatalogApply") || !qs("#ctlCatalogOn")) return;
-
-    // Guarda/normaliza lo que hubiera
     const saved = saveCfg(loadCfg());
-    applyUIFromCfg(saved);
+
+    // Boot sync SIEMPRE (aunque falte UI)
+    try { setTimeout(() => sendCfg(saved), 120); } catch (_) {
+      try { sendCfg(saved); } catch (_) {}
+    }
+
+    // Si hay UI, la sincronizamos y enganchamos listeners
+    const hasToggle = !!qs("#ctlCatalogOn");
+    if (hasToggle) applyUIFromCfg(saved);
 
     const doApply = () => {
       const cfg = saveCfg(collectCfgFromUI());
       sendCfg(cfg);
       applyUIFromCfg(cfg);
     };
-
     const doApplyDebounced = debounce(doApply, 160);
 
-    // Botón apply
+    // Botón apply (si existe)
     qs("#ctlCatalogApply")?.addEventListener("click", doApply);
 
-    // Reset
+    // Reset (si existe)
     qs("#ctlCatalogReset")?.addEventListener("click", () => {
       clearKey(CFG_KEY);
       clearKey(CFG_KEY_LEGACY);
-
-      // opcional: no borramos ping keys, pero da igual
       const cfg = saveCfg(DEFAULTS);
       sendCfg(cfg);
       applyUIFromCfg(cfg);
     });
 
-    // Live apply suave (inputs existentes + nuevos si están)
+    // Live apply suave (existentes + nuevos si están)
     const live = [
       "#ctlCatalogOn",
       "#ctlCatalogLayout",
+      "#ctlCatalogTiles",
+      "#ctlCatalogCols",
+      "#ctlCatalogRows",
       "#ctlCatalogGap",
       "#ctlCatalogLabels",
       "#ctlCatalogMuted",
@@ -287,14 +387,8 @@
       const el = qs(sel);
       if (!el) continue;
 
-      // change (select)
       el.addEventListener("change", doApply);
-
-      // input (range/text)
-      el.addEventListener("input", () => {
-        // en selects no hace falta, pero tampoco molesta
-        doApplyDebounced();
-      });
+      el.addEventListener("input", () => doApplyDebounced());
     }
 
     // Si otra pestaña cambia config
@@ -305,11 +399,6 @@
         applyUIFromCfg(c);
       }
     });
-
-    // Boot sync (muy importante si el player ya está abierto)
-    try { setTimeout(() => sendCfg(saved), 120); } catch (_) {
-      try { sendCfg(saved); } catch (_) {}
-    }
   }
 
   if (document.readyState === "loading") {
