@@ -14,6 +14,31 @@
 
   <script>window.APP_VERSION = "2.3.5";</script>
 
+  <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
+  <script>
+    (() => {
+      "use strict";
+      try{
+        const V = String(window.APP_VERSION || "");
+        if(!V) return;
+        const K = "rlc_app_version_seen_v1";
+        const prev = (() => { try { return localStorage.getItem(K) || ""; } catch(_) { return ""; } })();
+        if(prev !== V){
+          try { localStorage.setItem(K, V); } catch(_){}
+          const u = new URL(location.href);
+          if(!u.searchParams.has("v")){
+            u.searchParams.set("v", V);
+            location.replace(u.toString());
+            return;
+          }
+        }
+        if("serviceWorker" in navigator){
+          navigator.serviceWorker.getRegistration().then(reg => { try{ reg && reg.update && reg.update(); }catch(_){}}).catch(()=>{});
+        }
+      }catch(_){}
+    })();
+  </script>
+
   <!-- Cache-bust -->
   <link rel="stylesheet" href="./styles.css?v=2.3.5" />
 

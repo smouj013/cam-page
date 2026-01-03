@@ -1,10 +1,10 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.5.1 (NEWSROOM/BROADCAST) — FULL
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.5.2 (NEWSROOM/BROADCAST) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
    ✅ Tema unificado “Neo-Atlas Newsroom” (misma piel en Player + Control)
-   ✅ Ticker top (#rlcNewsTicker + #rlcEconTicker) + --ui-top-offset robusto (sin :has)
-   ✅ Split >=980px: ECON izquierda + NEWS derecha (sin sumar alturas con RLCUiBars group)
-   ✅ Animaciones suaves + fallbacks Opera GX / Safari / sin backdrop / sin mix-blend / sin mask
+   ✅ Ticker top (#rlcNewsTicker + #rlcEconTicker) SIEMPRE full-width + stack (NO split)
+   ✅ --ui-top-offset robusto (sin :has) basado en --rlcTickerH (JS lo calcula)
+   ✅ Fallbacks Opera GX / Safari / sin backdrop / sin mix-blend / sin mask
 */
 
 /* ───────────────────────── Theme Tokens ───────────────────────── */
@@ -83,12 +83,16 @@
   --hudMarqueeGap: 44px;
   --hudMarqueeDur: 12s;
 
-  /* Ticker global vars (desde RLCUiBars) */
-  --rlcBarH: 34px;                  /* altura de CADA barra */
-  --ticker-gap: var(--rlcTickerGap, 12px);
+  /* ───────── TICKERS (NO RLCUiBars) ───────── */
+  --rlcBarH: 34px;        /* altura de CADA barra */
+  --rlcTickerTop: 10px;   /* top base del bloque */
+  --rlcTickerGap: 12px;   /* gap ENTRE barras */
 
-  /* ✅ FIX: offset real = altura total de barras + un gap (solo si hay barra) */
-  --ui-top-offset: calc(var(--rlcTickerH, 0px) + min(var(--rlcTickerH, 0px), var(--ticker-gap)));
+  /* JS calcula y setea esto: (barH * count) + (gap si 2 barras) */
+  --rlcTickerH: 0px;
+
+  /* ✅ Offset real para overlays: tickerH + “aire” extra (solo si hay ticker) */
+  --ui-top-offset: calc(var(--rlcTickerH, 0px) + min(var(--rlcTickerH, 0px), var(--rlcTickerGap, 12px)));
 
   /* Broadcast overlays */
   --grain-opacity: .10;
@@ -204,7 +208,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   left: 0;
   right: 0;
 
-  top: var(--rlcNewsTop, 0px);
+  /* ✅ Stack ALWAYS (JS setea --rlcNewsTop/--rlcEconTop; aquí hay fallbacks) */
+  top: var(--rlcNewsTop, var(--rlcTickerTop, 0px));
   height: var(--rlcBarH);
   z-index: 20;
 
@@ -224,8 +229,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
   overflow:hidden;
 }
+
 #rlcEconTicker{
-  top: var(--rlcEconTop, 0px);
+  top: var(
+    --rlcEconTop,
+    calc(var(--rlcNewsTop, var(--rlcTickerTop, 0px)) + var(--rlcBarH) + var(--rlcTickerGap, 12px))
+  );
   background:
     linear-gradient(90deg, rgba(25,226,138,.16), rgba(77,215,255,.10), rgba(255,55,95,.08)),
     linear-gradient(180deg, rgba(10,14,20,.92), rgba(8,10,14,.82));
@@ -363,17 +372,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   font-family: var(--mono);
 }
 
-/* ✅ Split >=980px: ECON izquierda, NEWS derecha */
-@media (min-width: 980px){
-  #rlcEconTicker{
-    left: 0;
-    right: calc(50% + 6px);
-  }
-  #rlcNewsTicker{
-    left: calc(50% + 6px);
-    right: 0;
-  }
-}
+/* ✅ En modo control, no pintamos tickers (evita tapar UI del panel) */
+.mode-control #rlcNewsTicker,
+.mode-control #rlcEconTicker{ display:none !important; }
 
 /* ───────────────────────── Controls (Buttons / Inputs) ───────────────────────── */
 .btn{
@@ -1312,47 +1313,6 @@ input[type="range"]{ accent-color: var(--accent); }
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   RLC Neo-Atlas — Ticker Stack Patch (NO RLCUiBars) v3.5.2
-   ✅ Fuerza: full-width + stack (NEWS arriba, ECON abajo)
-   ✅ Fallbacks correctos si JS aún no ha seteado variables
-   PÉGALO AL FINAL de styles.css
-───────────────────────────────────────────────────────────── */
-
-:root{
-  /* Base top del bloque de tickers (JS lo ajusta también) */
-  --rlcTickerTop: 10px;
-
-  /* Si no existe, definimos gap explícito */
-  --rlcTickerGap: 12px;
-
-  /* Estado calculado por JS (altura total de barras activas) */
-  --rlcTickerH: 0px;
-}
-
-/* Fallbacks de top: stack siempre */
-#rlcNewsTicker{
-  top: var(--rlcNewsTop, var(--rlcTickerTop, 0px)) !important;
-  left: 0 !important;
-  right: 0 !important;
-}
-#rlcEconTicker{
-  top: var(
-    --rlcEconTop,
-    calc(var(--rlcNewsTop, var(--rlcTickerTop, 0px)) + var(--rlcBarH) + var(--ticker-gap))
-  ) !important;
-  left: 0 !important;
-  right: 0 !important;
-}
-
-/* ✅ Desactiva el split >=980px aunque exista antes en el CSS */
-@media (min-width: 980px){
-  #rlcEconTicker,
-  #rlcNewsTicker{
-    left: 0 !important;
-    right: 0 !important;
-  }
-}
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle, .card, .pill{ transition: none !important; }

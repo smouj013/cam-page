@@ -1,13 +1,16 @@
-/* control.js — RLC Control v2.3.5 (NEWSROOM/BROADCAST)
-   ✅ FULL + HARDENED:
-   - Fuerza modo control (añade body.mode-control aunque el HTML lo olvide) => ✅ se ven TODOS los cards
-   - DOM-ready safe (si el script carga en <head> sin defer, no se rompe)
-   - Null-safe extremo (IDs opcionales no rompen)
-   - BC + localStorage fallback + compat legacy
-   - Bot IRC (OAuth) + anti-spam
-   - ADS (lead + dur store) + bridge events -> bot
-   - Ticker cfg + Countdown cfg
-   - Helix Auto Title: timeout claro + 429 backoff real + anti-spam intentos
+/* control.js — RLC Control v2.3.6 (NEWSROOM/BROADCAST)
+   ✅ FULL + HARDENED + NO DUPES + UPDATE-AWARE:
+   - DOM-ready REAL (si carga en <head> sin defer, recachea IDs en boot) ✅
+   - Anti-duplicidad entre versiones: singleton con destroy() (la nueva versión sustituye a la vieja) ✅
+   - Fuerza modo control (body.mode-control) ✅
+   - Null-safe extremo (IDs opcionales no rompen) ✅
+   - BC + localStorage fallback + compat legacy ✅
+   - Bot IRC (OAuth) + anti-spam ✅
+   - ADS (lead + dur store) + bridge events -> bot ✅
+   - Ticker cfg + Countdown cfg ✅
+   - Helix Auto Title: timeout claro + 429 backoff real + anti-spam intentos ✅
+   - Update awareness: SW update + mismatch player/control + click-to-reload ✅
+   - NO toca ni borra datos existentes del bot ✅
 */
 
 (() => {
@@ -15,12 +18,49 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.5");
-  const LOAD_GUARD = "__RLC_CONTROL_LOADED_V235";
-  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+  const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.6");
+
+  // ───────────────────────── Version helpers
+  function _verParts(v) {
+    const m = String(v || "").trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+    if (!m) return [0, 0, 0];
+    return [parseInt(m[1], 10) || 0, parseInt(m[2], 10) || 0, parseInt(m[3], 10) || 0];
+    }
+  function compareVer(a, b) {
+    const A = _verParts(a), B = _verParts(b);
+    for (let i = 0; i < 3; i++) {
+      if (A[i] > B[i]) return 1;
+      if (A[i] < B[i]) return -1;
+    }
+    return 0;
+  }
+
+  // ───────────────────────── Singleton anti-dup (upgrade-safe)
+  const SINGLETON_KEY = "__RLC_CONTROL_SINGLETON__";
+  try {
+    const existing = g[SINGLETON_KEY];
+    if (existing && typeof existing === "object") {
+      const prevVer = String(existing.version || "0.0.0");
+      if (compareVer(prevVer, APP_VERSION) >= 0) {
+        // Ya hay igual o más nuevo cargado => salimos
+        return;
+      }
+      // Hay una versión anterior => desmontamos
+      try { existing.destroy?.(); } catch (_) {}
+    }
+  } catch (_) {}
+
+  const instance = {
+    version: APP_VERSION,
+    _disposed: false,
+    destroy: null
+  };
+  try { g[SINGLETON_KEY] = instance; } catch (_) {}
 
   // ───────────────────────── Utils
-  const qs = (s, r = document) => r.querySelector(s);
+  const qs = (s, r = document) => {
+    try { return r.querySelector(s); } catch (_) { return null; }
+  };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const num = (v, fallback) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
@@ -38,9 +78,18 @@
     }
   }
 
-  function safeOn(el, ev, fn, opt) {
-    try { el?.addEventListener?.(ev, fn, opt); } catch (_) {}
+  // Disposers (anti-dupe real)
+  const disposers = [];
+  function listen(target, ev, fn, opt) {
+    try {
+      if (!target?.addEventListener) return;
+      target.addEventListener(ev, fn, opt);
+      disposers.push(() => {
+        try { target.removeEventListener(ev, fn, opt); } catch (_) {}
+      });
+    } catch (_) {}
   }
+  function safeOn(el, ev, fn, opt) { listen(el, ev, fn, opt); }
 
   function isEditing(el) {
     if (!el) return false;
@@ -70,6 +119,7 @@
       t = setTimeout(() => {
         try { fn(...args); } catch (e) { console.error(e); }
       }, ms);
+      // note: no disposer needed; timer dies with page
     };
   }
 
@@ -103,14 +153,12 @@
   // ───────────────────────── Force CONTROL mode (✅ cards visibles)
   function ensureControlMode() {
     try {
-      // Si estás en control.html pero el body no tiene la clase, la UI del player puede tapar todo.
       const p = String(location.pathname || "").toLowerCase();
       const looksControl = p.endsWith("/control.html") || p.endsWith("control.html") || p.endsWith("/control");
-      if (looksControl) document.body.classList.add("mode-control");
+      if (looksControl) document.body?.classList?.add("mode-control");
 
-      // Hard override por si algo externo dejó overflow hidden
-      if (document.body.classList.contains("mode-control")) {
-        document.body.style.overflow = "auto";
+      if (document.body?.classList?.contains("mode-control")) {
+        try { document.body.style.overflow = "auto"; } catch (_) {}
       }
     } catch (_) {}
   }
@@ -118,9 +166,14 @@
   // ───────────────────────── Base keys / params
   function parseParams() {
     const u = new URL(location.href);
-    return { key: safeStr(u.searchParams.get("key") || "") };
+    return {
+      key: safeStr(u.searchParams.get("key") || ""),
+      autoReload: safeStr(u.searchParams.get("autoReload") || ""), // "1" => auto reload when update detected
+    };
   }
-  const KEY = String(parseParams().key || "").trim();
+  const P = parseParams();
+  const KEY = String(P.key || "").trim();
+  const AUTO_RELOAD = (String(P.autoReload || "") === "1");
 
   const BUS_BASE = "rlc_bus_v1";
   const CMD_KEY_BASE = "rlc_cmd_v1";
@@ -147,6 +200,7 @@
   const HELIX_CFG_KEY  = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
 
+  // BC (se cierran en destroy)
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
@@ -158,141 +212,197 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
 
+  // anti-dupe cmd stamp (solo para recepción/control)
+  let lastSeenCmdSig = "";
+  let lastSeenCmdAt = 0;
+
   function sendCmd(cmd, payload = {}) {
-    const msg = { type: "cmd", ts: Date.now(), cmd, payload: payload || {} };
+    const msg = {
+      type: "cmd",
+      ts: Date.now(),
+      mid: `${Date.now()}_${Math.random().toString(16).slice(2)}`, // ayuda dedupe
+      cmd,
+      payload: payload || {}
+    };
     if (KEY) msg.key = KEY;
 
     const raw = JSON.stringify(msg);
+
+    // Mantengo compat (keyed + legacy) pero el player debería dedupear por mid/ts.
     lsSet(CMD_KEY, raw);
     lsSet(CMD_KEY_LEGACY, raw);
     busPost(msg);
   }
 
-  // ───────────────────────── DOM (IDs del HTML)
-  // Status / now
-  const ctlStatus = qs("#ctlStatus");
-  const ctlNowTitle = qs("#ctlNowTitle");
-  const ctlNowPlace = qs("#ctlNowPlace");
-  const ctlNowTimer = qs("#ctlNowTimer");
-  const ctlOrigin = qs("#ctlOrigin");
+  // ───────────────────────── DOM cache (✅ REAL DOM-ready safe)
+  // Todos son "let" y se asignan en cacheDom() dentro de boot().
+  let
+    ctlStatus, ctlNowTitle, ctlNowPlace, ctlNowTimer, ctlOrigin,
+    ctlPrev, ctlPlay, ctlNext, ctlShuffle,
+    ctlMins, ctlApplyMins, ctlApplySettings, ctlFit, ctlHud, ctlHudDetails, ctlAutoskip, ctlAdfree, ctlReset,
+    ctlSearch, ctlSelect, ctlGo, ctlBan,
+    ctlPreviewOn, ctlPreviewWrap, ctlPreview,
+    ctlCopyStreamUrl,
+    ctlBgmOn, ctlBgmVol, ctlBgmTrack, ctlBgmPrev, ctlBgmPlay, ctlBgmNext, ctlBgmShuffle, ctlBgmNow,
+    ctlTwitchChannel, ctlVoteOn, ctlVoteOverlay, ctlVoteWindow, ctlVoteAt, ctlVoteLead, ctlVoteCmd, ctlVoteStart, ctlVoteApply, ctlStayMins, ctlYtCookies,
+    ctlChatOn, ctlChatHideCmd, ctlAlertsOn,
+    ctlAdsOn, ctlAdLead, ctlAdDur, ctlAdShowDuring, ctlAdChatText, ctlAdNoticeBtn, ctlAdBeginBtn, ctlAdClearBtn,
+    ctlBotOn, ctlBotUser, ctlBotToken, ctlBotConnect, ctlBotStatus, ctlBotSayOnAd, ctlBotTestText, ctlBotTestSend,
+    ctlTickerOn, ctlTickerLang, ctlTickerSpeed, ctlTickerRefresh, ctlTickerTop, ctlTickerHideOnVote, ctlTickerSpan, ctlTickerApply, ctlTickerReset, ctlTickerStatus, ctlTickerCopyUrl,
+    ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget, ctlCountdownApply, ctlCountdownReset, ctlCountdownStatus,
+    ctlTitleOn, ctlTitleStatus, ctlTitleClientId, ctlTitleBroadcasterId, ctlTitleToken, ctlTitleTemplate, ctlTitleCooldown, ctlTitleApply, ctlTitleTest, ctlTitleReset,
+    ctlBusName;
 
-  // nav
-  const ctlPrev = qs("#ctlPrev");
-  const ctlPlay = qs("#ctlPlay");
-  const ctlNext = qs("#ctlNext");
-  const ctlShuffle = qs("#ctlShuffle");
+  function cacheDom() {
+    // Status / now
+    ctlStatus = qs("#ctlStatus");
+    ctlNowTitle = qs("#ctlNowTitle");
+    ctlNowPlace = qs("#ctlNowPlace");
+    ctlNowTimer = qs("#ctlNowTimer");
+    ctlOrigin = qs("#ctlOrigin");
 
-  // basic settings
-  const ctlMins = qs("#ctlMins");
-  const ctlApplyMins = qs("#ctlApplyMins");
-  const ctlApplySettings = qs("#ctlApplySettings");
-  const ctlFit = qs("#ctlFit");
-  const ctlHud = qs("#ctlHud");
-  const ctlHudDetails = qs("#ctlHudDetails");
-  const ctlAutoskip = qs("#ctlAutoskip");
-  const ctlAdfree = qs("#ctlAdfree");
-  const ctlReset = qs("#ctlReset");
+    // nav
+    ctlPrev = qs("#ctlPrev");
+    ctlPlay = qs("#ctlPlay");
+    ctlNext = qs("#ctlNext");
+    ctlShuffle = qs("#ctlShuffle");
 
-  // search/select
-  const ctlSearch = qs("#ctlSearch");
-  const ctlSelect = qs("#ctlSelect");
-  const ctlGo = qs("#ctlGo");
-  const ctlBan = qs("#ctlBan");
+    // basic settings
+    ctlMins = qs("#ctlMins");
+    ctlApplyMins = qs("#ctlApplyMins");
+    ctlApplySettings = qs("#ctlApplySettings");
+    ctlFit = qs("#ctlFit");
+    ctlHud = qs("#ctlHud");
+    ctlHudDetails = qs("#ctlHudDetails");
+    ctlAutoskip = qs("#ctlAutoskip");
+    ctlAdfree = qs("#ctlAdfree");
+    ctlReset = qs("#ctlReset");
 
-  // preview
-  const ctlPreviewOn = qs("#ctlPreviewOn");
-  const ctlPreviewWrap = qs("#ctlPreviewWrap");
-  const ctlPreview = qs("#ctlPreview");
+    // search/select
+    ctlSearch = qs("#ctlSearch");
+    ctlSelect = qs("#ctlSelect");
+    ctlGo = qs("#ctlGo");
+    ctlBan = qs("#ctlBan");
 
-  const ctlCopyStreamUrl = qs("#ctlCopyStreamUrl");
+    // preview
+    ctlPreviewOn = qs("#ctlPreviewOn");
+    ctlPreviewWrap = qs("#ctlPreviewWrap");
+    ctlPreview = qs("#ctlPreview");
 
-  // BGM
-  const ctlBgmOn = qs("#ctlBgmOn");
-  const ctlBgmVol = qs("#ctlBgmVol");
-  const ctlBgmTrack = qs("#ctlBgmTrack");
-  const ctlBgmPrev = qs("#ctlBgmPrev");
-  const ctlBgmPlay = qs("#ctlBgmPlay");
-  const ctlBgmNext = qs("#ctlBgmNext");
-  const ctlBgmShuffle = qs("#ctlBgmShuffle");
-  const ctlBgmNow = qs("#ctlBgmNow");
+    ctlCopyStreamUrl = qs("#ctlCopyStreamUrl");
 
-  // Twitch vote
-  const ctlTwitchChannel = qs("#ctlTwitchChannel");
-  const ctlVoteOn = qs("#ctlVoteOn");
-  const ctlVoteOverlay = qs("#ctlVoteOverlay");
-  const ctlVoteWindow = qs("#ctlVoteWindow");
-  const ctlVoteAt = qs("#ctlVoteAt");
-  const ctlVoteLead = qs("#ctlVoteLead");
-  const ctlVoteCmd = qs("#ctlVoteCmd");
-  const ctlVoteStart = qs("#ctlVoteStart");
-  const ctlVoteApply = qs("#ctlVoteApply");
-  const ctlStayMins = qs("#ctlStayMins");
-  const ctlYtCookies = qs("#ctlYtCookies");
+    // BGM
+    ctlBgmOn = qs("#ctlBgmOn");
+    ctlBgmVol = qs("#ctlBgmVol");
+    ctlBgmTrack = qs("#ctlBgmTrack");
+    ctlBgmPrev = qs("#ctlBgmPrev");
+    ctlBgmPlay = qs("#ctlBgmPlay");
+    ctlBgmNext = qs("#ctlBgmNext");
+    ctlBgmShuffle = qs("#ctlBgmShuffle");
+    ctlBgmNow = qs("#ctlBgmNow");
 
-  // Chat/Alerts
-  const ctlChatOn = qs("#ctlChatOn");
-  const ctlChatHideCmd = qs("#ctlChatHideCmd");
-  const ctlAlertsOn = qs("#ctlAlertsOn");
+    // Twitch vote
+    ctlTwitchChannel = qs("#ctlTwitchChannel");
+    ctlVoteOn = qs("#ctlVoteOn");
+    ctlVoteOverlay = qs("#ctlVoteOverlay");
+    ctlVoteWindow = qs("#ctlVoteWindow");
+    ctlVoteAt = qs("#ctlVoteAt");
+    ctlVoteLead = qs("#ctlVoteLead");
+    ctlVoteCmd = qs("#ctlVoteCmd");
+    ctlVoteStart = qs("#ctlVoteStart");
+    ctlVoteApply = qs("#ctlVoteApply");
+    ctlStayMins = qs("#ctlStayMins");
+    ctlYtCookies = qs("#ctlYtCookies");
 
-  // ADS
-  const ctlAdsOn = qs("#ctlAdsOn");
-  const ctlAdLead = qs("#ctlAdLead");
-  const ctlAdDur = qs("#ctlAdDur");
-  const ctlAdShowDuring = qs("#ctlAdShowDuring");
-  const ctlAdChatText = qs("#ctlAdChatText");
-  const ctlAdNoticeBtn = qs("#ctlAdNoticeBtn");
-  const ctlAdBeginBtn = qs("#ctlAdBeginBtn");
-  const ctlAdClearBtn = qs("#ctlAdClearBtn");
+    // Chat/Alerts
+    ctlChatOn = qs("#ctlChatOn");
+    ctlChatHideCmd = qs("#ctlChatHideCmd");
+    ctlAlertsOn = qs("#ctlAlertsOn");
 
-  // BOT
-  const ctlBotOn = qs("#ctlBotOn");
-  const ctlBotUser = qs("#ctlBotUser");
-  const ctlBotToken = qs("#ctlBotToken");
-  const ctlBotConnect = qs("#ctlBotConnect");
-  const ctlBotStatus = qs("#ctlBotStatus");
-  const ctlBotSayOnAd = qs("#ctlBotSayOnAd");
-  const ctlBotTestText = qs("#ctlBotTestText");
-  const ctlBotTestSend = qs("#ctlBotTestSend");
+    // ADS
+    ctlAdsOn = qs("#ctlAdsOn");
+    ctlAdLead = qs("#ctlAdLead");
+    ctlAdDur = qs("#ctlAdDur");
+    ctlAdShowDuring = qs("#ctlAdShowDuring");
+    ctlAdChatText = qs("#ctlAdChatText");
+    ctlAdNoticeBtn = qs("#ctlAdNoticeBtn");
+    ctlAdBeginBtn = qs("#ctlAdBeginBtn");
+    ctlAdClearBtn = qs("#ctlAdClearBtn");
 
-  // Ticker
-  const ctlTickerOn = qs("#ctlTickerOn");
-  const ctlTickerLang = qs("#ctlTickerLang");
-  const ctlTickerSpeed = qs("#ctlTickerSpeed");
-  const ctlTickerRefresh = qs("#ctlTickerRefresh");
-  const ctlTickerTop = qs("#ctlTickerTop");
-  const ctlTickerHideOnVote = qs("#ctlTickerHideOnVote");
-  const ctlTickerSpan = qs("#ctlTickerSpan");
-  const ctlTickerApply = qs("#ctlTickerApply");
-  const ctlTickerReset = qs("#ctlTickerReset");
-  const ctlTickerStatus = qs("#ctlTickerStatus");
-  const ctlTickerCopyUrl = qs("#ctlTickerCopyUrl");
+    // BOT
+    ctlBotOn = qs("#ctlBotOn");
+    ctlBotUser = qs("#ctlBotUser");
+    ctlBotToken = qs("#ctlBotToken");
+    ctlBotConnect = qs("#ctlBotConnect");
+    ctlBotStatus = qs("#ctlBotStatus");
+    ctlBotSayOnAd = qs("#ctlBotSayOnAd");
+    ctlBotTestText = qs("#ctlBotTestText");
+    ctlBotTestSend = qs("#ctlBotTestSend");
 
-  // Countdown
-  const ctlCountdownOn = qs("#ctlCountdownOn");
-  const ctlCountdownLabel = qs("#ctlCountdownLabel");
-  const ctlCountdownTarget = qs("#ctlCountdownTarget");
-  const ctlCountdownApply = qs("#ctlCountdownApply");
-  const ctlCountdownReset = qs("#ctlCountdownReset");
-  const ctlCountdownStatus = qs("#ctlCountdownStatus");
+    // Ticker
+    ctlTickerOn = qs("#ctlTickerOn");
+    ctlTickerLang = qs("#ctlTickerLang");
+    ctlTickerSpeed = qs("#ctlTickerSpeed");
+    ctlTickerRefresh = qs("#ctlTickerRefresh");
+    ctlTickerTop = qs("#ctlTickerTop");
+    ctlTickerHideOnVote = qs("#ctlTickerHideOnVote");
+    ctlTickerSpan = qs("#ctlTickerSpan");
+    ctlTickerApply = qs("#ctlTickerApply");
+    ctlTickerReset = qs("#ctlTickerReset");
+    ctlTickerStatus = qs("#ctlTickerStatus");
+    ctlTickerCopyUrl = qs("#ctlTickerCopyUrl");
 
-  // Helix auto title
-  const ctlTitleOn = qs("#ctlTitleOn") || qs("#ctlHelixOn");
-  const ctlTitleStatus = qs("#ctlTitleStatus") || qs("#ctlHelixStatus");
-  const ctlTitleClientId = qs("#ctlTitleClientId") || qs("#ctlHelixClientId");
-  const ctlTitleBroadcasterId = qs("#ctlTitleBroadcasterId");
-  const ctlTitleToken = qs("#ctlTitleToken") || qs("#ctlHelixToken");
-  const ctlTitleTemplate = qs("#ctlTitleTemplate") || qs("#ctlHelixTpl");
-  const ctlTitleCooldown = qs("#ctlTitleCooldown") || qs("#ctlHelixCooldown");
-  const ctlTitleApply = qs("#ctlTitleApply") || qs("#ctlHelixApply");
-  const ctlTitleTest = qs("#ctlTitleTest") || qs("#ctlHelixTest");
-  const ctlTitleReset = qs("#ctlTitleReset");
+    // Countdown
+    ctlCountdownOn = qs("#ctlCountdownOn");
+    ctlCountdownLabel = qs("#ctlCountdownLabel");
+    ctlCountdownTarget = qs("#ctlCountdownTarget");
+    ctlCountdownApply = qs("#ctlCountdownApply");
+    ctlCountdownReset = qs("#ctlCountdownReset");
+    ctlCountdownStatus = qs("#ctlCountdownStatus");
 
-  // footer
-  const ctlBusName = qs("#ctlBusName");
+    // Helix auto title
+    ctlTitleOn = qs("#ctlTitleOn") || qs("#ctlHelixOn");
+    ctlTitleStatus = qs("#ctlTitleStatus") || qs("#ctlHelixStatus");
+    ctlTitleClientId = qs("#ctlTitleClientId") || qs("#ctlHelixClientId");
+    ctlTitleBroadcasterId = qs("#ctlTitleBroadcasterId");
+    ctlTitleToken = qs("#ctlTitleToken") || qs("#ctlHelixToken");
+    ctlTitleTemplate = qs("#ctlTitleTemplate") || qs("#ctlHelixTpl");
+    ctlTitleCooldown = qs("#ctlTitleCooldown") || qs("#ctlHelixCooldown");
+    ctlTitleApply = qs("#ctlTitleApply") || qs("#ctlHelixApply");
+    ctlTitleTest = qs("#ctlTitleTest") || qs("#ctlHelixTest");
+    ctlTitleReset = qs("#ctlTitleReset");
 
-  // Data lists
-  const allCams = Array.isArray(g.CAM_LIST) ? g.CAM_LIST.slice() : [];
-  const bgmList = Array.isArray(g.BGM_LIST) ? g.BGM_LIST.slice() : [];
+    // footer
+    ctlBusName = qs("#ctlBusName");
+  }
+
+  // Data lists (se refrescan en boot/heartbeat)
+  let allCams = [];
+  let bgmList = [];
+  let _lastCamRef = null;
+  let _lastBgmRef = null;
+
+  function refreshGlobalLists(force = false) {
+    try {
+      const camRef = Array.isArray(g.CAM_LIST) ? g.CAM_LIST : null;
+      const bgmRef = Array.isArray(g.BGM_LIST) ? g.BGM_LIST : null;
+
+      const camChanged = force || (camRef && camRef !== _lastCamRef);
+      const bgmChanged = force || (bgmRef && bgmRef !== _lastBgmRef);
+
+      if (camChanged) {
+        _lastCamRef = camRef;
+        allCams = camRef ? camRef.slice() : [];
+      }
+      if (bgmChanged) {
+        _lastBgmRef = bgmRef;
+        bgmList = bgmRef ? bgmRef.slice() : [];
+      }
+
+      if (camChanged) syncList(String(ctlSearch?.value || ""));
+      if (bgmChanged) syncBgmTracks();
+    } catch (_) {}
+  }
 
   // State cache
   let lastState = null;
@@ -366,9 +476,9 @@
     if (!ctlSelect) return;
     const f = String(filter || "").trim().toLowerCase();
 
-    ctlSelect.innerHTML = "";
-    const frag = document.createDocumentFragment();
+    try { ctlSelect.innerHTML = ""; } catch (_) {}
 
+    const frag = document.createDocumentFragment();
     for (const cam of allCams) {
       const hay = `${cam?.title || ""} ${cam?.place || ""} ${cam?.source || ""}`.toLowerCase();
       if (f && !hay.includes(f)) continue;
@@ -377,13 +487,12 @@
       opt.textContent = label(cam);
       frag.appendChild(opt);
     }
-
-    ctlSelect.appendChild(frag);
+    try { ctlSelect.appendChild(frag); } catch (_) {}
   }
 
   function syncBgmTracks() {
     if (!ctlBgmTrack) return;
-    ctlBgmTrack.innerHTML = "";
+    try { ctlBgmTrack.innerHTML = ""; } catch (_) {}
     const frag = document.createDocumentFragment();
 
     if (!bgmList.length) {
@@ -391,7 +500,7 @@
       opt.value = "0";
       opt.textContent = "— (sin playlist)";
       frag.appendChild(opt);
-      ctlBgmTrack.appendChild(frag);
+      try { ctlBgmTrack.appendChild(frag); } catch (_) {}
       return;
     }
 
@@ -402,7 +511,7 @@
       opt.textContent = t?.title ? t.title : `Track ${i + 1}`;
       frag.appendChild(opt);
     }
-    ctlBgmTrack.appendChild(frag);
+    try { ctlBgmTrack.appendChild(frag); } catch (_) {}
   }
 
   // ───────────────────────── Vote timing (voteAt = “a falta”)
@@ -1087,11 +1196,9 @@
     const u = new URL(location.href);
     const p = String(u.pathname || "");
 
-    // Normal: .../control.html -> .../index.html
     if (/\/control\.html$/i.test(p)) u.pathname = p.replace(/\/control\.html$/i, "/index.html");
     else if (/\/control$/i.test(p)) u.pathname = p.replace(/\/control$/i, "/index.html");
     else if (!/\/index\.html$/i.test(p)) {
-      // Si están sirviendo control como default en una ruta rara, al menos apuntemos a index.html relativo
       u.pathname = p.replace(/\/[^/]*$/i, "/index.html");
     }
 
@@ -1203,6 +1310,25 @@
     botSay(msg);
   }
 
+  // Update UX
+  let updateAvailable = false;
+  let lastReloadAt = 0;
+
+  function markUpdateAvailable(reason = "Update disponible") {
+    updateAvailable = true;
+    if (ctlStatus) {
+      try { ctlStatus.style.cursor = "pointer"; } catch (_) {}
+      setStatus(`${reason} · click para recargar`, false);
+    }
+    if (AUTO_RELOAD) {
+      const now = Date.now();
+      if ((now - lastReloadAt) > 120000) {
+        lastReloadAt = now;
+        try { location.reload(); } catch (_) {}
+      }
+    }
+  }
+
   function applyState(st) {
     if (!st || typeof st !== "object") return;
     lastState = st;
@@ -1216,11 +1342,18 @@
     if (ctlOrigin) {
       const url = String(cam.originUrl || "");
       ctlOrigin.href = url || "#";
-      ctlOrigin.style.pointerEvents = url ? "auto" : "none";
-      ctlOrigin.style.opacity = url ? "1" : ".6";
+      try { ctlOrigin.style.pointerEvents = url ? "auto" : "none"; } catch (_) {}
+      try { ctlOrigin.style.opacity = url ? "1" : ".6"; } catch (_) {}
     }
 
-    setStatus(`Conectado · v${String(st.version || "?")} · ${String(st.owner ? "OWNER" : "VIEW")}`, true);
+    // Mismatch Control/Player
+    const pv = String(st.version || "");
+    if (pv && compareVer(pv, APP_VERSION) > 0) {
+      // Player más nuevo => sugiere update
+      markUpdateAvailable(`Player v${pv} > Control v${APP_VERSION}`);
+    } else if (!updateAvailable) {
+      setStatus(`Conectado · Control v${APP_VERSION} · Player v${pv || "?"} · ${String(st.owner ? "OWNER" : "VIEW")}`, true);
+    }
 
     tryAutoAnnounceCam(st);
 
@@ -1263,6 +1396,13 @@
     if (!msg || typeof msg !== "object") return;
     if (msg.type !== "cmd") return;
 
+    // dedupe básico (si llega por BC + storage, etc.)
+    const sig = sigOf(`${msg.mid || ""}|${msg.ts || ""}|${msg.cmd || ""}|${JSON.stringify(msg.payload || {})}`);
+    const now = Date.now();
+    if (sig && sig === lastSeenCmdSig && (now - lastSeenCmdAt) < 1200) return;
+    lastSeenCmdSig = sig;
+    lastSeenCmdAt = now;
+
     const cmd = String(msg.cmd || "");
     if (cmd !== "BOT_SAY") return;
 
@@ -1295,7 +1435,7 @@
   function syncPreviewUrl() {
     if (!ctlPreviewOn || !ctlPreviewWrap || !ctlPreview) return;
     const on = (ctlPreviewOn.value !== "off");
-    ctlPreviewWrap.style.display = on ? "" : "none";
+    try { ctlPreviewWrap.style.display = on ? "" : "none"; } catch (_) {}
     if (!on) return;
 
     try {
@@ -1408,8 +1548,15 @@
   function syncBotUIFromStore() {
     botCfg = loadBotCfg();
     if (ctlBotOn) ctlBotOn.value = botCfg.enabled ? "on" : "off";
-    if (ctlBotUser) ctlBotUser.value = botCfg.user || "";
-    if (ctlBotToken) ctlBotToken.value = botCfg.token ? "********" : "";
+    if (ctlBotUser) safeSetValue(ctlBotUser, botCfg.user || "");
+
+    // token protegido: si hay token guardado, mostramos ******** pero NO pisamos si el user está editando
+    if (ctlBotToken) {
+      if (!isEditing(ctlBotToken)) {
+        ctlBotToken.value = botCfg.token ? "********" : "";
+      }
+    }
+
     if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
     setBotStatus(botCfg.enabled ? "Bot: listo" : "Bot: OFF", !!botCfg.enabled);
   }
@@ -1427,8 +1574,6 @@
     botCfg = saveBotCfg({ enabled, user, token, channel: chan, sayOnAd });
     syncBotUIFromStore();
     botApplyCfgAndMaybeConnect();
-
-    try { lsSet(BOT_STORE_KEY, JSON.stringify(botCfg)); lsSet(BOT_STORE_KEY_BASE, JSON.stringify(botCfg)); } catch (_) {}
 
     if (chan) sendCmd("SET_TWITCH", { channel: chan });
     syncPreviewUrl();
@@ -1466,7 +1611,7 @@
 
   // ───────────────────────── Hotkeys (safe)
   function bindHotkeys() {
-    safeOn(window, "keydown", (e) => {
+    listen(window, "keydown", (e) => {
       if (isTextInputActive()) return;
 
       const k = String(e.key || "");
@@ -1479,8 +1624,7 @@
   }
 
   function bindUi() {
-    syncList("");
-    syncBgmTracks();
+    refreshGlobalLists(true);
 
     safeOn(ctlSearch, "input", debounce(() => syncList(ctlSearch.value), 120));
 
@@ -1581,6 +1725,12 @@
       ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget
     ].forEach(el => safeOn(el, "change", autoSync));
 
+    // Click pill para recargar si hay update detectado
+    safeOn(ctlStatus, "click", () => {
+      if (!updateAvailable) return;
+      try { location.reload(); } catch (_) {}
+    });
+
     syncPreviewUrl();
   }
 
@@ -1594,8 +1744,6 @@
         if (msg?.type === "state") applyState(msg);
         else if (msg?.type === "event") applyEvent(msg);
         else if (msg?.type === "cmd") applyIncomingCmd(msg);
-        else if (msg?.type === "TICKER_CFG") { /* opcional */ }
-        else if (msg?.type === "COUNTDOWN_CFG") { /* opcional */ }
       };
     } catch (_) {}
 
@@ -1612,7 +1760,7 @@
     } catch (_) {}
 
     // storage fallback
-    safeOn(window, "storage", (e) => {
+    listen(window, "storage", (e) => {
       const k = String(e.key || "");
       if (!k) return;
 
@@ -1627,19 +1775,62 @@
     });
   }
 
+  // ───────────────────────── SW update awareness
+  function installSwUpdateWatcher() {
+    if (!("serviceWorker" in navigator)) return;
+
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return;
+
+      try { reg.update(); } catch (_) {}
+
+      // Si ya hay waiting => update listo
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        markUpdateAvailable("Update disponible (SW)");
+      }
+
+      const onUpdateFound = () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", () => {
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            markUpdateAvailable("Update disponible (SW)");
+          }
+        });
+      };
+
+      try { reg.addEventListener("updatefound", onUpdateFound); } catch (_) {}
+
+      // disposer
+      disposers.push(() => {
+        try { reg.removeEventListener("updatefound", onUpdateFound); } catch (_) {}
+      });
+    }).catch(() => {});
+  }
+
+  // ───────────────────────── Heartbeat
+  let heartbeatId = 0;
+
   function heartbeat() {
     const now = Date.now();
     const age = now - (lastSeenAt || 0);
 
-    if (age > 3500) setStatus("Sin señal… (abre el player)", false);
+    if (!updateAvailable) {
+      if (age > 3500) setStatus("Sin señal… (abre el player)", false);
+    }
 
     helixTick(false).catch(() => {});
+    refreshGlobalLists(false);
   }
 
+  // ───────────────────────── Boot / Destroy
   function boot() {
+    cacheDom();
     ensureControlMode();
 
-    if (ctlBusName) ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS;
+    if (ctlBusName) {
+      try { ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS; } catch (_) {}
+    }
 
     syncTickerUIFromStore();
     syncCountdownUIFromStore();
@@ -1656,9 +1847,38 @@
     readEventFromLS();
     readCmdFromLS();
 
-    setInterval(heartbeat, 900);
+    installSwUpdateWatcher();
+
+    heartbeatId = setInterval(heartbeat, 900);
     setStatus(`Control listo · v${APP_VERSION}`, true);
   }
+
+  instance.destroy = () => {
+    if (instance._disposed) return;
+    instance._disposed = true;
+
+    try { if (heartbeatId) clearInterval(heartbeatId); } catch (_) {}
+    heartbeatId = 0;
+
+    try { bcMain && (bcMain.onmessage = null); } catch (_) {}
+    try { bcLegacy && (bcLegacy.onmessage = null); } catch (_) {}
+    try { bcMain && bcMain.close?.(); } catch (_) {}
+    try { bcLegacy && bcLegacy.close?.(); } catch (_) {}
+
+    try { bot?.close?.(); } catch (_) {}
+    bot = null;
+
+    // quitar listeners
+    for (let i = disposers.length - 1; i >= 0; i--) {
+      try { disposers[i]?.(); } catch (_) {}
+    }
+    disposers.length = 0;
+
+    // limpiar singleton (opcional)
+    try {
+      if (g[SINGLETON_KEY] === instance) g[SINGLETON_KEY] = null;
+    } catch (_) {}
+  };
 
   onReady(boot);
 })();

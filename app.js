@@ -1,4 +1,4 @@
-/* app.js — RLC Player v2.3.5 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE)
+/* app.js — RLC Player v2.3.6 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE + ADS LEAD->LIVE FIX)
    ✅ FIX CLAVE (mantenido):
       - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
       - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
@@ -10,10 +10,14 @@
       - setShown añade aria-hidden y refuerzo de display:none
       - guardas extra en filtros / listas vacías
       - voteUi ahora soporta fase PRE (solo auto). Por defecto: comportamiento idéntico (PRE=0).
-   ✅ v2.3.5:
+   ✅ v2.3.5 (mantenido):
       - VERSION sincronizada con window.APP_VERSION (fallback 2.3.5)
-      - LOAD_GUARD actualizado (V235) + state.version usa VERSION
+      - LOAD_GUARD actualizado + state.version usa VERSION
       - savePlayerState bump schema v:5 (compatible hacia atrás)
+   ✅ v2.3.6:
+      - ADS: transición LEAD→LIVE ahora actualiza UI correctamente y evita “00:00 colgado”
+      - ADS: AD_NOTICE acepta duración opcional (durationSec) como “hint” para LIVE
+      - TAGVOTE: comandos TAGVOTE_START/STOP aseguran IRC y refrescan índice de tags
    ✅ Compat UI (HUD footer):
       - Space: play/pause
       - N: siguiente
@@ -26,8 +30,8 @@
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.5");
-  const VDIG = VERSION.replace(/\D/g, "") || "235";
+  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.6");
+  const VDIG = VERSION.replace(/\D/g, "") || "236";
 
   const LOAD_GUARD = `__RLC_PLAYER_LOADED_V${VDIG}_PRO`;
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
@@ -828,6 +832,9 @@
   let adActive = false, adPhase = "idle";
   let adLeadEndsAt = 0, adEndsAt = 0, adTotalLead = 0, adTotalLive = 0;
 
+  // v2.3.6: “hint” opcional para duración LIVE (si la recibimos en AD_NOTICE)
+  let adLiveHintSec = 0;
+
   function injectAdsStylesOnce() {
     if (document.getElementById("rlcAdsStyles")) return;
     const st = document.createElement("style");
@@ -861,6 +868,7 @@
     const wasActive = adActive;
     adActive = false; adPhase = "idle";
     adLeadEndsAt = 0; adEndsAt = 0; adTotalLead = 0; adTotalLive = 0;
+    adLiveHintSec = 0;
     if (adRoot) adRoot.classList.remove("on");
     if (wasActive && !noEvent) emitEvent("AD_AUTO_CLEAR", {});
   }
@@ -871,28 +879,51 @@
     if (adRoot) adRoot.classList.add("on");
   }
 
-  function adStartLead(secondsLeft) {
+  // v2.3.6: acepta hint de duración live
+  function adStartLead(secondsLeft, durationHintSec = 0) {
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
+    const hint = clamp(durationHintSec | 0, 0, 3600);
+    if (hint > 0) adLiveHintSec = hint;
+
     adActive = true; adPhase = "lead"; adShow();
     adTotalLead = Math.max(1, left);
     adLeadEndsAt = Date.now() + left * 1000;
+
     if (adTitleEl) adTitleEl.textContent = "Anuncio en…";
     if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
     if (adBarEl) adBarEl.style.width = "0%";
+
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
-    emitEvent("AD_AUTO_NOTICE", { leadSec: left });
+    emitEvent("AD_AUTO_NOTICE", { leadSec: left, durationHintSec: (adLiveHintSec | 0) || 0 });
   }
 
   function adStartLive(durationSec) {
     if (!adsEnabled) return;
-    const d = clamp(durationSec | 0, 5, 3600);
+    ensureAdsUI();
+
+    const now = Date.now();
+    let d = (durationSec | 0) || 0;
+    if (d <= 0) d = (adLiveHintSec | 0) || 0;
+    if (d <= 0) d = 30; // fallback razonable
+    d = clamp(d, 5, 3600);
+
+    // v2.3.6: si ya estamos en LIVE y llega un AD_BEGIN duplicado, ignóralo si no aporta nada
+    if (adActive && adPhase === "live" && adEndsAt) {
+      const curLeft = Math.max(0, Math.ceil((adEndsAt - now) / 1000));
+      if (Math.abs(curLeft - d) <= 2) return;
+    }
+
+    adLiveHintSec = d;
+
     adActive = true; adPhase = "live"; adShow();
     adTotalLive = d;
-    adEndsAt = Date.now() + d * 1000;
+    adEndsAt = now + d * 1000;
+
     if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
     if (adTimeEl) adTimeEl.textContent = `Quedan ${fmtMMSS(d)}`;
     if (adBarEl) adBarEl.style.width = "0%";
+
     if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
     emitEvent("AD_AUTO_BEGIN", { durationSec: d });
   }
@@ -907,11 +938,10 @@
       const denom = Math.max(1, adTotalLead | 0);
       const pct = 100 * (1 - (left / denom));
       if (adBarEl) adBarEl.style.width = `${clamp(pct, 0, 100).toFixed(1)}%`;
+
+      // v2.3.6 FIX: al acabar el lead, si no llegó AD_BEGIN, entramos a LIVE con hint/fallback y UI correcta
       if (left <= 0) {
-        adPhase = "live";
-        adTotalLive = Math.max(6, adTotalLive | 0);
-        adEndsAt = now + (adTotalLive || 6) * 1000;
-        if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
+        adStartLive((adLiveHintSec | 0) || 0);
       }
       return;
     }
@@ -938,7 +968,9 @@
 
     window.addEventListener("message", (ev) => {
       const origin = String(ev.origin || "");
-      if (!origin.includes("youtube.com") && !origin.includes("youtube-nocookie.com")) return;
+      // un pelín más estricto (sin romper nada)
+      const okOrigin = /(^https:\/\/)(www\.)?youtube\.com$/.test(origin) || /(^https:\/\/)(www\.)?youtube-nocookie\.com$/.test(origin);
+      if (!okOrigin) return;
 
       let data = ev.data;
       try { if (typeof data === "string") data = JSON.parse(data); } catch (_) {}
@@ -2326,12 +2358,16 @@
         postState({ reason: "ads" });
       } break;
 
-      case "AD_NOTICE":
-        adStartLead(payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec);
-        break;
+      case "AD_NOTICE": {
+        // v2.3.6: acepta durationSec opcional como hint
+        const leadSec = payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec;
+        const durHint = payload?.durationSec ?? payload?.duration ?? payload?.durSec ?? 0;
+        adStartLead(leadSec, durHint);
+      } break;
 
       case "AD_BEGIN":
-        adStartLive(payload?.durationSec ?? payload?.duration ?? 30);
+        // si llega el begin real, actualiza duración si aporta algo
+        adStartLive(payload?.durationSec ?? payload?.duration ?? 0);
         if (adChatText) botSay(adChatText);
         break;
 
@@ -2341,7 +2377,10 @@
         break;
 
       case "TAGVOTE_START":
+        // v2.3.6: refresca índice por si CAM_LIST cambió
+        try { buildTagIndex(); } catch (_) {}
         tagVoteStart();
+        ensureIrc();
         postState({ reason: "tagvote_start" });
         break;
 
@@ -2352,6 +2391,7 @@
         tagVoteVoters = new Set();
         tagVoteEndsAt = 0;
         tagVoteRender();
+        ensureIrc();
         postState({ reason: "tagvote_stop" });
         break;
 
@@ -2466,7 +2506,7 @@
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 5, // v2.3.5 schema bump (backward compatible)
+        v: 5, // schema v5 (se mantiene)
         ts: Date.now(),
         key: KEY || "",
         version: VERSION,
