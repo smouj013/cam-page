@@ -1,4 +1,4 @@
-/* newsTicker.js — RLC Global News Ticker v1.5.2
+/* newsTicker.js — RLC Global News Ticker v1.6.0
    ✅ KEY namespace (bus + storage + cache + translations)
    ✅ Fuentes: GDELT + RSS (Google News, BBC, DW, Guardian)
    ✅ Bilingüe: EN + ES (MyMemory) + cache local + translateMax por refresh
@@ -9,7 +9,8 @@
       - ?tickerTranslateMax=10
       - ?tickerSpan=1d / 12h / 30min / 1w ...
       - ?tickerDebug=1
-   ✅ Split layout: NEWS derecha + ECON izquierda (cuando >=980px) sin sumar alturas
+   ✅ Split layout: NEWS derecha + ECON izquierda (>=980px) sin sumar alturas (RLCUiBars group)
+   ✅ NO inyecta CSS (usa styles.css)
    ✅ Sanitiza URLs (evita javascript:/data:)
 */
 
@@ -18,7 +19,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V152";
+  const LOAD_GUARD = "__RLC_NEWS_TICKER_LOADED_V160";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -88,7 +89,7 @@
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
   const DEBUG = (P.debug === "1" || P.debug === "true");
-  const log = (...a) => { if (DEBUG) console.log("[RLC:TICKER]", ...a); };
+  const log = (...a) => { if (DEBUG) console.log("[RLC:NEWS]", ...a); };
 
   function keyOk(msg, isMainChannel) {
     if (!KEY) return true;
@@ -116,7 +117,7 @@
   function cfgFromUrl() {
     const out = {};
 
-    // ✅ FIX: permitir forzar ON desde URL
+    // Forzar ON
     if (P.ticker === "1" || P.ticker === "true") out.enabled = true;
 
     if (P.lang === "es" || P.lang === "en" || P.lang === "auto") out.lang = P.lang;
@@ -173,14 +174,12 @@
     c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
 
     c.sources = normalizeSources(c.sources);
-
     return c;
   }
 
   function readCfgMerged() {
     return readJson(CFG_KEY_NS) || readJson(CFG_KEY_LEGACY) || null;
   }
-
   function writeCfgCompat(cfg) {
     try { writeJson(CFG_KEY_NS, cfg); } catch (_) {}
     try { writeJson(CFG_KEY_LEGACY, cfg); } catch (_) {}
@@ -188,7 +187,7 @@
 
   let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
 
-  // ───────────────────────────────────────── RLCUiBars v2 (con group)
+  // ───────────────────────────────────────── RLCUiBars v2 (group)
   function ensureUiBars() {
     const exists = g.RLCUiBars && typeof g.RLCUiBars.set === "function" && typeof g.RLCUiBars.recalc === "function";
     if (exists && g.RLCUiBars.__rlcVer === 2) return;
@@ -199,14 +198,12 @@
       const n = parseFloat(String(x ?? "").trim());
       return Number.isFinite(n) ? n : fb;
     };
-
     const cssNum = (varName, fb) => {
       try {
         const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
         return safeNum(v, fb);
       } catch (_) { return fb; }
     };
-
     const setVar = (name, val) => {
       try { document.documentElement.style.setProperty(name, val); } catch (_) {}
     };
@@ -233,9 +230,9 @@
           try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
           catch (_) { return ""; }
         })();
-        if (!gapRaw) setVar("--rlcTickerGap", "10px");
+        if (!gapRaw) setVar("--rlcTickerGap", "12px");
 
-        const gap = cssNum("--rlcTickerGap", 10);
+        const gap = cssNum("--rlcTickerGap", 12);
 
         const enabled = Array.from(bars.entries())
           .map(([id, c]) => ({ id, ...c }))
@@ -245,7 +242,6 @@
           ? Math.min(...enabled.map(b => Number.isFinite(b.wantTop) ? b.wantTop : 10))
           : cssNum("--rlcTickerTop", 10);
 
-        // Agrupa por group (si existe), si no => id único
         const rowsMap = new Map();
         for (const b of enabled) {
           const rowKey = b.group ? `g:${b.group}` : `i:${b.id}`;
@@ -295,195 +291,35 @@
     }
   };
 
-  // ───────────────────────────────────────── UI / CSS
+  // ───────────────────────────────────────── Split
   const SPLIT_MQ = "(min-width: 980px)";
   const isSplit = () => {
     try { return !!window.matchMedia && window.matchMedia(SPLIT_MQ).matches; }
     catch (_) { return false; }
   };
 
-  function ensureHostPositioning(host) {
-    if (!host) return;
-    try {
-      const cs = getComputedStyle(host);
-      if (cs && cs.position === "static") host.style.position = "relative";
-    } catch (_) {}
-  }
-
-  function injectStyles() {
-    if (qs("#rlcNewsTickerStyle")) return;
-
-    const st = document.createElement("style");
-    st.id = "rlcNewsTickerStyle";
-    st.textContent = `
-#rlcNewsTicker{
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: var(--rlcNewsTop, var(--rlcTickerTop, 10px));
-  height: 34px;
-  z-index: 999999;
-  display:flex;
-  align-items:center;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(10,14,20,.88), rgba(8,10,14,.78));
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: 0 14px 40px rgba(0,0,0,.45);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  overflow: hidden;
-  pointer-events: auto;
-}
-#rlcNewsTicker.hidden{ display:none !important; }
-
-#rlcNewsTicker .label{
-  flex: 0 0 auto;
-  height: 100%;
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  padding: 0 12px;
-  border-right: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(90deg, rgba(255,55,95,.20), rgba(255,55,95,0));
-  font: 900 12px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,.92);
-  user-select:none;
-  white-space: nowrap;
-}
-#rlcNewsTicker .dot{
-  width: 8px; height: 8px; border-radius: 999px;
-  background: #ff375f;
-  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
-}
-
-#rlcNewsTicker .viewport{
-  position: relative;
-  overflow:hidden;
-  height: 100%;
-  flex: 1 1 auto;
-  display:flex;
-  align-items:center;
-}
-#rlcNewsTicker .fadeL,
-#rlcNewsTicker .fadeR{
-  position:absolute; top:0; bottom:0; width: 46px;
-  z-index: 2; pointer-events:none;
-}
-#rlcNewsTicker .fadeL{ left:0; background: linear-gradient(90deg, rgba(8,10,14,1), rgba(8,10,14,0)); }
-#rlcNewsTicker .fadeR{ right:0; background: linear-gradient(270deg, rgba(8,10,14,1), rgba(8,10,14,0)); }
-
-#rlcNewsTicker .track{
-  position: relative;
-  z-index: 1;
-  display:flex;
-  align-items:center;
-  gap: 18px;
-  white-space: nowrap;
-  will-change: transform;
-  transform: translate3d(0,0,0);
-  animation: rlcTickerMove var(--rlcTickerDur, 60s) linear infinite;
-}
-#rlcNewsTicker:hover .track{ animation-play-state: paused; }
-
-#rlcNewsTicker .seg{
-  display:flex;
-  align-items:center;
-  gap: 18px;
-  white-space: nowrap;
-}
-#rlcNewsTicker .item{
-  display:inline-flex;
-  align-items:center;
-  gap: 10px;
-  font: 800 12px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  color: rgba(255,255,255,.88);
-  text-decoration: none;
-  opacity: .92;
-}
-#rlcNewsTicker .item:hover{ opacity: 1; text-decoration: underline; }
-
-#rlcNewsTicker .sep{
-  width: 5px; height: 5px; border-radius:999px;
-  background: rgba(255,255,255,.28);
-  box-shadow: 0 0 0 3px rgba(255,255,255,.06);
-  display:inline-block;
-  flex: 0 0 auto;
-}
-#rlcNewsTicker .src{
-  font-weight: 950;
-  color: rgba(255,255,255,.70);
-  letter-spacing: .02em;
-}
-#rlcNewsTicker .b2{
-  opacity: .72;
-  font-weight: 750;
-}
-
-@keyframes rlcTickerMove{
-  from{ transform: translate3d(0,0,0); }
-  to{ transform: translate3d(var(--rlcTickerEnd, -1200px),0,0); }
-}
-
-@media (prefers-reduced-motion: reduce){
-  #rlcNewsTicker .track{ animation: none !important; transform:none !important; }
-}
-
-/* ✅ Split: NEWS a la derecha (>=980px) */
-@media ${SPLIT_MQ}{
-  #rlcNewsTicker{
-    left: calc(50% + 6px);
-    right: 10px;
-  }
-}
-
-/* Compat: empuja vote/ads por debajo de TODAS las barras */
-#voteBox, .vote{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
-}
-#adsBox, #adBox, #adsNotice, #adNotice,
-#rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
-}
-`.trim();
-
-    document.head.appendChild(st);
-  }
-
-  function pickHost() {
-    return (qs("#stage") || qs("#app") || document.body);
-  }
-
+  // ───────────────────────────────────────── UI
   function ensureUI() {
-    injectStyles();
     ensureUiBars();
 
     let root = qs("#rlcNewsTicker");
     if (root) return root;
 
-    const host = pickHost();
-    ensureHostPositioning(host);
-
     root = document.createElement("div");
     root.id = "rlcNewsTicker";
+    root.setAttribute("role", "region");
     root.setAttribute("aria-label", "Ticker de noticias");
+
     root.innerHTML = `
-      <div class="label" title="Noticias internacionales">
-        <span class="dot" aria-hidden="true"></span>
-        <span id="rlcNewsTickerLabel"></span>
-      </div>
-      <div class="viewport">
-        <div class="fadeL" aria-hidden="true"></div>
-        <div class="fadeR" aria-hidden="true"></div>
-        <div class="track" id="rlcNewsTickerTrack" aria-live="polite">
-          <div class="seg" id="rlcNewsTickerSeg"></div>
-          <div class="seg" id="rlcNewsTickerSeg2" aria-hidden="true"></div>
+      <div class="tickerInner">
+        <div class="tickerBadge"><span id="rlcNewsTickerLabel"></span></div>
+        <div class="tickerText">
+          <div class="tickerMarquee" id="rlcNewsMarquee" aria-live="polite"></div>
         </div>
       </div>
     `.trim();
 
-    host.insertBefore(root, host.firstChild);
+    document.body.appendChild(root);
     return root;
   }
 
@@ -504,9 +340,21 @@
 
   function setVisible(on) {
     const root = ensureUI();
-    if (!root) return;
     root.classList.toggle("hidden", !on);
+    root.setAttribute("aria-hidden", on ? "false" : "true");
     registerBar(on);
+  }
+
+  function uiLangEffective() {
+    return (CFG.lang === "auto") ? uiLangAuto : CFG.lang;
+  }
+
+  function setLabel(root) {
+    const label = qs("#rlcNewsTickerLabel", root);
+    if (!label) return;
+
+    if (CFG.bilingual) label.textContent = "NEWS · NOTICIAS";
+    else label.textContent = (uiLangEffective() === "en") ? "NEWS" : "NOTICIAS";
   }
 
   // ───────────────────────────────────────── Fetch robusto
@@ -519,7 +367,6 @@
       return await r.text();
     } finally { clearTimeout(t); }
   }
-
   function allOrigins(url) {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   }
@@ -529,7 +376,6 @@
     if (u.startsWith("http://"))  return `https://r.jina.ai/http://${u.slice("http://".length)}`;
     return `https://r.jina.ai/https://${u}`;
   }
-
   async function fetchTextRobust(url) {
     const tries = [
       () => fetchText(url),
@@ -609,6 +455,7 @@
     let t = safeStr(s).replace(/\s+/g, " ").trim();
     if (t.length < 14) return "";
     if (t.length > 140) t = t.slice(0, 137).trim() + "…";
+    // filtra títulos no latinos (evita feeds raros)
     if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
     return t;
   }
@@ -618,9 +465,9 @@
     if (!s) return "NEWS";
     try {
       const url = new URL(s);
-      return url.hostname.replace(/^www\./i, "").toUpperCase().slice(0, 22);
+      return url.hostname.replace(/^www\./i, "").toUpperCase().slice(0, 18);
     } catch (_) {
-      return s.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toUpperCase().slice(0, 22) || "NEWS";
+      return s.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toUpperCase().slice(0, 18) || "NEWS";
     }
   }
 
@@ -630,7 +477,7 @@
     const src = domain || sc || "";
     if (!src) return "NEWS";
     const cleaned = src.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
-    return cleaned.toUpperCase().slice(0, 22);
+    return cleaned.toUpperCase().slice(0, 18);
   }
 
   function sanitizeUrl(u) {
@@ -684,12 +531,10 @@
     store.map[k] = { ts: Date.now(), es: String(es || "") };
     store.order = store.order.filter(x => x !== k);
     store.order.push(k);
-
     while (store.order.length > 500) {
       const old = store.order.shift();
       if (old) delete store.map[old];
     }
-
     store.ts = Date.now();
     writeTransStore(store);
   }
@@ -761,9 +606,7 @@
   function parseRssOrAtom(xmlText, fallbackSource) {
     const txt = String(xmlText || "");
     const doc = new DOMParser().parseFromString(txt, "text/xml");
-
-    const pe = doc.querySelector("parsererror");
-    if (pe) return [];
+    if (doc.querySelector("parsererror")) return [];
 
     const out = [];
 
@@ -826,7 +669,6 @@
 
     const res = await Promise.allSettled(tasks);
     const chunks = [];
-
     for (const r of res) {
       if (r.status !== "fulfilled") continue;
       const got = r.value?.items;
@@ -835,7 +677,7 @@
 
     const merged = [];
     let guard = 0;
-    while (merged.length < API.maxItems && guard < 500) {
+    while (merged.length < API.maxItems && guard < 600) {
       guard++;
       let pushed = false;
       for (const arr of chunks) {
@@ -853,7 +695,6 @@
 
   async function makeBilingual(items) {
     if (!CFG.bilingual) return items;
-
     const maxN = CFG.translateMax | 0;
     if (maxN <= 0) return items;
 
@@ -871,27 +712,8 @@
     return out;
   }
 
-  // ───────────────────────────────────────── Render
-  function uiLangEffective() {
-    return (CFG.lang === "auto") ? uiLangAuto : CFG.lang;
-  }
-
-  function setLabel(root) {
-    const label = qs("#rlcNewsTickerLabel", root);
-    if (!label) return;
-
-    if (CFG.bilingual) label.textContent = "NEWS · NOTICIAS";
-    else label.textContent = (uiLangEffective() === "en") ? "NEWS" : "NOTICIAS";
-  }
-
-  function makeSep() {
-    const sep = document.createElement("span");
-    sep.className = "sep";
-    sep.setAttribute("aria-hidden", "true");
-    return sep;
-  }
-
-  function buildItemsDOM(items) {
+  // ───────────────────────────────────────── Render (marquee compatible styles.css)
+  function buildSegment(items) {
     const uiLang = uiLangEffective();
     const list = (Array.isArray(items) && items.length) ? items : [
       {
@@ -902,98 +724,84 @@
       }
     ];
 
-    const frag = document.createDocumentFragment();
-    let first = true;
+    const seg = document.createElement("span");
+    seg.className = "tkSeg";
 
-    const push = (node) => {
-      if (!first) frag.appendChild(makeSep());
-      frag.appendChild(node);
-      first = false;
+    let first = true;
+    const addSep = () => {
+      const s = document.createElement("span");
+      s.className = "tkSep";
+      s.textContent = "•";
+      seg.appendChild(s);
     };
 
     for (const it of list) {
       const link = sanitizeUrl(it.url || "");
       const isLink = !!link;
 
-      const el = document.createElement(isLink ? "a" : "span");
-      el.className = "item";
+      if (!first) addSep();
+      first = false;
 
+      const el = document.createElement(isLink ? "a" : "span");
+      el.className = "tkItem";
       if (isLink) {
         el.href = link;
         el.target = "_blank";
         el.rel = "noreferrer noopener";
       }
 
-      const title = document.createElement("span");
-      title.className = "t";
+      const t = document.createElement("span");
+      t.className = "tkTitle";
 
       if (CFG.bilingual) {
         const en = clampLen(it.titleEn || "", 110);
         const es = clampLen(it.titleEs || "", 110);
-        title.textContent = es ? `${en} — ${es}` : en;
-        if (es) title.classList.add("b2");
+        t.textContent = es ? `${en} — ${es}` : en;
       } else {
-        title.textContent = it.titleEn || "";
+        t.textContent = clampLen(it.titleEn || "", 130);
       }
 
       const src = document.createElement("span");
-      src.className = "src";
-      src.textContent = it.source || "NEWS";
+      src.className = "tkSrc";
+      src.textContent = safeStr(it.source || "NEWS");
 
-      el.appendChild(title);
+      el.appendChild(t);
       el.appendChild(src);
-
-      push(el);
+      seg.appendChild(el);
     }
 
-    return frag;
-  }
-
-  function repeatToFill(segEl, viewportWidth) {
-    const base = Array.from(segEl.childNodes).map(n => n.cloneNode(true));
-    if (!base.length) return;
-
-    let guard = 0;
-    while ((segEl.scrollWidth || 0) < viewportWidth * 1.2 && guard < 8) {
-      for (const n of base) segEl.appendChild(n.cloneNode(true));
-      guard++;
-    }
-  }
-
-  function cloneChildrenInto(fromEl, toEl) {
-    toEl.innerHTML = "";
-    const nodes = Array.from(fromEl.childNodes);
-    for (const n of nodes) toEl.appendChild(n.cloneNode(true));
+    return seg;
   }
 
   function setTickerItems(items) {
     const root = ensureUI();
-    const track = qs("#rlcNewsTickerTrack", root);
-    const seg1 = qs("#rlcNewsTickerSeg", root);
-    const seg2 = qs("#rlcNewsTickerSeg2", root);
-    const viewport = track ? track.parentElement : null;
-    if (!root || !track || !seg1 || !seg2) return;
-
     setLabel(root);
 
-    track.style.animation = "none";
-    seg1.innerHTML = "";
-    seg2.innerHTML = "";
+    const marquee = qs("#rlcNewsMarquee", root);
+    if (!marquee) return;
 
-    seg1.appendChild(buildItemsDOM(items));
+    marquee.innerHTML = "";
+    const seg1 = buildSegment(items);
+    const seg2 = seg1.cloneNode(true);
 
-    const vw = viewport ? (viewport.clientWidth || 900) : 900;
-    repeatToFill(seg1, vw);
-    cloneChildrenInto(seg1, seg2);
+    marquee.appendChild(seg1);
+    marquee.appendChild(seg2);
 
-    const segW = Math.max(1200, seg1.scrollWidth || 1200);
-    const endPx = -segW;
-    const durSec = Math.max(18, Math.min(220, Math.abs(endPx) / CFG.speedPxPerSec));
+    // Decide marquee si overflow
+    const textWrap = marquee.parentElement;
+    const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
 
-    track.style.setProperty("--rlcTickerEnd", `${endPx}px`);
-    track.style.setProperty("--rlcTickerDur", `${durSec}s`);
+    // medir ancho del 1er segmento
+    const w = Math.max(300, seg1.scrollWidth || 300);
 
-    requestAnimationFrame(() => { track.style.animation = ""; });
+    if (w > vw * 1.05) {
+      root.setAttribute("data-marquee", "1");
+      const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+      root.style.setProperty("--rlcTickerDur", `${durSec}s`);
+    } else {
+      root.setAttribute("data-marquee", "0");
+      root.style.removeProperty("--rlcTickerDur");
+    }
   }
 
   // ───────────────────────────────────────── Hide on vote
@@ -1066,12 +874,12 @@
     if (!CFG.enabled) { setVisible(false); return; }
     setVisible(true);
 
-    const key = cacheKey();
+    const ck = cacheKey();
 
     if (!force) {
       const cache = readCache();
       const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
-      if (cache && cache.key === key && (Date.now() - (cache.ts || 0) <= maxAge)) {
+      if (cache && cache.key === ck && (Date.now() - (cache.ts || 0) <= maxAge)) {
         setTickerItems(cache.items);
         return;
       }
@@ -1085,11 +893,12 @@
       const bi = await makeBilingual(en);
 
       setTickerItems(bi);
-      writeCache(key, bi);
+      writeCache(ck, bi);
     } catch (e) {
       const cache = readCache();
       if (cache?.items?.length) setTickerItems(cache.items);
       else setTickerItems([]);
+      log("refresh fail", e?.message || e);
     } finally {
       refreshInFlight = false;
     }

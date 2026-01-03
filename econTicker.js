@@ -1,13 +1,14 @@
-/* econTicker.js — RLC Global Econ Ticker v1.0.2
+/* econTicker.js — RLC Global Econ Ticker v1.1.0
    ✅ KEY namespace (bus + storage + cache)
    ✅ Fuente FREE: Stooq (CSV) + robust fetch (direct -> AllOrigins -> r.jina.ai)
    ✅ Iconos FREE: Simple Icons (CDN) + favicon domain fallback + glyph fallback
    ✅ Hora + bandera por activo (timeZone + country)
    ✅ Hide on vote (#voteBox)
    ✅ RLCUiBars v2 (group) para split (NEWS derecha + ECON izquierda)
+   ✅ NO inyecta CSS (usa styles.css)
    ✅ URL params:
      - ?econ=0 (OFF) / ?econ=1 (FORCE ON)
-     - ?econSpeed=55
+     - ?econSpeed=60
      - ?econRefresh=2
      - ?econTop=10
      - ?econHideOnVote=0/1
@@ -21,7 +22,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_ECON_TICKER_LOADED_V102";
+  const LOAD_GUARD = "__RLC_ECON_TICKER_LOADED_V110";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -89,7 +90,7 @@
     return !!(msg && msg.key === KEY);
   }
 
-  // ───────────────────────────────────────── RLCUiBars v2 (con group)
+  // ───────────────────────────────────────── RLCUiBars v2 (group)
   function ensureUiBars() {
     const exists = g.RLCUiBars && typeof g.RLCUiBars.set === "function" && typeof g.RLCUiBars.recalc === "function";
     if (exists && g.RLCUiBars.__rlcVer === 2) return;
@@ -100,14 +101,12 @@
       const n = parseFloat(String(x ?? "").trim());
       return Number.isFinite(n) ? n : fb;
     };
-
     const cssNum = (varName, fb) => {
       try {
         const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
         return safeNum(v, fb);
       } catch (_) { return fb; }
     };
-
     const setVar = (name, val) => {
       try { document.documentElement.style.setProperty(name, val); } catch (_) {}
     };
@@ -134,9 +133,9 @@
           try { return getComputedStyle(document.documentElement).getPropertyValue("--rlcTickerGap").trim(); }
           catch (_) { return ""; }
         })();
-        if (!gapRaw) setVar("--rlcTickerGap", "10px");
+        if (!gapRaw) setVar("--rlcTickerGap", "12px");
 
-        const gap = cssNum("--rlcTickerGap", 10);
+        const gap = cssNum("--rlcTickerGap", 12);
 
         const enabled = Array.from(bars.entries())
           .map(([id, c]) => ({ id, ...c }))
@@ -268,7 +267,7 @@
   function cfgFromUrl() {
     const out = {};
 
-    // ✅ FIX: permitir forzar ON desde URL
+    // Forzar ON
     if (P.econ === "1" || P.econ === "true") out.enabled = true;
 
     if (P.speed) out.speedPxPerSec = clamp(num(P.speed, DEFAULTS.speedPxPerSec), 20, 140);
@@ -285,7 +284,6 @@
   function readCfgMerged() {
     return readJson(CFG_KEY_NS) || readJson(CFG_KEY_LEGACY) || null;
   }
-
   function writeCfgCompat(cfg) {
     try { writeJson(CFG_KEY_NS, cfg); } catch (_) {}
     try { writeJson(CFG_KEY_LEGACY, cfg); } catch (_) {}
@@ -293,215 +291,35 @@
 
   let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
 
-  // ───────────────────────────────────────── UI / CSS
+  // ───────────────────────────────────────── Split
   const SPLIT_MQ = "(min-width: 980px)";
   const isSplit = () => {
     try { return !!window.matchMedia && window.matchMedia(SPLIT_MQ).matches; }
     catch (_) { return false; }
   };
 
-  function ensureHostPositioning(host) {
-    if (!host) return;
-    try {
-      const cs = getComputedStyle(host);
-      if (cs && cs.position === "static") host.style.position = "relative";
-    } catch (_) {}
-  }
-
-  function injectStyles() {
-    if (qs("#rlcEconTickerStyle")) return;
-
-    const st = document.createElement("style");
-    st.id = "rlcEconTickerStyle";
-    st.textContent = `
-#rlcEconTicker{
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: var(--rlcEconTop, var(--rlcTickerTop, 10px));
-  height: 34px;
-  z-index: 999999;
-  display:flex;
-  align-items:center;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(10,14,20,.88), rgba(8,10,14,.78));
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: 0 14px 40px rgba(0,0,0,.45);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  overflow: hidden;
-  pointer-events: auto;
-}
-#rlcEconTicker.hidden{ display:none !important; }
-
-#rlcEconTicker .label{
-  flex: 0 0 auto;
-  height: 100%;
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  padding: 0 12px;
-  border-right: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(90deg, rgba(25,226,138,.22), rgba(25,226,138,0));
-  font: 900 12px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,.92);
-  user-select:none;
-  white-space: nowrap;
-}
-#rlcEconTicker .dot{
-  width: 8px; height: 8px; border-radius: 999px;
-  background: #19e28a;
-  box-shadow: 0 0 0 3px rgba(25,226,138,.18), 0 0 16px rgba(25,226,138,.45);
-}
-
-#rlcEconTicker .viewport{
-  position: relative;
-  overflow:hidden;
-  height: 100%;
-  flex: 1 1 auto;
-  display:flex;
-  align-items:center;
-}
-#rlcEconTicker .fadeL,
-#rlcEconTicker .fadeR{
-  position:absolute; top:0; bottom:0; width: 46px;
-  z-index: 2; pointer-events:none;
-}
-#rlcEconTicker .fadeL{ left:0; background: linear-gradient(90deg, rgba(8,10,14,1), rgba(8,10,14,0)); }
-#rlcEconTicker .fadeR{ right:0; background: linear-gradient(270deg, rgba(8,10,14,1), rgba(8,10,14,0)); }
-
-#rlcEconTicker .track{
-  position: relative;
-  z-index: 1;
-  display:flex;
-  align-items:center;
-  gap: 18px;
-  white-space: nowrap;
-  will-change: transform;
-  transform: translate3d(0,0,0);
-  animation: rlcEconMove var(--rlcTickerDur, 60s) linear infinite;
-}
-#rlcEconTicker:hover .track{ animation-play-state: paused; }
-
-#rlcEconTicker .seg{
-  display:flex;
-  align-items:center;
-  gap: 18px;
-  white-space: nowrap;
-}
-#rlcEconTicker .item{
-  display:inline-flex;
-  align-items:center;
-  gap: 10px;
-  font: 800 12px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  color: rgba(255,255,255,.92);
-  text-decoration: none;
-  opacity: .92;
-}
-#rlcEconTicker .item:hover{ opacity: 1; text-decoration: underline; }
-
-#rlcEconTicker .sep{
-  width: 5px; height: 5px; border-radius:999px;
-  background: rgba(255,255,255,.28);
-  box-shadow: 0 0 0 3px rgba(255,255,255,.06);
-  display:inline-block;
-  flex: 0 0 auto;
-}
-
-#rlcEconTicker .ico{
-  width: 18px; height: 18px; border-radius: 6px;
-  display:inline-flex; align-items:center; justify-content:center;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.12);
-  overflow:hidden;
-  flex: 0 0 auto;
-}
-#rlcEconTicker .ico img{
-  width: 16px; height: 16px; object-fit: contain;
-  filter: invert(1);
-  opacity: .95;
-}
-#rlcEconTicker .ico .glyph{ font-size: 14px; line-height: 1; }
-
-#rlcEconTicker .nm{ font-weight: 950; letter-spacing: .02em; }
-#rlcEconTicker .px{ font-variant-numeric: tabular-nums; opacity: .92; }
-#rlcEconTicker .chg{ font-variant-numeric: tabular-nums; opacity: .92; }
-#rlcEconTicker .chg.up{ color:#19e28a; }
-#rlcEconTicker .chg.down{ color:#ff5a5a; }
-#rlcEconTicker .meta{
-  display:inline-flex; align-items:center; gap:6px;
-  opacity: .70;
-  font-weight: 850;
-}
-#rlcEconTicker .flag{ font-size: 14px; line-height: 1; }
-#rlcEconTicker .clk{ font-variant-numeric: tabular-nums; }
-
-@keyframes rlcEconMove{
-  from{ transform: translate3d(0,0,0); }
-  to{ transform: translate3d(var(--rlcTickerEnd, -1200px),0,0); }
-}
-
-@media (prefers-reduced-motion: reduce){
-  #rlcEconTicker .track{ animation: none !important; transform:none !important; }
-}
-
-/* ✅ Split: ECON a la izquierda (>=980px) */
-@media ${SPLIT_MQ}{
-  #rlcEconTicker{
-    left: 10px;
-    right: calc(50% + 6px);
-  }
-}
-
-/* Compat: empuja vote/ads por debajo de TODAS las barras */
-#voteBox, .vote{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
-}
-#adsBox, #adBox, #adsNotice, #adNotice,
-#rlcAdsBox, #rlcAdBox, #rlcAdsNotice, #rlcAdNotice, #rlcAdsOverlay, #rlcAdOverlay{
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--rlcTickerTop, 10px) + var(--rlcTickerH, 0px) + var(--rlcTickerGap, 10px)) !important;
-}
-`.trim();
-
-    document.head.appendChild(st);
-  }
-
-  function pickHost() {
-    return (qs("#stage") || qs("#app") || document.body);
-  }
-
+  // ───────────────────────────────────────── UI
   function ensureUI() {
-    injectStyles();
     ensureUiBars();
 
     let root = qs("#rlcEconTicker");
     if (root) return root;
 
-    const host = pickHost();
-    ensureHostPositioning(host);
-
     root = document.createElement("div");
     root.id = "rlcEconTicker";
+    root.setAttribute("role", "region");
     root.setAttribute("aria-label", "Ticker económico");
+
     root.innerHTML = `
-      <div class="label" title="Mercados">
-        <span class="dot" aria-hidden="true"></span>
-        <span id="rlcEconTickerLabel">MARKETS · MERCADOS</span>
-      </div>
-      <div class="viewport">
-        <div class="fadeL" aria-hidden="true"></div>
-        <div class="fadeR" aria-hidden="true"></div>
-        <div class="track" id="rlcEconTickerTrack" aria-live="polite">
-          <div class="seg" id="rlcEconTickerSeg"></div>
-          <div class="seg" id="rlcEconTickerSeg2" aria-hidden="true"></div>
+      <div class="tickerInner">
+        <div class="tickerBadge"><span id="rlcEconTickerLabel">MARKETS · MERCADOS</span></div>
+        <div class="tickerText">
+          <div class="tickerMarquee" id="rlcEconMarquee" aria-live="polite"></div>
         </div>
       </div>
     `.trim();
 
-    host.insertBefore(root, host.firstChild);
-
+    document.body.appendChild(root);
     installImgFallback(root);
     return root;
   }
@@ -523,9 +341,8 @@
 
   function setVisible(on) {
     const root = ensureUI();
-    if (!root) return;
-
     root.classList.toggle("hidden", !on);
+    root.setAttribute("aria-hidden", on ? "false" : "true");
     registerBar(on);
   }
 
@@ -647,17 +464,17 @@
       if (!img || img.tagName !== "IMG") return;
       if (!root.contains(img)) return;
 
-      const ico = img.closest(".ico");
+      const ico = img.closest(".tkIco");
       if (!ico) return;
 
-      const hostItem = img.closest(".item");
+      const hostItem = img.closest(".tkItem");
       const kind = safeStr(hostItem?.getAttribute("data-kind") || "");
       const fallbackGlyph = safeStr(hostItem?.getAttribute("data-glyph") || "") || guessGlyph(kind);
 
       try { img.remove(); } catch (_) {}
       try {
         const sp = document.createElement("span");
-        sp.className = "glyph";
+        sp.className = "tkGlyph";
         sp.textContent = fallbackGlyph;
         ico.appendChild(sp);
       } catch (_) {}
@@ -747,173 +564,116 @@
     if (!KEY) writeJson(CACHE_KEY_LEGACY, { ts: Date.now(), key, map });
   }
 
-  // ───────────────────────────────────────── Build DOM
-  function clampLen(s, max) {
-    let t = safeStr(s).replace(/\s+/g, " ").trim();
-    if (t.length > max) t = t.slice(0, Math.max(8, max - 1)).trim() + "…";
-    return t;
-  }
+  // ───────────────────────────────────────── Render (marquee)
+  function buildSegment(model) {
+    const seg = document.createElement("span");
+    seg.className = "tkSeg";
 
-  function makeSep() {
-    const sep = document.createElement("span");
-    sep.className = "sep";
-    sep.setAttribute("aria-hidden", "true");
-    return sep;
-  }
-
-  function buildClockNode(c) {
-    const wrap = document.createElement("span");
-    wrap.className = "item";
-    wrap.setAttribute("role", "text");
-
-    const meta = document.createElement("span");
-    meta.className = "meta";
-
-    const flag = document.createElement("span");
-    flag.className = "flag";
-    flag.textContent = flagEmoji(c.country);
-
-    const clk = document.createElement("span");
-    clk.className = "clk";
-    clk.textContent = `${c.label} ${fmtTime(c.tz)}`;
-
-    meta.appendChild(flag);
-    meta.appendChild(clk);
-    wrap.appendChild(meta);
-    return wrap;
-  }
-
-  function buildAssetNode(it) {
-    const a = document.createElement("a");
-    a.className = "item";
-    a.href = `https://stooq.com/q/?s=${encodeURIComponent(it.stooq)}`;
-    a.target = "_blank";
-    a.rel = "noreferrer noopener";
-    a.setAttribute("data-kind", safeStr(it.kind));
-    a.setAttribute("data-glyph", safeStr(it.glyph) || "");
-
-    const icoWrap = document.createElement("span");
-    icoWrap.className = "ico";
-    const ic = iconFor(it);
-
-    if (ic.type === "img") {
-      const img = document.createElement("img");
-      img.loading = "lazy";
-      img.referrerPolicy = "no-referrer";
-      img.src = ic.url;
-      img.alt = "";
-      icoWrap.appendChild(img);
-    } else {
-      const sp = document.createElement("span");
-      sp.className = "glyph";
-      sp.textContent = ic.glyph;
-      icoWrap.appendChild(sp);
-    }
-
-    const nm = document.createElement("span");
-    nm.className = "nm";
-    nm.textContent = clampLen(it.label || it.stooq.toUpperCase(), 18);
-
-    const px = document.createElement("span");
-    px.className = "px";
-    px.textContent = it.priceText || "—";
-
-    const chg = document.createElement("span");
-    chg.className = "chg";
-    if (it.changeText) {
-      chg.textContent = it.changeText;
-      if (it.changeDir === "up") chg.classList.add("up");
-      else if (it.changeDir === "down") chg.classList.add("down");
-    } else {
-      chg.textContent = "";
-    }
-
-    const meta = document.createElement("span");
-    meta.className = "meta";
-
-    const flag = document.createElement("span");
-    flag.className = "flag";
-    flag.textContent = flagEmoji(it.country);
-
-    const clk = document.createElement("span");
-    clk.className = "clk";
-    clk.textContent = fmtTime(it.tz || "UTC");
-
-    meta.appendChild(flag);
-    meta.appendChild(clk);
-
-    a.appendChild(icoWrap);
-    a.appendChild(nm);
-    a.appendChild(px);
-    if (it.changeText) a.appendChild(chg);
-    a.appendChild(meta);
-
-    return a;
-  }
-
-  function buildItemsDOM(model) {
-    const frag = document.createDocumentFragment();
     let first = true;
+    const addSep = () => {
+      const s = document.createElement("span");
+      s.className = "tkSep";
+      s.textContent = "•";
+      seg.appendChild(s);
+    };
 
     const push = (node) => {
-      if (!first) frag.appendChild(makeSep());
-      frag.appendChild(node);
+      if (!first) addSep();
       first = false;
+      seg.appendChild(node);
     };
 
     if (CFG.showClocks && Array.isArray(model.clocks) && model.clocks.length) {
-      for (const c of model.clocks) push(buildClockNode(c));
+      for (const c of model.clocks) {
+        const sp = document.createElement("span");
+        sp.className = "tkItem tkClock";
+        sp.textContent = `${flagEmoji(c.country)} ${c.label} ${fmtTime(c.tz)}`;
+        push(sp);
+      }
     }
 
-    for (const it of model.items || []) push(buildAssetNode(it));
+    for (const it of model.items || []) {
+      const a = document.createElement("a");
+      a.className = "tkItem tkEcon";
+      a.href = `https://stooq.com/q/?s=${encodeURIComponent(it.stooq)}`;
+      a.target = "_blank";
+      a.rel = "noreferrer noopener";
+      a.setAttribute("data-kind", safeStr(it.kind));
+      a.setAttribute("data-glyph", safeStr(it.glyph) || "");
 
-    return frag;
-  }
+      const ico = document.createElement("span");
+      ico.className = "tkIco";
+      const ic = iconFor(it);
+      if (ic.type === "img") {
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.src = ic.url;
+        img.alt = "";
+        ico.appendChild(img);
+      } else {
+        const sp = document.createElement("span");
+        sp.className = "tkGlyph";
+        sp.textContent = ic.glyph;
+        ico.appendChild(sp);
+      }
 
-  function repeatToFill(segEl, viewportWidth) {
-    const base = Array.from(segEl.childNodes).map(n => n.cloneNode(true));
-    if (!base.length) return;
+      const nm = document.createElement("span");
+      nm.className = "tkNm";
+      nm.textContent = safeStr(it.label || it.stooq.toUpperCase()).slice(0, 18);
 
-    let guard = 0;
-    while ((segEl.scrollWidth || 0) < viewportWidth * 1.2 && guard < 8) {
-      for (const n of base) segEl.appendChild(n.cloneNode(true));
-      guard++;
+      const px = document.createElement("span");
+      px.className = "tkPx";
+      px.textContent = it.priceText || "—";
+
+      const chg = document.createElement("span");
+      chg.className = "tkChg";
+      if (it.changeText) {
+        chg.textContent = it.changeText;
+        if (it.changeDir === "up") chg.classList.add("up");
+        else if (it.changeDir === "down") chg.classList.add("down");
+      }
+
+      const meta = document.createElement("span");
+      meta.className = "tkMeta";
+      meta.textContent = `${flagEmoji(it.country)} ${fmtTime(it.tz || "UTC")}`;
+
+      a.appendChild(ico);
+      a.appendChild(nm);
+      a.appendChild(px);
+      if (it.changeText) a.appendChild(chg);
+      a.appendChild(meta);
+
+      push(a);
     }
-  }
 
-  function cloneChildrenInto(fromEl, toEl) {
-    toEl.innerHTML = "";
-    const nodes = Array.from(fromEl.childNodes);
-    for (const n of nodes) toEl.appendChild(n.cloneNode(true));
+    return seg;
   }
 
   function setTickerItems(model) {
     const root = ensureUI();
-    const track = qs("#rlcEconTickerTrack", root);
-    const seg1 = qs("#rlcEconTickerSeg", root);
-    const seg2 = qs("#rlcEconTickerSeg2", root);
-    const viewport = track ? track.parentElement : null;
-    if (!root || !track || !seg1 || !seg2) return;
+    const marquee = qs("#rlcEconMarquee", root);
+    if (!marquee) return;
 
-    track.style.animation = "none";
+    marquee.innerHTML = "";
+    const seg1 = buildSegment(model);
+    const seg2 = seg1.cloneNode(true);
 
-    seg1.innerHTML = "";
-    seg2.innerHTML = "";
+    marquee.appendChild(seg1);
+    marquee.appendChild(seg2);
 
-    seg1.appendChild(buildItemsDOM(model));
+    const textWrap = marquee.parentElement;
+    const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
+    const w = Math.max(300, seg1.scrollWidth || 300);
 
-    const vw = viewport ? (viewport.clientWidth || 900) : 900;
-    repeatToFill(seg1, vw);
-    cloneChildrenInto(seg1, seg2);
-
-    const segW = Math.max(1200, seg1.scrollWidth || 1200);
-    const endPx = -segW;
-    const durSec = Math.max(18, Math.min(220, Math.abs(endPx) / CFG.speedPxPerSec));
-
-    track.style.setProperty("--rlcTickerEnd", `${endPx}px`);
-    track.style.setProperty("--rlcTickerDur", `${durSec}s`);
-
-    requestAnimationFrame(() => { track.style.animation = ""; });
+    if (w > vw * 1.05) {
+      root.setAttribute("data-marquee", "1");
+      const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+      root.style.setProperty("--rlcTickerDur", `${durSec}s`);
+    } else {
+      root.setAttribute("data-marquee", "0");
+      root.style.removeProperty("--rlcTickerDur");
+    }
   }
 
   // ───────────────────────────────────────── Hide on vote
@@ -1070,7 +830,9 @@
     try {
       const model = await buildModel();
       setTickerItems(model);
-    } catch (_) {
+    } catch (e) {
+      log("refresh fail", e?.message || e);
+      // fallback: usa cache si hay
       const cache = readCache();
       const ck = cacheKey();
       const map = (cache && cache.key === ck && cache.map) ? cache.map : {};

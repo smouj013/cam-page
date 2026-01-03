@@ -1,8 +1,9 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.5.0 (NEWSROOM/BROADCAST) — FULL
+/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.5.1 (NEWSROOM/BROADCAST) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
    ✅ Tema unificado “Neo-Atlas Newsroom” (misma piel en Player + Control)
-   ✅ Ticker top (#rlcNewsTicker) + --ui-top-offset robusto (sin :has / con :has)
+   ✅ Ticker top (#rlcNewsTicker + #rlcEconTicker) + --ui-top-offset robusto (sin :has)
+   ✅ Split >=980px: ECON izquierda + NEWS derecha (sin sumar alturas con RLCUiBars group)
    ✅ Animaciones suaves + fallbacks Opera GX / Safari / sin backdrop / sin mix-blend / sin mask
 */
 
@@ -82,29 +83,17 @@
   --hudMarqueeGap: 44px;
   --hudMarqueeDur: 12s;
 
-  /* Ticker (Top) */
-  --ticker-h:   var(--rlcTickerH, 34px);
+  /* Ticker global vars (desde RLCUiBars) */
+  --rlcBarH: 34px;                  /* altura de CADA barra */
   --ticker-gap: var(--rlcTickerGap, 12px);
+
+  /* ✅ FIX: offset real = altura total de barras + un gap (solo si hay barra) */
+  --ui-top-offset: calc(var(--rlcTickerH, 0px) + min(var(--rlcTickerH, 0px), var(--ticker-gap)));
 
   /* Broadcast overlays */
   --grain-opacity: .10;
   --scan-opacity:  .07;
   --vignette-opacity: .42;
-
-  /* ───────────────────────── Ticker stacking (ROBUST) ─────────────────────────
-     - Sin :has(): usa --rlcTickerH (JS debe ponerlo a 0 si no hay ticker)
-     - Con :has(): auto quita el offset cuando el ticker no está o está hidden
-     - Extras: body.ticker--off / body[data-ticker="0"] (por si lo usas)
-  */
-  --ui-top-offset: calc(var(--ticker-h) + min(var(--ticker-h), var(--ticker-gap)));
-}
-
-/* Si el navegador soporta :has(), quitamos la reserva cuando NO hay ticker o está hidden */
-@supports selector(:has(*)) {
-  body:not(:has(#rlcNewsTicker)),
-  body:has(#rlcNewsTicker.hidden){
-    --ui-top-offset: 0px;
-  }
 }
 
 /* Hooks opcionales (no rompen nada si no se usan) */
@@ -208,14 +197,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 *::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.24); }
 
-/* ───────────────────────── Top News Ticker (si existe) ───────────────────────── */
-#rlcNewsTicker{
+/* ───────────────────────── Top Tickers (NEWS + ECON) ───────────────────────── */
+#rlcNewsTicker,
+#rlcEconTicker{
   position: fixed;
-  top: 0;
   left: 0;
   right: 0;
 
-  height: var(--ticker-h);
+  top: var(--rlcNewsTop, 0px);
+  height: var(--rlcBarH);
   z-index: 20;
 
   display:flex;
@@ -234,9 +224,18 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
   overflow:hidden;
 }
-#rlcNewsTicker.hidden{ display:none !important; }
+#rlcEconTicker{
+  top: var(--rlcEconTop, 0px);
+  background:
+    linear-gradient(90deg, rgba(25,226,138,.16), rgba(77,215,255,.10), rgba(255,55,95,.08)),
+    linear-gradient(180deg, rgba(10,14,20,.92), rgba(8,10,14,.82));
+}
 
-#rlcNewsTicker::after{
+#rlcNewsTicker.hidden,
+#rlcEconTicker.hidden{ display:none !important; }
+
+#rlcNewsTicker::after,
+#rlcEconTicker::after{
   content:"";
   position:absolute;
   inset:-2px;
@@ -247,14 +246,20 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   animation: rlcStudioSweep 8.5s var(--ease-soft) infinite;
 }
 
-#rlcNewsTicker .tickerInner{
+#rlcNewsTicker{ --ticker-accent: var(--news-red); }
+#rlcEconTicker{ --ticker-accent: #19e28a; }
+
+#rlcNewsTicker .tickerInner,
+#rlcEconTicker .tickerInner{
   display:flex;
   align-items:center;
   gap: 10px;
   width: 100%;
   min-width: 0;
 }
-#rlcNewsTicker .tickerBadge{
+
+#rlcNewsTicker .tickerBadge,
+#rlcEconTicker .tickerBadge{
   flex: 0 0 auto;
   height: 24px;
   display:inline-flex;
@@ -269,13 +274,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   text-transform: uppercase;
   white-space: nowrap;
 }
-#rlcNewsTicker .tickerBadge::before{
+#rlcNewsTicker .tickerBadge::before,
+#rlcEconTicker .tickerBadge::before{
   content:"";
   width: 7px; height: 7px; border-radius: 999px;
-  background: var(--news-red);
-  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.40);
+  background: var(--ticker-accent);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.10), 0 0 16px rgba(0,0,0,.25);
 }
-#rlcNewsTicker .tickerText{
+
+#rlcNewsTicker .tickerText,
+#rlcEconTicker .tickerText{
   min-width: 0;
   flex: 1 1 auto;
   overflow:hidden;
@@ -284,16 +292,88 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   color: rgba(255,255,255,.86);
   text-shadow: 0 2px 12px rgba(0,0,0,.35);
 }
-#rlcNewsTicker .tickerMarquee{
+#rlcNewsTicker .tickerMarquee,
+#rlcEconTicker .tickerMarquee{
   display:inline-flex;
   gap: 28px;
   will-change: transform;
   transform: translateZ(0);
+  align-items:center;
 }
-#rlcNewsTicker[data-marquee="1"] .tickerMarquee{
-  animation: rlcTickerMarquee 18s linear infinite;
+#rlcNewsTicker[data-marquee="1"] .tickerMarquee,
+#rlcEconTicker[data-marquee="1"] .tickerMarquee{
+  animation: rlcTickerMarquee var(--rlcTickerDur, 18s) linear infinite;
 }
-#rlcNewsTicker:hover .tickerMarquee{ animation-play-state: paused; }
+#rlcNewsTicker:hover .tickerMarquee,
+#rlcEconTicker:hover .tickerMarquee{
+  animation-play-state: paused;
+}
+
+/* Items dentro del ticker */
+.tkSeg{ display:inline-flex; align-items:center; gap: 18px; white-space: nowrap; }
+.tkSep{
+  opacity:.55;
+  margin: 0 6px;
+  font-weight: 900;
+}
+.tkItem{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  color: rgba(255,255,255,.90);
+  opacity: .94;
+  font-weight: 800;
+  text-decoration: none;
+}
+.tkItem:hover{ opacity: 1; text-decoration: underline; }
+.tkSrc{
+  opacity: .68;
+  font-weight: 950;
+  letter-spacing: .02em;
+}
+
+/* Econ mini UI (icon + numbers) */
+.tkIco{
+  width: 18px; height: 18px;
+  border-radius: 6px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
+  overflow:hidden;
+  flex: 0 0 auto;
+}
+.tkIco img{
+  width: 16px; height: 16px;
+  object-fit: contain;
+  filter: invert(1);
+  opacity: .95;
+}
+.tkGlyph{ font-size: 14px; line-height: 1; }
+.tkNm{ font-weight: 950; letter-spacing:.02em; }
+.tkPx{ font-variant-numeric: tabular-nums; opacity:.92; }
+.tkChg{ font-variant-numeric: tabular-nums; opacity:.92; }
+.tkChg.up{ color:#19e28a; }
+.tkChg.down{ color:#ff5a5a; }
+.tkMeta{
+  opacity:.70;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+}
+
+/* ✅ Split >=980px: ECON izquierda, NEWS derecha */
+@media (min-width: 980px){
+  #rlcEconTicker{
+    left: 0;
+    right: calc(50% + 6px);
+  }
+  #rlcNewsTicker{
+    left: calc(50% + 6px);
+    right: 0;
+  }
+}
 
 /* ───────────────────────── Controls (Buttons / Inputs) ───────────────────────── */
 .btn{
@@ -827,7 +907,9 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── Vote Overlay ───────────────────────── */
-.vote{
+/* ✅ Compat: .vote y #voteBox (tu JS mira #voteBox) */
+.vote,
+#voteBox{
   position:absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
   right: max(12px, env(safe-area-inset-right));
@@ -1208,7 +1290,7 @@ input[type="range"]{ accent-color: var(--accent); }
   .row > span{ min-width: 108px; }
   .controls3{ grid-template-columns: 1fr; }
   .hud{ width: min(700px, calc(100vw - 24px)); }
-  .vote{ width: min(360px, calc(100vw - 24px)); }
+  .vote, #voteBox{ width: min(360px, calc(100vw - 24px)); }
 }
 @media (max-width: 420px){
   .hudRow{ grid-template-columns: 78px 1fr; }
@@ -1233,18 +1315,19 @@ input[type="range"]{ accent-color: var(--accent); }
 /* ───────────────────────── Accessibility ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .btn, .hudToggle, .card, .pill{ transition: none !important; }
-  .badge::before, #rlcHudWx, .progressBar::after, .stage::after, .card::after, #rlcNewsTicker::after{ animation: none !important; }
-  .fallbackCard, .hud, .vote, #rlcChatList > *{ animation: none !important; }
-  #rlcNewsTicker[data-marquee="1"] .tickerMarquee{ animation: none !important; }
+  .badge::before, #rlcHudWx, .progressBar::after, .stage::after, .card::after, #rlcNewsTicker::after, #rlcEconTicker::after{ animation: none !important; }
+  .fallbackCard, .hud, .vote, #voteBox, #rlcChatList > *{ animation: none !important; }
+  #rlcNewsTicker[data-marquee="1"] .tickerMarquee,
+  #rlcEconTicker[data-marquee="1"] .tickerMarquee{ animation: none !important; }
 }
 
 /* ───────────────────────── Fallback si no hay backdrop-filter ───────────────────────── */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  .hud, .vote, #rlcChatList > *, .card, .pill, .fallbackCard, #rlcNewsTicker{
+  .hud, .vote, #voteBox, #rlcChatList > *, .card, .pill, .fallbackCard, #rlcNewsTicker, #rlcEconTicker{
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-  .hud, .vote, #rlcChatList > *, #rlcNewsTicker{
+  .hud, .vote, #voteBox, #rlcChatList > *, #rlcNewsTicker, #rlcEconTicker{
     background: rgba(10,14,20,.92) !important;
   }
   .card{
