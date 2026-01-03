@@ -104,16 +104,22 @@
     #rlcNewsTicker{
       position:fixed!important;
       left:10px!important;right:10px!important;
-      top:var(--rlcTickerTop,10px)!important;
+      top:var(--rlcNewsTop, var(--rlcTickerTop,10px))!important;
       z-index:2147483647!important;
       pointer-events:none!important;
     }
 
-    /* ✅ ECON ticker fixed debajo del news ticker */
+    /* ✅ ECON ticker fixed justo debajo del news ticker (SIN usar --rlcTickerH) */
     #rlcEconTicker{
       position:fixed!important;
       left:10px!important;right:10px!important;
-      top:calc(var(--rlcTickerTop,10px) + var(--rlcTickerH,0px) + var(--rlcEconGap,10px))!important;
+      top:var(--rlcEconTop,
+        calc(
+          var(--rlcNewsTop, var(--rlcTickerTop,10px))
+          + var(--rlcBarH,34px)
+          + var(--rlcTickerGap, var(--rlcEconGap,6px))
+        )
+      )!important;
       z-index:2147483646!important;
       pointer-events:none!important;
     }
