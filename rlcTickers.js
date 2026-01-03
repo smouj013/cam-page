@@ -1,1372 +1,1575 @@
-/* styles.css — RLC Neo-Atlas (WORLD CAMS) v3.5.2 (NEWSROOM/BROADCAST) — FULL
-   ✅ Compatible con: index.html (player) + control.html (control)
-   ✅ Compatible con RLC app.js v2.3.5
-   ✅ No rompe IDs/clases existentes (hud/vote/chat/control)
-   ✅ Tema unificado “Neo-Atlas Newsroom” (misma piel en Player + Control)
-   ✅ Ticker top (#rlcNewsTicker + #rlcEconTicker) + --ui-top-offset robusto (sin :has)
-   ✅ Default: STACK full-width (NEWS arriba + ECON abajo)
-   ✅ Split opcional >=980px si body[data-ticker-layout="split"]
-   ✅ Animaciones suaves + fallbacks Opera GX / Safari / sin backdrop / sin mix-blend / sin mask
+/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.1.0 (NO RLCUiBars)
+   ✅ NEWS + ECON con MISMO markup + MISMA piel (Neo-Atlas)
+   ✅ Siempre full-width y en stack: NEWS arriba, ECON abajo
+   ✅ Calcula y aplica: --rlcNewsTop, --rlcEconTop, --rlcTickerH
+   ✅ Robust fetch: direct -> AllOrigins -> r.jina.ai
+   ✅ No rompe IDs/clases existentes: #rlcNewsTicker #rlcEconTicker, .tickerInner/.tickerBadge/.tickerText/.tickerMarquee
 */
 
-/* ───────────────────────── Theme Tokens ───────────────────────── */
-:root{
-  /* Base */
-  --bg: #04060b;
-  --bg2:#060a12;
-  --bg3:#070b14;
+(() => {
+  "use strict";
 
-  /* Panels (glass) */
-  --panel:  rgba(12,16,24,.56);
-  --panel2: rgba(12,16,24,.72);
-  --panel3: rgba(12,16,24,.86);
+  const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  /* Borders */
-  --stroke:  rgba(255,255,255,.10);
-  --stroke2: rgba(255,255,255,.14);
-  --stroke3: rgba(255,255,255,.18);
+  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V210";
+  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  /* Text */
-  --text:   rgba(255,255,255,.92);
-  --muted:  rgba(255,255,255,.66);
-  --muted2: rgba(255,255,255,.48);
+  // ───────────────────────── Helpers
+  const qs = (s, r = document) => r.querySelector(s);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
+  const num = (v, fb) => {
+    const n = parseFloat(String(v ?? "").replace(",", "."));
+    return Number.isFinite(n) ? n : fb;
+  };
 
-  /* Accent (atlas) */
-  --accent:  #25f3a6;
-  --accent2: #4dd7ff;
-  --danger:  #ff4d6d;
-  --warn:    #ffcc4d;
-
-  /* Newsroom accents */
-  --news-red:   #ff375f;
-  --news-red2:  rgba(255,55,95,.22);
-  --news-blue:  rgba(77,215,255,.22);
-  --news-mint:  rgba(37,243,166,.20);
-
-  --news-bg-top: rgba(10,14,20,.90);
-  --news-bg-bot: rgba(8,10,14,.80);
-
-  /* Glass helpers */
-  --glass:  rgba(255,255,255,.055);
-  --glass2: rgba(255,255,255,.075);
-
-  /* Radius & shadows */
-  --r:    16px;
-  --r-sm: 12px;
-  --r-lg: 20px;
-
-  --shadow:       0 18px 60px rgba(0,0,0,.45);
-  --shadow-soft:  0 12px 34px rgba(0,0,0,.28);
-  --shadow-tight: 0 10px 26px rgba(0,0,0,.22);
-
-  /* Typography */
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-  --mono: ui-monospace, "Cascadia Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-
-  /* Spacing */
-  --pad: 12px;
-  --gap: 12px;
-
-  /* Focus */
-  --focus: rgba(77,215,255,.26);
-
-  /* Crispness */
-  --line: 1.28;
-  --letter: .01em;
-
-  /* Motion */
-  --ease-out:  cubic-bezier(.2,.9,.2,1);
-  --ease-soft: cubic-bezier(.22,.7,.2,1);
-  --dur-1: 120ms;
-  --dur-2: 220ms;
-  --dur-3: 420ms;
-
-  /* Marquee */
-  --hudMarqueeGap: 44px;
-  --hudMarqueeDur: 12s;
-
-  /* ───────── Tickers (v2.3.5 compat) ───────── */
-  --rlcBarH: 34px;                  /* altura de CADA barra */
-  --rlcTickerGap: 12px;             /* gap entre barras y separación inferior */
-  --ticker-gap: var(--rlcTickerGap);
-
-  /* margen superior del bloque (si quieres) */
-  --rlcTickerTop: 0px;
-
-  /* JS v2.3.5 suele setear estos (si no, usamos defaults seguros) */
-  --rlcNewsTop: calc(env(safe-area-inset-top) + var(--rlcTickerTop));
-  --rlcEconTop: calc(var(--rlcNewsTop) + var(--rlcBarH) + var(--ticker-gap));
-
-  /* JS v2.3.5 debería setear la altura REAL del bloque de tickers activos */
-  --rlcTickerH: 0px;
-
-  /* ✅ offset real = altura total de tickers + un gap (solo si hay barra) */
-  --ui-top-offset: calc(var(--rlcTickerH, 0px) + min(var(--rlcTickerH, 0px), var(--ticker-gap)));
-
-  /* Broadcast overlays */
-  --grain-opacity: .10;
-  --scan-opacity:  .07;
-  --vignette-opacity: .42;
-}
-
-/* Hooks opcionales (no rompen nada si no se usan) */
-body.ticker--off,
-body[data-ticker="0"]{
-  --ui-top-offset: 0px;
-}
-
-/* ───────────────────────── Keyframes ───────────────────────── */
-@keyframes rlcPopIn{
-  from{ opacity: 0; transform: translate3d(0,10px,0) scale(.985); filter: blur(.6px); }
-  to  { opacity: 1; transform: translate3d(0,0,0) scale(1); filter: blur(0); }
-}
-@keyframes rlcFloat{
-  0%,100%{ transform: translate3d(0,0,0); }
-  50%{ transform: translate3d(0,-2px,0); }
-}
-@keyframes rlcPulseDot{
-  0%,100%{ transform: scale(1); opacity: .92; box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45); }
-  50%{ transform: scale(1.15); opacity: 1; box-shadow: 0 0 0 4px rgba(255,55,95,.22), 0 0 22px rgba(255,55,95,.60); }
-}
-@keyframes rlcBarSheen{
-  from{ transform: translateX(-70%); opacity: 0; }
-  25%{ opacity: .35; }
-  to{ transform: translateX(170%); opacity: 0; }
-}
-@keyframes rlcHudMarquee{
-  from{ transform: translate3d(0,0,0); }
-  to{ transform: translate3d(calc(-100% - var(--hudMarqueeGap)),0,0); }
-}
-@keyframes rlcStudioSweep{
-  0%{ transform: translate3d(-12%,0,0); opacity:.0; }
-  18%{ opacity:.22; }
-  50%{ opacity:.10; }
-  100%{ transform: translate3d(12%,0,0); opacity:0; }
-}
-@keyframes rlcTickerMarquee{
-  from{ transform: translate3d(0,0,0); }
-  to{ transform: translate3d(-50%,0,0); }
-}
-@keyframes rlcCardSheen{
-  0%{ transform: translate3d(-120%,0,0); opacity: 0; }
-  18%{ opacity: .18; }
-  100%{ transform: translate3d(120%,0,0); opacity: 0; }
-}
-
-/* ───────────────────────── Base / Reset ───────────────────────── */
-*{ box-sizing: border-box; }
-html, body{ height:100%; }
-html{ color-scheme: dark; }
-
-body{
-  margin:0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  line-height: var(--line);
-  letter-spacing: var(--letter);
-  overflow: hidden; /* Player: fixed stage */
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-
-  /* Blindaje stacking contexts: evita que fixed se “pierda” por transforms raros */
-  isolation: isolate;
-}
-
-img, video{ max-width:100%; display:block; }
-button, input, select, textarea{ font: inherit; color: inherit; }
-button{ background: none; border: 0; padding: 0; }
-::selection{ background: rgba(77,215,255,.20); }
-
-.hidden{ display:none !important; }
-.mono{ font-family: var(--mono); }
-.muted{ color: var(--muted); }
-.dot{ margin:0 6px; color: rgba(255,255,255,.34); }
-
-a{ color: inherit; text-decoration: none; }
-a:hover{ text-decoration: none; }
-
-a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
-  outline: none;
-  box-shadow: 0 0 0 3px var(--focus);
-  border-radius: 10px;
-}
-
-/* Long strings never break layout */
-.nowTitle, .nowMeta, .hudTitle, .hudValue, .hudLink, .hint, .fallbackText,
-#rlcChatList, #rlcChatList *{
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-/* Scrollbar (sobre todo para modo control) */
-@supports (scrollbar-color: auto){
-  *{ scrollbar-color: rgba(255,255,255,.22) rgba(255,255,255,.06); scrollbar-width: thin; }
-}
-*::-webkit-scrollbar{ width: 12px; height: 12px; }
-*::-webkit-scrollbar-track{ background: rgba(255,255,255,.05); }
-*::-webkit-scrollbar-thumb{
-  background: rgba(255,255,255,.18);
-  border: 3px solid rgba(0,0,0,0);
-  background-clip: padding-box;
-  border-radius: 999px;
-}
-*::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.24); }
-
-/* ───────────────────────── Top Tickers (NEWS + ECON) ───────────────────────── */
-/* ✅ v2.3.5 compat:
-   - JS puede setear: --rlcNewsTop / --rlcEconTop / --rlcTickerH
-   - CSS por defecto hace STACK full-width robusto
-*/
-#rlcNewsTicker,
-#rlcEconTicker{
-  position: fixed;
-  left: 0;
-  right: 0;
-
-  height: var(--rlcBarH);
-  z-index: 20;
-
-  display:flex;
-  align-items:center;
-
-  padding-left: max(12px, env(safe-area-inset-left));
-  padding-right: max(12px, env(safe-area-inset-right));
-
-  border-bottom: 1px solid rgba(255,255,255,.08);
-  background:
-    linear-gradient(90deg, rgba(255,55,95,.14), rgba(77,215,255,.10), rgba(37,243,166,.10)),
-    linear-gradient(180deg, rgba(10,14,20,.92), rgba(8,10,14,.82));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 10px 30px rgba(0,0,0,.26);
-
-  overflow:hidden;
-  contain: layout paint;
-}
-
-#rlcNewsTicker{ top: var(--rlcNewsTop); }
-#rlcEconTicker{
-  top: var(--rlcEconTop);
-  background:
-    linear-gradient(90deg, rgba(25,226,138,.16), rgba(77,215,255,.10), rgba(255,55,95,.08)),
-    linear-gradient(180deg, rgba(10,14,20,.92), rgba(8,10,14,.82));
-}
-
-#rlcNewsTicker.hidden,
-#rlcEconTicker.hidden{ display:none !important; }
-
-#rlcNewsTicker::after,
-#rlcEconTicker::after{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  pointer-events:none;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.20), transparent);
-  filter: blur(10px);
-  opacity: 0;
-  animation: rlcStudioSweep 8.5s var(--ease-soft) infinite;
-}
-
-#rlcNewsTicker{ --ticker-accent: var(--news-red); }
-#rlcEconTicker{ --ticker-accent: #19e28a; }
-
-#rlcNewsTicker .tickerInner,
-#rlcEconTicker .tickerInner{
-  display:flex;
-  align-items:center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-}
-
-#rlcNewsTicker .tickerBadge,
-#rlcEconTicker .tickerBadge{
-  flex: 0 0 auto;
-  height: 24px;
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.26);
-  font: 950 10px/1 var(--sans);
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-#rlcNewsTicker .tickerBadge::before,
-#rlcEconTicker .tickerBadge::before{
-  content:"";
-  width: 7px; height: 7px; border-radius: 999px;
-  background: var(--ticker-accent);
-  box-shadow: 0 0 0 3px rgba(255,255,255,.10), 0 0 16px rgba(0,0,0,.25);
-}
-
-#rlcNewsTicker .tickerText,
-#rlcEconTicker .tickerText{
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow:hidden;
-  white-space: nowrap;
-  font-size: 12px;
-  color: rgba(255,255,255,.86);
-  text-shadow: 0 2px 12px rgba(0,0,0,.35);
-}
-#rlcNewsTicker .tickerMarquee,
-#rlcEconTicker .tickerMarquee{
-  display:inline-flex;
-  gap: 28px;
-  will-change: transform;
-  transform: translateZ(0);
-  align-items:center;
-}
-#rlcNewsTicker[data-marquee="1"] .tickerMarquee,
-#rlcEconTicker[data-marquee="1"] .tickerMarquee{
-  animation: rlcTickerMarquee var(--rlcTickerDur, 18s) linear infinite;
-}
-#rlcNewsTicker:hover .tickerMarquee,
-#rlcEconTicker:hover .tickerMarquee{
-  animation-play-state: paused;
-}
-
-/* Items dentro del ticker */
-.tkSeg{ display:inline-flex; align-items:center; gap: 18px; white-space: nowrap; }
-.tkSep{
-  opacity:.55;
-  margin: 0 6px;
-  font-weight: 900;
-}
-.tkItem{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  color: rgba(255,255,255,.90);
-  opacity: .94;
-  font-weight: 800;
-  text-decoration: none;
-}
-.tkItem:hover{ opacity: 1; text-decoration: underline; }
-.tkSrc{
-  opacity: .68;
-  font-weight: 950;
-  letter-spacing: .02em;
-}
-
-/* Econ mini UI (icon + numbers) */
-.tkIco{
-  width: 18px; height: 18px;
-  border-radius: 6px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.12);
-  overflow:hidden;
-  flex: 0 0 auto;
-}
-.tkIco img{
-  width: 16px; height: 16px;
-  object-fit: contain;
-  filter: invert(1);
-  opacity: .95;
-}
-.tkGlyph{ font-size: 14px; line-height: 1; }
-.tkNm{ font-weight: 950; letter-spacing:.02em; }
-.tkPx{ font-variant-numeric: tabular-nums; opacity:.92; }
-.tkChg{ font-variant-numeric: tabular-nums; opacity:.92; }
-.tkChg.up{ color:#19e28a; }
-.tkChg.down{ color:#ff5a5a; }
-.tkMeta{
-  opacity:.70;
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
-  font-family: var(--mono);
-}
-
-/* ✅ Split opcional >=980px SOLO si lo pides */
-@media (min-width: 980px){
-  body[data-ticker-layout="split"] #rlcEconTicker{
-    left: 0;
-    right: calc(50% + 6px);
-    top: var(--rlcNewsTop); /* same row */
+  function readJson(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      return (obj && typeof obj === "object") ? obj : null;
+    } catch (_) { return null; }
   }
-  body[data-ticker-layout="split"] #rlcNewsTicker{
-    left: calc(50% + 6px);
-    right: 0;
-    top: var(--rlcNewsTop);
+  function writeJson(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
-}
 
-/* ───────────────────────── Controls (Buttons / Inputs) ───────────────────────── */
-.btn{
-  appearance:none;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 10px 12px;
-  cursor:pointer;
-  user-select:none;
-  text-decoration:none;
-
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  gap: 8px;
-
-  color: var(--text);
-
-  background:
-    linear-gradient(rgba(255,255,255,.08), rgba(255,255,255,.05)) padding-box,
-    linear-gradient(135deg, rgba(77,215,255,.34), rgba(37,243,166,.28), rgba(255,255,255,.12)) border-box;
-
-  box-shadow: var(--shadow-tight);
-  transition:
-    transform var(--dur-1) var(--ease-out),
-    filter var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-2) var(--ease-out),
-    background var(--dur-2) var(--ease-out);
-}
-.btn:hover{ filter: brightness(1.07); box-shadow: 0 14px 34px rgba(0,0,0,.28), 0 0 0 1px rgba(77,215,255,.10) inset; }
-.btn:active{ transform: translateY(1px); }
-.btn:disabled{ opacity: .55; cursor:not-allowed; filter: none; transform:none; }
-
-.btn.ghost{
-  background:
-    linear-gradient(rgba(255,255,255,.06), rgba(255,255,255,.04)) padding-box,
-    linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.10)) border-box;
-  box-shadow: none;
-}
-.btn.full{ width:100%; }
-
-.input, .select, textarea.input{
-  width:100%;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.055);
-  color: var(--text);
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
-  outline:none;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-.input::placeholder, textarea.input::placeholder{ color: rgba(255,255,255,.40); }
-.select:focus, .input:focus, textarea.input:focus{
-  border-color: rgba(77,215,255,.34);
-  background: rgba(255,255,255,.072);
-  box-shadow: 0 0 0 3px rgba(77,215,255,.14);
-}
-.select{
-  -webkit-appearance:none;
-  appearance:none;
-  padding-right: 38px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, rgba(255,255,255,.72) 50%),
-    linear-gradient(135deg, rgba(255,255,255,.72) 50%, transparent 50%);
-  background-position:
-    calc(100% - 18px) 50%,
-    calc(100% - 13px) 50%;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-}
-input[type="range"]{ accent-color: var(--accent); }
-
-/* ───────────────────────── Player Layout ───────────────────────── */
-.app, .stage{ width:100%; height:100%; }
-
-.layer{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-}
-.layer-media{ z-index: 1; }
-.layer-ui{ z-index: 3; pointer-events:none; }
-.layer-ui *{ pointer-events:none; }
-.layer-ui .hud a, .layer-ui .hud button{ pointer-events:auto; }
-
-.stage{
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-
-  /* Fondo “estudio” unificado */
-  background:
-    radial-gradient(1100px 650px at 50% 18%, rgba(77,215,255,.13), transparent 58%),
-    radial-gradient(900px 720px at 78% 78%, rgba(37,243,166,.11), transparent 62%),
-    radial-gradient(1000px 820px at 16% 84%, rgba(140,120,255,.09), transparent 62%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.030) 0, rgba(255,255,255,.030) 1px, transparent 1px, transparent 52px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.024) 0, rgba(255,255,255,.024) 1px, transparent 1px, transparent 52px),
-    repeating-linear-gradient(180deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 2px, transparent 2px, transparent 10px),
-    linear-gradient(180deg, var(--bg), var(--bg2));
-}
-
-/* Vignette + scanlines (muy sutil) */
-.stage::before{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  pointer-events:none;
-  z-index: 2;
-  background:
-    radial-gradient(1200px 800px at 50% 55%, rgba(0,0,0,0), rgba(0,0,0,var(--vignette-opacity))),
-    repeating-linear-gradient(0deg, rgba(255,255,255,var(--scan-opacity)) 0, rgba(255,255,255,var(--scan-opacity)) 1px, transparent 1px, transparent 6px),
-    radial-gradient(800px 280px at 50% 0%, rgba(255,55,95,.09), transparent 70%),
-    radial-gradient(900px 300px at 70% 0%, rgba(77,215,255,.08), transparent 72%);
-  mix-blend-mode: overlay;
-  opacity: .55;
-}
-.stage::after{
-  content:"";
-  position:absolute;
-  inset:-10%;
-  pointer-events:none;
-  z-index: 2;
-  background: linear-gradient(110deg, transparent 0%, rgba(77,215,255,.16) 40%, rgba(255,55,95,.12) 55%, transparent 75%);
-  filter: blur(18px);
-  opacity: .0;
-  animation: rlcStudioSweep 6.8s var(--ease-soft) infinite;
-}
-
-/* “Grain” sobre el video/iframe/img (broadcast vibe) */
-.layer-media::after{
-  content:"";
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  z-index: 2;
-  background:
-    radial-gradient(1200px 700px at 50% 50%, rgba(0,0,0,0), rgba(0,0,0,.22)),
-    repeating-linear-gradient(90deg, rgba(255,255,255,var(--grain-opacity)) 0, rgba(255,255,255,var(--grain-opacity)) 1px, transparent 1px, transparent 3px);
-  opacity: .14;
-  mix-blend-mode: overlay;
-}
-
-/* Media (video/iframe/img) */
-.media{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  border:0;
-  object-fit: cover;
-  background:#000;
-}
-
-/* ───────────────────────── Fallback ───────────────────────── */
-.fallback{
-  position:absolute;
-  inset:0;
-  z-index: 4;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding: 18px;
-}
-.fallbackCard{
-  width: min(620px, 96vw);
-  padding: 16px 16px 14px;
-  border-radius: var(--r-lg);
-
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--panel3), var(--panel3)) padding-box,
-    linear-gradient(135deg, rgba(77,215,255,.34), rgba(37,243,166,.28), rgba(255,255,255,.12)) border-box;
-
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-
-  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
-}
-.fallbackTitle{
-  font-weight: 950;
-  margin: 0 0 6px;
-  letter-spacing:.01em;
-  font-size: 15px;
-}
-.fallbackText{
-  color: var(--muted);
-  line-height: 1.45;
-  margin: 0 0 12px;
-}
-
-/* ───────────────────────── HUD Stream (BROADCAST) ───────────────────────── */
-.hud{
-  position:absolute;
-  left: max(12px, env(safe-area-inset-left));
-  bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(620px, calc(100vw - 24px));
-  z-index: 5;
-
-  pointer-events:none;
-  overflow: hidden;
-
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(180deg, var(--news-bg-top), var(--news-bg-bot));
-  box-shadow: var(--shadow-soft);
-
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-
-  contain: layout paint;
-  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
-}
-.hud a, .hud button{ pointer-events:auto; }
-
-.hud::after{
-  content:"";
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  background:
-    radial-gradient(260px 90px at 18% 0%, rgba(255,55,95,.14), transparent 70%),
-    radial-gradient(260px 90px at 72% 0%, rgba(77,215,255,.12), transparent 70%);
-  opacity:.85;
-}
-
-.hudBar{
-  display:grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items:center;
-  gap: 10px;
-  padding: 10px 12px 9px;
-  min-height: 48px;
-  border-bottom: 1px solid rgba(255,255,255,.08);
-}
-
-.hudLeft{
-  display:grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items:center;
-  gap: 10px;
-  min-width: 0;
-}
-
-/* Badge */
-.badge{
-  height: 28px;
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 0 12px;
-  border-radius: 999px;
-
-  border: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(90deg, var(--news-red2), rgba(255,55,95,0));
-  color: rgba(255,255,255,.92);
-
-  font: 950 11px/1 var(--sans);
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  user-select:none;
-  white-space: nowrap;
-}
-.badge::before{
-  content:"";
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--news-red);
-  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
-  animation: rlcPulseDot 2.1s ease-in-out infinite;
-}
-
-/* Title base: clamp + fade */
-.hudTitle{
-  font-size: 13px;
-  font-weight: 950;
-  min-width: 0;
-  line-height: 1.22;
-  text-shadow: 0 2px 12px rgba(0,0,0,.35);
-
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-
-  line-clamp: 2;
-  -webkit-line-clamp: 2;
-
-  overflow: hidden;
-  text-overflow: ellipsis;
-
-  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
-}
-.hud.hud--collapsed .hudTitle{
-  line-clamp: 1;
-  -webkit-line-clamp: 1;
-}
-
-/* HUD TITLE TICKER (solo si data-marquee="1") */
-.hud.hud--collapsed .hudTitle[data-marquee="1"]{
-  position: relative;
-  display: block;
-  white-space: nowrap;
-
-  line-clamp: unset;
-  -webkit-line-clamp: unset;
-  -webkit-box-orient: initial;
-
-  color: transparent;
-  overflow: hidden;
-
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
-}
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::before,
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{
-  content: attr(data-title);
-  position: absolute;
-  top: 0;
-  left: 0;
-
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-
-  white-space: nowrap;
-  color: rgba(255,255,255,.92);
-
-  will-change: transform;
-  transform: translate3d(0,0,0);
-  animation: rlcHudMarquee var(--hudMarqueeDur) linear infinite;
-}
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{
-  left: calc(100% + var(--hudMarqueeGap));
-}
-.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::before,
-.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::after{
-  animation-play-state: paused;
-}
-
-.hudRight{
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* Countdown chip */
-.hudCountdown{
-  position: relative;
-  font-size: 12.5px;
-  font-weight: 950;
-  padding: 6px 10px 6px 30px;
-  border-radius: 999px;
-
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.28);
-
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: .02em;
-}
-.hudCountdown::before{
-  content:"⏱";
-  position:absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: .82;
-  font-size: 12px;
-}
-
-.hudToggle{
-  width: 32px;
-  height: 30px;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.06);
-  color: rgba(255,255,255,.92);
-  cursor:pointer;
-  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
-}
-.hudToggle:hover{ filter: brightness(1.10); background: rgba(255,255,255,.08); }
-.hudToggle:active{ transform: translateY(1px); }
-
-/* Progress + sheen */
-.progress{
-  height: 3px;
-  background: rgba(255,255,255,.06);
-  border-radius: 999px;
-  margin: 0 12px;
-  overflow: hidden;
-  contain: paint;
-  position: relative;
-}
-.progressBar{
-  height:100%;
-  width:0%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(37,243,166,.98), rgba(77,215,255,.88));
-  box-shadow: 0 0 18px rgba(77,215,255,.22);
-  will-change: width;
-  transform: translateZ(0);
-  position: relative;
-}
-.progressBar::after{
-  content:"";
-  position:absolute;
-  top:-6px;
-  bottom:-6px;
-  width: 40%;
-  left: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent);
-  filter: blur(.2px);
-  transform: translateX(-70%);
-  opacity: 0;
-  animation: rlcBarSheen 2.8s linear infinite;
-  pointer-events:none;
-}
-
-/* Details */
-.hudDetails{
-  padding: 10px 12px 12px;
-  background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,0));
-
-  max-height: 220px;
-  opacity: 1;
-  transform: translate3d(0,0,0);
-  transition: max-height var(--dur-3) var(--ease-soft), opacity var(--dur-2) var(--ease-soft), transform var(--dur-2) var(--ease-soft), padding var(--dur-2) var(--ease-soft);
-}
-.hudRow{
-  display:grid;
-  grid-template-columns: 86px 1fr;
-  gap: 10px;
-  padding: 8px 0;
-  align-items: start;
-  border-top: 1px solid rgba(255,255,255,.06);
-}
-.hudRow:first-child{ border-top: 0; }
-.hudLabel{
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .14em;
-  font-weight: 950;
-  color: rgba(255,255,255,.60);
-}
-.hudValue{
-  font-size: 12px;
-  color: rgba(255,255,255,.88);
-  min-width: 0;
-  white-space: normal;
-}
-.hudLink{
-  color: rgba(255,255,255,.92);
-  border-bottom: 1px solid rgba(77,215,255,.35);
-}
-.hudLink:hover{ border-bottom-color: rgba(77,215,255,.70); }
-.hudFooter{
-  margin-top: 8px;
-  font-size: 11px;
-  color: rgba(255,255,255,.62);
-}
-
-.hud.hud--collapsed .hudDetails{
-  max-height: 0px;
-  opacity: 0;
-  transform: translate3d(0,-4px,0);
-  padding-top: 0;
-  padding-bottom: 0;
-  pointer-events:none;
-}
-
-/* ───────────────────────── Weather Chip (HUD) ───────────────────────── */
-#rlcHudWx{
-  justify-self:end;
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-
-  background: rgba(0,0,0,.30);
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: 0 10px 28px rgba(0,0,0,.40);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-
-  font: 950 12px/1 var(--sans);
-  color: rgba(255,255,255,.92);
-  user-select:none;
-  white-space: nowrap;
-
-  font-variant-numeric: tabular-nums;
-  min-width: 132px;
-
-  flex: 0 0 auto;
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-
-  animation: rlcFloat 3.2s ease-in-out infinite;
-}
-.hudLeft > #rlcHudWx{
-  grid-column: 3;
-  grid-row: 1;
-  align-self: center;
-}
-#rlcHudWxIcon{ font-size: 13px; line-height: 1; }
-#rlcHudWx .wxDot{ opacity:.72; }
-#rlcHudWx .wxTemp,
-#rlcHudWx .wxTime{ display:inline-block; }
-#rlcHudWx .wxTemp{
-  opacity:.88;
-  font-weight: 950;
-  min-width: 3.2em;
-  text-align: right;
-}
-#rlcHudWx .wxTime{
-  font-family: var(--mono);
-  letter-spacing: .02em;
-  width: 5ch;
-  min-width: 3.6em;
-  text-align: right;
-}
-#rlcHudWx.wxOff{
-  display: none !important;
-}
-
-/* ───────────────────────── Vote Overlay ───────────────────────── */
-/* ✅ Compat: .vote y #voteBox (tu JS mira #voteBox) */
-.vote,
-#voteBox{
-  position:absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
-  right: max(12px, env(safe-area-inset-right));
-  width: min(320px, calc(100vw - 24px));
-  z-index: 6;
-  pointer-events:none;
-
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(180deg, var(--news-bg-top), rgba(8,10,14,.70));
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-
-  overflow:hidden;
-  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
-}
-.voteTop{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  padding: 10px 10px 6px;
-  gap: 10px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid rgba(255,255,255,.06);
-}
-.voteTitle{
-  font-weight: 950;
-  font-size: 12px;
-  letter-spacing: .16em;
-  color: rgba(255,255,255,.84);
-  white-space: nowrap;
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  text-transform: uppercase;
-}
-.voteTitle::before{
-  content:"";
-  width: 8px; height: 8px; border-radius: 999px;
-  background: var(--news-red);
-  box-shadow: 0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
-}
-.voteTime{
-  font-size: 12px;
-  color: rgba(255,255,255,.70);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.voteHint{
-  padding: 8px 10px 10px;
-  font-size: 12px;
-  color: rgba(255,255,255,.62);
-  line-height: 1.32;
-}
-.voteBars{
-  padding: 0 10px 12px;
-  display:grid;
-  gap: 8px;
-}
-.voteBar{
-  position:relative;
-  height: 20px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.075);
-  overflow:hidden;
-  border:  1px solid rgba(255,255,255,.08);
-}
-.voteBarFill{
-  position:absolute;
-  inset:0;
-  width:0%;
-  background: rgba(37,243,166,.46);
-}
-.voteBarFill.no{ background: rgba(255,77,109,.42); }
-.voteBarLabel{
-  position:absolute;
-  inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding: 0 10px;
-  gap: 8px;
-
-  font-size: 11px;
-  font-weight: 950;
-  color: rgba(255,255,255,.90);
-  min-width: 0;
-}
-.voteBarLabel > *{ min-width:0; }
-
-/* ───────────────────────── ADS/ALERT overlays (compat genérica) ───────────────────────── */
-#adsBox, #adBox, #adOverlay, #adsOverlay, #rlcAdsBox, #rlcAdBox, #rlcAdOverlay, #rlcAdsOverlay,
-.adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice, .alertBox, .alertsBox, .alertOverlay{
-  position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
-  left: max(12px, env(safe-area-inset-left));
-  right: auto;
-  z-index: 8;
-  pointer-events:none;
-}
-#adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
-#rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *,
-.adBox > *, .adsBox > *, .adOverlay > *, .adsOverlay > *, .adNotice > *, .adsNotice > *, .alertBox > *, .alertsBox > *, .alertOverlay > *{
-  pointer-events:none;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(180deg, rgba(10,14,20,.88), rgba(8,10,14,.72));
-  box-shadow: 0 12px 30px rgba(0,0,0,.30);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  padding: 10px 12px;
-  max-width: min(420px, calc(100vw - 24px));
-  font-size: 12.5px;
-  line-height: 1.3;
-}
-
-/* ───────────────────────── Chat Overlay ───────────────────────── */
-.rlcChatRoot{
-  position:absolute;
-  right: max(12px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(380px, calc(100vw - 24px));
-  max-height: min(46vh, 460px);
-  z-index: 7;
-  pointer-events:none;
-  display:none;
-}
-.rlcChatRoot.chat--on{ display:block !important; }
-
-#rlcChatList{
-  position:relative;
-  display:flex;
-  flex-direction:column;
-  justify-content:flex-end;
-  gap: 8px;
-
-  max-height: min(46vh, 460px);
-  overflow:hidden;
-  padding: 2px;
-}
-#rlcChatList > *{
-  pointer-events:none;
-  border-radius: 14px;
-
-  border: 1px solid rgba(255,255,255,.10);
-  background: linear-gradient(180deg, rgba(10,14,20,.82), rgba(8,10,14,.70));
-  box-shadow: 0 10px 22px rgba(0,0,0,.22);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-
-  padding: 8px 10px;
-  font-size: 12.5px;
-  line-height: 1.28;
-  white-space: normal;
-
-  animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
-}
-#rlcChatList b, #rlcChatList strong{
-  font-weight: 950;
-  color: rgba(255,255,255,.94);
-}
-#rlcChatList em{
-  font-style: normal;
-  color: rgba(77,215,255,.92);
-}
-
-/* ───────────────────────── CONTROL ROOM ───────────────────────── */
-.mode-control{
-  overflow:auto; /* Control: scroll normal */
-  scrollbar-gutter: stable both-edges;
-  background:
-    radial-gradient(900px 620px at 22% 12%, rgba(77,215,255,.12), transparent 60%),
-    radial-gradient(980px 720px at 82% 82%, rgba(37,243,166,.12), transparent 60%),
-    radial-gradient(900px 500px at 60% 10%, rgba(255,55,95,.10), transparent 62%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.030) 0, rgba(255,255,255,.030) 1px, transparent 1px, transparent 58px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.022) 0, rgba(255,255,255,.022) 1px, transparent 1px, transparent 58px),
-    linear-gradient(180deg, #03050a, #050812);
-}
-.mode-control .stage, .mode-control .layer, .mode-control .layer-media, .mode-control .layer-ui{ display:none !important; }
-
-.controlWrap{ max-width: 1240px; margin: 0 auto; padding: 16px; }
-
-/* ✅ Blindaje: el header del control NO debe ser sticky */
-.mode-control .controlHeader{
-  position: relative !important;
-  top: auto !important;
-}
-
-.controlHeader{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255,255,255,.08);
-  position: relative;
-}
-.controlHeader::after{
-  content:"";
-  position:absolute;
-  left: 0; right: 0; bottom: -1px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(77,215,255,.40), rgba(37,243,166,.35), transparent);
-  opacity: .65;
-}
-
-.controlTitle .kicker{
-  font-size: 11px;
-  letter-spacing: .18em;
-  color: rgba(255,255,255,.54);
-  text-transform: uppercase;
-}
-.controlTitle .name{
-  font-weight: 950;
-  font-size: 16px;
-  letter-spacing: .02em;
-}
-
-.pill{
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.055);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  white-space: nowrap;
-}
-.pill--ok{ border-color: rgba(37,243,166,.25); background: rgba(37,243,166,.10); }
-.pill--bad{ border-color: rgba(255,77,109,.25); background: rgba(255,77,109,.10); }
-
-.controlGrid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-/* Intermedio: 2 columnas en pantallas medianas (mejor para Opera GX con zoom raro) */
-@media (max-width: 1180px){
-  .controlGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-.card{
-  border-radius: var(--r-lg);
-  border: 1px solid transparent;
-  background:
-    linear-gradient(rgba(255,255,255,.040), rgba(255,255,255,.030)) padding-box,
-    linear-gradient(135deg, rgba(255,255,255,.14), rgba(77,215,255,.20), rgba(37,243,166,.14)) border-box;
-
-  box-shadow: 0 14px 44px rgba(0,0,0,.28);
-  padding: 12px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  overflow: visible;
-
-  position: relative;
-  transition: transform var(--dur-2) var(--ease-out), filter var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
-}
-.card::before{
-  content:"";
-  position:absolute;
-  left: 10px;
-  right: 10px;
-  top: 0;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255,55,95,.70), rgba(77,215,255,.70), rgba(37,243,166,.65));
-  opacity: .78;
-}
-.card::after{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  pointer-events:none;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent);
-  filter: blur(10px);
-  opacity: 0;
-  animation: rlcCardSheen 10s var(--ease-soft) infinite;
-}
-.card:hover{
-  transform: translate3d(0,-2px,0);
-  filter: brightness(1.02);
-  box-shadow: 0 18px 56px rgba(0,0,0,.32), 0 0 0 1px rgba(77,215,255,.06) inset;
-}
-
-.cardTitle{
-  font-weight: 950;
-  font-size: 12px;
-  letter-spacing: .08em;
-  margin: 0 0 10px;
-  color: rgba(255,255,255,.86);
-  text-transform: uppercase;
-}
-
-.nowTitle{
-  font-weight: 950;
-  font-size: 14px;
-  margin: 0;
-  white-space: normal;
-  line-height: 1.22;
-}
-.nowMeta{
-  margin-top: 6px;
-  font-size: 12px;
-  color: rgba(255,255,255,.70);
-  white-space: normal;
-  line-height: 1.28;
-}
-
-.controls3{
-  display:grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 8px;
-}
-
-.row{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap: 10px;
-  margin: 10px 0;
-  flex-wrap: wrap;
-}
-.row > span{
-  min-width: 120px;
-  color: rgba(255,255,255,.74);
-  font-size: 12px;
-}
-.row2{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 10px;
-}
-.hint{
-  margin-top: 10px;
-  font-size: 11px;
-  color: rgba(255,255,255,.56);
-  line-height: 1.45;
-}
-
-.previewWrap{
-  margin-top: 10px;
-  border-radius: var(--r);
-  overflow:hidden;
-  border: 1px solid rgba(255,255,255,.10);
-  background: #000;
-}
-.previewFrame{
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border: 0;
-}
-
-/* Fallback Opera/antiguos si aspect-ratio falla */
-@supports not (aspect-ratio: 16 / 9){
-  .previewWrap{ position: relative; height: 0; padding-top: 56.25%; }
-  .previewFrame{ position:absolute; inset:0; width:100%; height:100%; }
-}
-
-.controlFooter{
-  margin-top: 14px;
-  color: rgba(255,255,255,.56);
-  font-size: 11px;
-  display:flex;
-  gap: 8px;
-  align-items:center;
-  justify-content:center;
-  flex-wrap: wrap;
-}
-
-/* ───────────────────────── Responsive ───────────────────────── */
-@media (max-width: 980px){
-  .controlGrid{ grid-template-columns: 1fr; }
-  .row > span{ min-width: 108px; }
-  .controls3{ grid-template-columns: 1fr; }
-  .hud{ width: min(700px, calc(100vw - 24px)); }
-  .vote, #voteBox{ width: min(360px, calc(100vw - 24px)); }
-}
-@media (max-width: 420px){
-  .hudRow{ grid-template-columns: 78px 1fr; }
-  .hud{ left: max(10px, env(safe-area-inset-left)); bottom: max(10px, env(safe-area-inset-bottom)); }
-  .hudBar{ padding-left: 10px; padding-right: 10px; }
-  .progress{ margin-left: 10px; margin-right: 10px; }
-}
-
-/* ───────────────────────── Opera/Safari “no-mask” safety ───────────────────────── */
-@supports not ((-webkit-mask-image: linear-gradient(#000,#000)) or (mask-image: linear-gradient(#000,#000))){
-  .hudTitle{
-    -webkit-mask-image: none !important;
-    mask-image: none !important;
+  function parseParams() {
+    const u = new URL(location.href);
+    return {
+      key: safeStr(u.searchParams.get("key") || ""),
+
+      // NEWS
+      ticker: u.searchParams.get("ticker") ?? "",
+      tickerLang: safeStr(u.searchParams.get("tickerLang") || ""),
+      tickerSpeed: safeStr(u.searchParams.get("tickerSpeed") || ""),
+      tickerRefresh: safeStr(u.searchParams.get("tickerRefresh") || ""),
+      tickerTop: safeStr(u.searchParams.get("tickerTop") || ""),
+      tickerHideOnVote: safeStr(u.searchParams.get("tickerHideOnVote") || ""),
+      tickerSpan: safeStr(u.searchParams.get("tickerSpan") || ""),
+      tickerBilingual: safeStr(u.searchParams.get("tickerBilingual") || ""),
+      tickerTranslateMax: safeStr(u.searchParams.get("tickerTranslateMax") || ""),
+      tickerSources: safeStr(u.searchParams.get("tickerSources") || ""),
+      tickerDebug: safeStr(u.searchParams.get("tickerDebug") || ""),
+
+      // ECON
+      econ: u.searchParams.get("econ") ?? "",
+      econSpeed: safeStr(u.searchParams.get("econSpeed") || ""),
+      econRefresh: safeStr(u.searchParams.get("econRefresh") || ""),
+      econTop: safeStr(u.searchParams.get("econTop") || ""),
+      econHideOnVote: safeStr(u.searchParams.get("econHideOnVote") || ""),
+      econMode: safeStr(u.searchParams.get("econMode") || ""),
+      econClocks: safeStr(u.searchParams.get("econClocks") || ""),
+      econDebug: safeStr(u.searchParams.get("econDebug") || "")
+    };
   }
-  .hud.hud--collapsed .hudTitle[data-marquee="1"]{
-    -webkit-mask-image: none !important;
-    mask-image: none !important;
-    color: rgba(255,255,255,.92) !important;
-  }
-}
 
-/* ───────────────────────── Accessibility ───────────────────────── */
-@media (prefers-reduced-motion: reduce){
-  .btn, .hudToggle, .card, .pill{ transition: none !important; }
-  .badge::before, #rlcHudWx, .progressBar::after, .stage::after, .card::after, #rlcNewsTicker::after, #rlcEconTicker::after{ animation: none !important; }
-  .fallbackCard, .hud, .vote, #voteBox, #rlcChatList > *{ animation: none !important; }
-  #rlcNewsTicker[data-marquee="1"] .tickerMarquee,
-  #rlcEconTicker[data-marquee="1"] .tickerMarquee{ animation: none !important; }
-}
+  const P = parseParams();
+  const KEY = P.key;
 
-/* ───────────────────────── Fallback si no hay backdrop-filter ───────────────────────── */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  .hud, .vote, #voteBox, #rlcChatList > *, .card, .pill, .fallbackCard, #rlcNewsTicker, #rlcEconTicker{
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-  }
-  .hud, .vote, #voteBox, #rlcChatList > *, #rlcNewsTicker, #rlcEconTicker{
-    background: rgba(10,14,20,.92) !important;
-  }
-  .card{
-    background: rgba(12,16,24,.88) !important;
-    border-color: rgba(255,255,255,.10) !important;
-  }
-  .stage::before, .layer-media::after{ mix-blend-mode: normal; opacity: .18; }
-}
+  // ───────────────────────── Bus + storage keys (namespaced + legacy)
+  const BUS_BASE = "rlc_bus_v1";
+  const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
 
-/* ───────────────────────── Fallback si no hay mix-blend-mode ───────────────────────── */
-@supports not (mix-blend-mode: overlay){
-  .stage::before, .layer-media::after{ mix-blend-mode: normal !important; opacity: .20; }
-}
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE) : null;
 
-/* ───────────────────────── Optional: better rendering on OLED ───────────────────────── */
-@media (dynamic-range: high){
-  :root{ --bg:#03040a; }
-}
+  function keyOk(msg, fromNamespacedChannel) {
+    if (!KEY) return true;
+    if (fromNamespacedChannel) return true;
+    return !!(msg && msg.key === KEY);
+  }
+
+  // ───────────────────────── Robust fetch
+  async function fetchText(url, timeoutMs = 9000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.text();
+    } finally { clearTimeout(t); }
+  }
+  const allOrigins = (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+  const jina = (url) => {
+    const u = safeStr(url);
+    if (u.startsWith("https://")) return `https://r.jina.ai/https://${u.slice("https://".length)}`;
+    if (u.startsWith("http://"))  return `https://r.jina.ai/http://${u.slice("http://".length)}`;
+    return `https://r.jina.ai/https://${u}`;
+  };
+
+  async function fetchTextRobust(url) {
+    const tries = [
+      () => fetchText(url),
+      () => fetchText(allOrigins(url)),
+      () => fetchText(jina(url))
+    ];
+    let lastErr = null;
+    for (const fn of tries) {
+      try {
+        const txt = await fn();
+        const s = safeStr(txt);
+        if (s) return txt;
+        throw new Error("Empty response");
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("fetchTextRobust failed");
+  }
+
+  function tryParseJson(txt) {
+    const s = safeStr(txt);
+    if (!s) return null;
+
+    const m = s.match(/^[a-zA-Z_$][\w$]*\(([\s\S]+)\)\s*;?\s*$/);
+    if (m && m[1]) { try { return JSON.parse(m[1]); } catch (_) {} }
+
+    try { return JSON.parse(s); } catch (_) {}
+
+    const a = s.indexOf("{");
+    const b = s.lastIndexOf("}");
+    if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch (_) {} }
+    return null;
+  }
+
+  async function fetchJsonRobust(url) {
+    const tries = [
+      () => fetchText(url),
+      () => fetchText(allOrigins(url)),
+      () => fetchText(jina(url))
+    ];
+    let lastErr = null;
+    for (const fn of tries) {
+      try {
+        const txt = await fn();
+        const obj = tryParseJson(txt);
+        if (obj) return obj;
+        throw new Error("No JSON parseable");
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("fetchJsonRobust failed");
+  }
+
+  // ───────────────────────── Shared DOM utils
+  function sanitizeUrl(u) {
+    const s = safeStr(u);
+    if (!s) return "";
+    try {
+      const url = new URL(s, location.href);
+      const p = url.protocol.toLowerCase();
+      if (p === "http:" || p === "https:") return url.toString();
+      return "";
+    } catch (_) { return ""; }
+  }
+
+  function isElementVisible(el) {
+    if (!el) return false;
+    const cs = window.getComputedStyle(el);
+    if (!cs) return false;
+    if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity || "1") <= 0) return false;
+    const r = el.getBoundingClientRect();
+    return (r.width > 0 && r.height > 0);
+  }
+
+  // ───────────────────────── Layout (NO RLCUiBars)
+  const LAYOUT = (() => {
+    function cssPx(varName, fb) {
+      try {
+        const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        const n = parseFloat(String(v).replace("px", "").trim());
+        return Number.isFinite(n) ? n : fb;
+      } catch (_) { return fb; }
+    }
+    function setVar(name, val) {
+      try { document.documentElement.style.setProperty(name, val); } catch (_) {}
+    }
+
+    // newsCfgTop / econCfgTop: topPx individuales (si ambos ON, se usa el menor para alinear el bloque)
+    function apply({ newsOn, econOn, newsCfgTop, econCfgTop }) {
+      const barH = cssPx("--rlcBarH", 34);
+      const gap = cssPx("--rlcTickerGap", cssPx("--rlcTickerGap", 12)) || 12;
+
+      const onN = !!newsOn;
+      const onE = !!econOn;
+
+      const baseTop =
+        (onN && onE) ? Math.min(newsCfgTop ?? 10, econCfgTop ?? 10)
+        : (onN ? (newsCfgTop ?? 10)
+        : (onE ? (econCfgTop ?? 10) : (newsCfgTop ?? econCfgTop ?? 10)));
+
+      const newsTop = baseTop;
+      const econTop = baseTop + (onN ? (barH + gap) : 0);
+
+      const count = (onN ? 1 : 0) + (onE ? 1 : 0);
+      const totalH = (count === 0) ? 0 : (count * barH + ((count > 1) ? gap : 0));
+
+      setVar("--rlcTickerTop", `${baseTop}px`);
+      setVar("--rlcNewsTop", `${newsTop}px`);
+      setVar("--rlcEconTop", `${econTop}px`);
+      setVar("--rlcTickerH", `${totalH}px`);
+
+      // útil para debug visual si quieres
+      try {
+        document.documentElement.dataset.rlcNewsOn = onN ? "1" : "0";
+        document.documentElement.dataset.rlcEconOn = onE ? "1" : "0";
+      } catch (_) {}
+    }
+
+    return { apply };
+  })();
+
+  // ======================================================================
+  // NEWS TICKER
+  // ======================================================================
+  const NEWS = (() => {
+    const CFG_KEY_BASE = "rlc_ticker_cfg_v1";
+    const CACHE_KEY_BASE = "rlc_ticker_cache_v1";
+    const TRANS_KEY_BASE = "rlc_ticker_trans_v1";
+
+    const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
+    const CFG_KEY_LEGACY = CFG_KEY_BASE;
+
+    const CACHE_KEY_NS = KEY ? `${CACHE_KEY_BASE}:${KEY}` : CACHE_KEY_BASE;
+    const CACHE_KEY_LEGACY = CACHE_KEY_BASE;
+
+    const TRANS_KEY_NS = KEY ? `${TRANS_KEY_BASE}:${KEY}` : TRANS_KEY_BASE;
+    const TRANS_KEY_LEGACY = TRANS_KEY_BASE;
+
+    const DEBUG = (P.tickerDebug === "1" || P.tickerDebug === "true");
+    const log = (...a) => { if (DEBUG) console.log("[RLC:NEWS]", ...a); };
+
+    const uiLangAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
+
+    const DEFAULTS = {
+      enabled: true,
+      lang: "auto",           // auto|es|en
+      speedPxPerSec: 55,      // 20..140
+      refreshMins: 12,        // 3..60
+      topPx: 10,              // 0..120
+      hideOnVote: true,
+      timespan: "1d",
+      bilingual: true,
+      translateMax: 10,
+      sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
+    };
+
+    const API = {
+      maxItems: 22,
+      gdelt: {
+        endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
+        query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
+      },
+      rss: {
+        googlenews: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+        bbc: "https://feeds.bbci.co.uk/news/world/rss.xml",
+        dw: "https://rss.dw.com/rdf/rss-en-world",
+        guardian: "https://www.theguardian.com/world/rss"
+      }
+    };
+
+    function normalizeTimespan(s) {
+      const t = safeStr(s).toLowerCase();
+      if (!t) return DEFAULTS.timespan;
+      if (/^\d+(min|h|d|w|m)$/.test(t)) return t;
+      return DEFAULTS.timespan;
+    }
+
+    function normalizeSources(list) {
+      const allowed = new Set(["gdelt","googlenews","bbc","dw","guardian"]);
+      const arr = Array.isArray(list) ? list : [];
+      const out = [];
+      for (const s of arr) {
+        const id = safeStr(s).toLowerCase();
+        if (!id || !allowed.has(id)) continue;
+        if (!out.includes(id)) out.push(id);
+      }
+      return out.length ? out : DEFAULTS.sources.slice();
+    }
+
+    function cfgFromUrl() {
+      const out = {};
+      if (P.ticker === "1" || P.ticker === "true") out.enabled = true;
+      if (P.tickerLang === "es" || P.tickerLang === "en" || P.tickerLang === "auto") out.lang = P.tickerLang;
+      if (P.tickerSpeed) out.speedPxPerSec = clamp(num(P.tickerSpeed, DEFAULTS.speedPxPerSec), 20, 140);
+      if (P.tickerRefresh) out.refreshMins = clamp(num(P.tickerRefresh, DEFAULTS.refreshMins), 3, 60);
+      if (P.tickerTop) out.topPx = clamp(num(P.tickerTop, DEFAULTS.topPx), 0, 120);
+      if (P.tickerHideOnVote === "0") out.hideOnVote = false;
+      if (P.tickerHideOnVote === "1") out.hideOnVote = true;
+      if (P.tickerSpan) out.timespan = P.tickerSpan;
+
+      if (P.tickerBilingual === "0") out.bilingual = false;
+      if (P.tickerBilingual === "1") out.bilingual = true;
+
+      if (P.tickerTranslateMax) out.translateMax = clamp(num(P.tickerTranslateMax, DEFAULTS.translateMax), 0, 22);
+
+      if (P.tickerSources) {
+        const arr = P.tickerSources.split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
+        if (arr.length) out.sources = arr;
+      }
+      if (P.ticker === "0") out.enabled = false;
+      return out;
+    }
+
+    function normalizeCfg(inCfg) {
+      const c = Object.assign({}, inCfg || {});
+      c.enabled = (c.enabled !== false);
+      c.lang = (c.lang === "es" || c.lang === "en" || c.lang === "auto") ? c.lang : "auto";
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
+      c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
+      c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
+      c.hideOnVote = (c.hideOnVote !== false);
+      c.timespan = normalizeTimespan(c.timespan);
+      c.bilingual = (c.bilingual !== false);
+      c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
+      c.sources = normalizeSources(c.sources);
+      return c;
+    }
+
+    function readCfgMerged() {
+      return readJson(CFG_KEY_NS) || readJson(CFG_KEY_LEGACY) || null;
+    }
+    function writeCfgCompat(cfg) {
+      try { writeJson(CFG_KEY_NS, cfg); } catch (_) {}
+      try { writeJson(CFG_KEY_LEGACY, cfg); } catch (_) {}
+    }
+
+    let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
+
+    function ensureUI() {
+      let root = qs("#rlcNewsTicker");
+      if (root) return root;
+
+      root = document.createElement("div");
+      root.id = "rlcNewsTicker";
+      root.setAttribute("role", "region");
+      root.setAttribute("aria-label", "Ticker de noticias");
+
+      root.innerHTML = `
+        <div class="tickerInner">
+          <div class="tickerBadge"><span id="rlcNewsTickerLabel"></span></div>
+          <div class="tickerText">
+            <div class="tickerMarquee" id="rlcNewsMarquee" aria-live="polite"></div>
+          </div>
+        </div>
+      `.trim();
+
+      document.body.appendChild(root);
+      return root;
+    }
+
+    function setVisible(on) {
+      const root = ensureUI();
+      root.classList.toggle("hidden", !on);
+      root.setAttribute("aria-hidden", on ? "false" : "true");
+    }
+
+    function uiLangEffective() {
+      return (CFG.lang === "auto") ? uiLangAuto : CFG.lang;
+    }
+
+    function setLabel(root) {
+      const label = qs("#rlcNewsTickerLabel", root);
+      if (!label) return;
+      if (CFG.bilingual) label.textContent = "NEWS · NOTICIAS";
+      else label.textContent = (uiLangEffective() === "en") ? "NEWS" : "NOTICIAS";
+    }
+
+    function uniqBy(arr, keyFn) {
+      const seen = new Set();
+      const out = [];
+      for (const it of arr) {
+        const k = keyFn(it);
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(it);
+      }
+      return out;
+    }
+
+    function clampLen(s, max) {
+      let t = safeStr(s).replace(/\s+/g, " ").trim();
+      if (t.length > max) t = t.slice(0, Math.max(8, max - 1)).trim() + "…";
+      return t;
+    }
+
+    function cleanTitle(s) {
+      let t = safeStr(s).replace(/\s+/g, " ").trim();
+      if (t.length < 14) return "";
+      if (t.length > 140) t = t.slice(0, 137).trim() + "…";
+      if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
+      return t;
+    }
+
+    function normalizeSourceFromUrl(u) {
+      const s = safeStr(u);
+      if (!s) return "NEWS";
+      try {
+        const url = new URL(s);
+        return url.hostname.replace(/^www\./i, "").toUpperCase().slice(0, 18);
+      } catch (_) {
+        return s.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toUpperCase().slice(0, 18) || "NEWS";
+      }
+    }
+
+    function normalizeSource(a) {
+      const domain = safeStr(a?.domain || a?.source || "");
+      const sc = safeStr(a?.sourceCountry || a?.sourcecountry || "");
+      const src = domain || sc || "";
+      if (!src) return "NEWS";
+      const cleaned = src.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+      return cleaned.toUpperCase().slice(0, 18);
+    }
+
+    // translation cache
+    function simpleHash(str) {
+      const s = String(str || "");
+      let h = 2166136261;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return (h >>> 0).toString(16);
+    }
+
+    function readTransStore() {
+      const o = readJson(TRANS_KEY_NS) || readJson(TRANS_KEY_LEGACY);
+      if (!o || typeof o !== "object") return { ts: Date.now(), map: {}, order: [] };
+      if (!o.map || typeof o.map !== "object") o.map = {};
+      if (!Array.isArray(o.order)) o.order = [];
+      return o;
+    }
+
+    function writeTransStore(store) {
+      try { writeJson(TRANS_KEY_NS, store); } catch (_) {}
+      try { if (!KEY) writeJson(TRANS_KEY_LEGACY, store); } catch (_) {}
+    }
+
+    function getCachedEs(titleEn) {
+      const store = readTransStore();
+      const k = simpleHash(titleEn);
+      const it = store.map[k];
+      if (!it || !it.es) return "";
+      const age = Date.now() - (it.ts || 0);
+      if (age > 7 * 24 * 60 * 60 * 1000) return "";
+      return String(it.es || "");
+    }
+
+    function putCachedEs(titleEn, es) {
+      const store = readTransStore();
+      const k = simpleHash(titleEn);
+      store.map[k] = { ts: Date.now(), es: String(es || "") };
+      store.order = store.order.filter(x => x !== k);
+      store.order.push(k);
+      while (store.order.length > 500) {
+        const old = store.order.shift();
+        if (old) delete store.map[old];
+      }
+      store.ts = Date.now();
+      writeTransStore(store);
+    }
+
+    function decodeEntities(s) {
+      return String(s || "")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;|&apos;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+    }
+
+    async function translateEnToEs(titleEn) {
+      const cached = getCachedEs(titleEn);
+      if (cached) return cached;
+
+      const q = encodeURIComponent(titleEn);
+      const url = `https://api.mymemory.translated.net/get?q=${q}&langpair=en|es`;
+
+      try {
+        const data = await fetchJsonRobust(url);
+        const t = decodeEntities(safeStr(data?.responseData?.translatedText || ""));
+        const out = clampLen(t, 140);
+        if (out && out.length >= 6) {
+          putCachedEs(titleEn, out);
+          return out;
+        }
+      } catch (e) {
+        log("translate fail:", e?.message || e);
+      }
+      return "";
+    }
+
+    async function getHeadlinesFromGdelt() {
+      const q = API.gdelt.query_en;
+      const finalQ = `(${q}) sourcelang:eng`;
+
+      const url =
+        `${API.gdelt.endpoint}` +
+        `?query=${encodeURIComponent(finalQ)}` +
+        `&mode=ArtList` +
+        `&format=json` +
+        `&sort=HybridRel` +
+        `&timespan=${encodeURIComponent(CFG.timespan)}` +
+        `&maxrecords=${encodeURIComponent(String(API.maxItems * 2))}`;
+
+      const data = await fetchJsonRobust(url);
+      const errMsg = safeStr(data?.error || data?.message || data?.status || "");
+      if (errMsg && /error|invalid|failed/i.test(errMsg)) throw new Error(errMsg || "GDELT error");
+
+      const articles = Array.isArray(data?.articles) ? data.articles
+                     : Array.isArray(data?.results) ? data.results
+                     : Array.isArray(data?.artlist) ? data.artlist
+                     : [];
+
+      const mapped = articles.map(a => {
+        const title = cleanTitle(a?.title || a?.name || "");
+        const link  = sanitizeUrl(a?.url || a?.link || a?.url_mobile || "");
+        if (!title || !link) return null;
+        return { titleEn: title, url: link, source: normalizeSource(a) || "GDELT" };
+      }).filter(Boolean);
+
+      return uniqBy(mapped, x => (x.titleEn + "|" + x.url).toLowerCase()).slice(0, API.maxItems);
+    }
+
+    function parseRssOrAtom(xmlText, fallbackSource) {
+      const txt = String(xmlText || "");
+      const doc = new DOMParser().parseFromString(txt, "text/xml");
+      if (doc.querySelector("parsererror")) return [];
+
+      const out = [];
+
+      const items = Array.from(doc.querySelectorAll("item"));
+      for (const it of items) {
+        const t = cleanTitle(it.querySelector("title")?.textContent || "");
+        let link = safeStr(it.querySelector("link")?.textContent || "");
+        if (!link) link = safeStr(it.querySelector("guid")?.textContent || "");
+        link = sanitizeUrl(link);
+        if (!t || !link) continue;
+
+        const srcNode = it.querySelector("source");
+        const srcText = safeStr(srcNode?.textContent || "");
+        const srcUrl = safeStr(srcNode?.getAttribute("url") || "");
+        const source = (srcText || (srcUrl ? normalizeSourceFromUrl(srcUrl) : "")) || fallbackSource || "RSS";
+
+        out.push({ titleEn: t, url: link, source });
+        if (out.length >= API.maxItems) break;
+      }
+
+      if (!out.length) {
+        const entries = Array.from(doc.querySelectorAll("entry"));
+        for (const e of entries) {
+          const t = cleanTitle(e.querySelector("title")?.textContent || "");
+          const linkEl = e.querySelector('link[rel="alternate"]') || e.querySelector("link");
+          const link = sanitizeUrl(linkEl?.getAttribute("href") || linkEl?.textContent || "");
+          if (!t || !link) continue;
+          out.push({ titleEn: t, url: link, source: fallbackSource || "ATOM" });
+          if (out.length >= API.maxItems) break;
+        }
+      }
+
+      return out;
+    }
+
+    async function getHeadlinesFromRss(id, url) {
+      const xml = await fetchTextRobust(url);
+      const source = ({
+        googlenews: "GNEWS",
+        bbc: "BBC",
+        dw: "DW",
+        guardian: "GUARDIAN"
+      }[id] || normalizeSourceFromUrl(url));
+
+      const items = parseRssOrAtom(xml, source);
+      return uniqBy(items, x => safeStr(x.url).toLowerCase()).slice(0, API.maxItems);
+    }
+
+    async function getHeadlinesEnMixed() {
+      const srcs = CFG.sources || DEFAULTS.sources;
+
+      const tasks = [];
+      for (const id of srcs) {
+        if (id === "gdelt") tasks.push((async () => ({ id, items: await getHeadlinesFromGdelt() }))());
+        else if (API.rss[id]) tasks.push((async () => ({ id, items: await getHeadlinesFromRss(id, API.rss[id]) }))());
+      }
+
+      const res = await Promise.allSettled(tasks);
+      const chunks = [];
+      for (const r of res) {
+        if (r.status !== "fulfilled") continue;
+        const got = r.value?.items;
+        if (Array.isArray(got) && got.length) chunks.push(got);
+      }
+
+      const merged = [];
+      let guard = 0;
+      while (merged.length < API.maxItems && guard < 600) {
+        guard++;
+        let pushed = false;
+        for (const arr of chunks) {
+          if (!arr.length) continue;
+          merged.push(arr.shift());
+          pushed = true;
+          if (merged.length >= API.maxItems) break;
+        }
+        if (!pushed) break;
+      }
+
+      return uniqBy(merged.filter(Boolean), x => (safeStr(x.titleEn) + "|" + safeStr(x.url)).toLowerCase())
+        .slice(0, API.maxItems);
+    }
+
+    async function makeBilingual(items) {
+      if (!CFG.bilingual) return items;
+      const maxN = CFG.translateMax | 0;
+      if (maxN <= 0) return items;
+
+      const out = [];
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (!it || !it.titleEn) { out.push(it); continue; }
+
+        let es = "";
+        if (i < maxN) es = await translateEnToEs(it.titleEn);
+        else es = getCachedEs(it.titleEn) || "";
+
+        out.push(Object.assign({}, it, { titleEs: es }));
+      }
+      return out;
+    }
+
+    function buildSegment(items) {
+      const uiLang = uiLangEffective();
+      const list = (Array.isArray(items) && items.length) ? items : [
+        {
+          titleEn: (uiLang === "es") ? "No hay titulares ahora mismo… reintentando." : "No headlines right now… retrying.",
+          titleEs: "",
+          url: "",
+          source: "RLC"
+        }
+      ];
+
+      const seg = document.createElement("span");
+      seg.className = "tkSeg";
+
+      let first = true;
+      const addSep = () => {
+        const s = document.createElement("span");
+        s.className = "tkSep";
+        s.textContent = "•";
+        seg.appendChild(s);
+      };
+
+      for (const it of list) {
+        const link = sanitizeUrl(it.url || "");
+        const isLink = !!link;
+
+        if (!first) addSep();
+        first = false;
+
+        const el = document.createElement(isLink ? "a" : "span");
+        el.className = "tkItem";
+        if (isLink) {
+          el.href = link;
+          el.target = "_blank";
+          el.rel = "noreferrer noopener";
+        }
+
+        const t = document.createElement("span");
+        t.className = "tkTitle";
+
+        if (CFG.bilingual) {
+          const en = clampLen(it.titleEn || "", 110);
+          const es = clampLen(it.titleEs || "", 110);
+          t.textContent = es ? `${en} — ${es}` : en;
+        } else {
+          t.textContent = clampLen(it.titleEn || "", 130);
+        }
+
+        const src = document.createElement("span");
+        src.className = "tkSrc";
+        src.textContent = safeStr(it.source || "NEWS");
+
+        el.appendChild(t);
+        el.appendChild(src);
+        seg.appendChild(el);
+      }
+
+      return seg;
+    }
+
+    function setTickerItems(items) {
+      const root = ensureUI();
+      setLabel(root);
+
+      const marquee = qs("#rlcNewsMarquee", root);
+      if (!marquee) return;
+
+      marquee.innerHTML = "";
+      const seg1 = buildSegment(items);
+      const seg2 = seg1.cloneNode(true);
+
+      marquee.appendChild(seg1);
+      marquee.appendChild(seg2);
+
+      const textWrap = marquee.parentElement;
+      const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
+      const w = Math.max(300, seg1.scrollWidth || 300);
+
+      if (w > vw * 1.05) {
+        root.setAttribute("data-marquee", "1");
+        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+        root.style.setProperty("--rlcTickerDur", `${durSec}s`);
+      } else {
+        root.setAttribute("data-marquee", "0");
+        root.style.removeProperty("--rlcTickerDur");
+      }
+    }
+
+    function cacheKey() {
+      const srcKey = (CFG.sources || []).join(",");
+      return `${CFG.timespan}|src=${srcKey}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
+    }
+
+    function readCache() {
+      const c = readJson(CACHE_KEY_NS) || readJson(CACHE_KEY_LEGACY);
+      if (!c || typeof c !== "object") return null;
+      if (!Array.isArray(c.items)) return null;
+      return c;
+    }
+
+    function writeCache(key, items) {
+      writeJson(CACHE_KEY_NS, { ts: Date.now(), key, items });
+      if (!KEY) writeJson(CACHE_KEY_LEGACY, { ts: Date.now(), key, items });
+    }
+
+    // hide-on-vote
+    let voteObs = null;
+    let domObs = null;
+
+    function setupHideOnVote() {
+      try { voteObs?.disconnect(); } catch (_) {}
+      voteObs = null;
+
+      const vote = qs("#voteBox");
+      if (!vote) return;
+
+      const apply = () => {
+        if (!CFG.enabled) { setVisible(false); return; }
+        if (!CFG.hideOnVote) { setVisible(true); return; }
+        const voteVisible = isElementVisible(vote);
+        setVisible(!voteVisible);
+      };
+
+      apply();
+
+      voteObs = new MutationObserver(apply);
+      voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
+    }
+
+    function watchForVoteBox() {
+      try { domObs?.disconnect(); } catch (_) {}
+      domObs = null;
+
+      domObs = new MutationObserver(() => {
+        const vote = qs("#voteBox");
+        if (vote) setupHideOnVote();
+      });
+      domObs.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    // refresh loop
+    let refreshTimer = null;
+    let refreshInFlight = false;
+
+    async function refresh(force = false) {
+      if (!CFG.enabled) { setVisible(false); return; }
+      setVisible(true);
+
+      const ck = cacheKey();
+
+      if (!force) {
+        const cache = readCache();
+        const maxAge = Math.max(2, CFG.refreshMins) * 60 * 1000;
+        if (cache && cache.key === ck && (Date.now() - (cache.ts || 0) <= maxAge)) {
+          setTickerItems(cache.items);
+          return;
+        }
+      }
+
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+
+      try {
+        const en = await getHeadlinesEnMixed();
+        const bi = await makeBilingual(en);
+        setTickerItems(bi);
+        writeCache(ck, bi);
+      } catch (e) {
+        const cache = readCache();
+        if (cache?.items?.length) setTickerItems(cache.items);
+        else setTickerItems([]);
+        log("refresh fail", e?.message || e);
+      } finally {
+        refreshInFlight = false;
+      }
+    }
+
+    function startTimer() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      const every = Math.max(180000, CFG.refreshMins * 60 * 1000);
+      refreshTimer = setInterval(() => refresh(false), every);
+    }
+
+    function applyCfg(nextCfg, persist = false) {
+      CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
+      if (persist) writeCfgCompat(CFG);
+
+      if (!CFG.enabled) setVisible(false);
+      else setVisible(true);
+
+      setupHideOnVote();
+      startTimer();
+      refresh(true);
+    }
+
+    function onMessage(msg, fromNamespaced) {
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "TICKER_CFG" && msg.cfg && typeof msg.cfg === "object") {
+        if (!keyOk(msg, fromNamespaced)) return;
+        applyCfg(msg.cfg, true);
+      }
+    }
+
+    function boot() {
+      if (P.ticker === "0") { CFG.enabled = false; }
+      ensureUI();
+      applyCfg(CFG, false);
+
+      setupHideOnVote();
+      watchForVoteBox();
+
+      const cache = readCache();
+      if (cache?.items?.length) setTickerItems(cache.items);
+
+      refresh(false);
+
+      log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
+    }
+
+    function getCfg() { return CFG; }
+    function isOn() { return !!CFG.enabled; }
+
+    return { boot, onMessage, applyCfg, getCfg, isOn };
+  })();
+
+  // ======================================================================
+  // ECON TICKER (mismo markup que NEWS)
+  // ======================================================================
+  const ECON = (() => {
+    const CFG_KEY_BASE = "rlc_econ_cfg_v1";
+    const CACHE_KEY_BASE = "rlc_econ_cache_v1";
+
+    const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
+    const CFG_KEY_LEGACY = CFG_KEY_BASE;
+
+    const CACHE_KEY_NS = KEY ? `${CACHE_KEY_BASE}:${KEY}` : CACHE_KEY_BASE;
+    const CACHE_KEY_LEGACY = CACHE_KEY_BASE;
+
+    const DEBUG = (P.econDebug === "1" || P.econDebug === "true");
+    const log = (...a) => { if (DEBUG) console.log("[RLC:ECON]", ...a); };
+
+
+    const DEFAULTS = {
+      enabled: true,
+      speedPxPerSec: 60,   // 20..140
+      refreshMins: 2,      // 1..20
+      topPx: 10,           // 0..120
+      hideOnVote: true,
+      mode: "daily",       // daily|sinceLast
+      showClocks: true,
+      clocks: [
+        { label: "MAD", country: "ES", tz: "Europe/Madrid" },
+        { label: "NY",  country: "US", tz: "America/New_York" },
+        { label: "LDN", country: "GB", tz: "Europe/London" },
+        { label: "TYO", country: "JP", tz: "Asia/Tokyo" }
+      ],
+      items: [
+        { id:"btc",  label:"BTC/USD", stooq:"btcusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"bitcoin" },
+        { id:"eth",  label:"ETH/USD", stooq:"ethusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"ethereum" },
+        { id:"eurusd", label:"EUR/USD", stooq:"eurusd", kind:"fx", currency:"USD", decimals:4, country:"EU", tz:"Europe/Brussels", iconSlug:"euro" },
+        { id:"aapl", label:"AAPL", stooq:"aapl.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"apple", domain:"apple.com" },
+        { id:"tsla", label:"TSLA", stooq:"tsla.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"tesla", domain:"tesla.com" },
+        { id:"spx",  label:"S&P 500", stooq:"^spx", kind:"index", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"📈" },
+        { id:"gold", label:"GOLD", stooq:"gc.f", kind:"commodity", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"🪙" }
+      ]
+    };
+
+    function normalizeMode(v) {
+      const s = safeStr(v).toLowerCase();
+      if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sincelast") return "sinceLast";
+      if (s === "sincelast" || s === "sincelast") return "sinceLast";
+      if (s === "sincelast") return "sinceLast";
+      if (s === "sinceLast") return "sinceLast";
+      if (s === "since_last" || s === "since-last") return "sinceLast";
+      return (s === "sincelast") ? "sinceLast" : (s === "sinceLast" ? "sinceLast" : (s === "daily" ? "daily" : "daily"));
+    }
+
+    function normalizeClocks(list) {
+      const arr = Array.isArray(list) ? list : [];
+      const out = [];
+      for (const c of arr) {
+        const label = safeStr(c?.label).slice(0, 8) || "CLK";
+        const country = safeStr(c?.country).toUpperCase() || "UN";
+        const tz = safeStr(c?.tz) || "UTC";
+        if (!tz) continue;
+        out.push({ label, country, tz });
+      }
+      return out.length ? out : DEFAULTS.clocks.slice();
+    }
+
+    function normalizeItems(list) {
+      const arr = Array.isArray(list) ? list : [];
+      const out = [];
+      for (const it of arr) {
+        const stooq = safeStr(it?.stooq);
+        if (!stooq) continue;
+
+        out.push({
+          id: safeStr(it?.id) || stooq,
+          label: safeStr(it?.label) || stooq.toUpperCase(),
+          stooq,
+          kind: safeStr(it?.kind) || "asset",
+          currency: safeStr(it?.currency).toUpperCase() || "USD",
+          decimals: clamp(num(it?.decimals, 2), 0, 8),
+          country: safeStr(it?.country).toUpperCase() || "UN",
+          tz: safeStr(it?.tz) || "UTC",
+          iconSlug: safeStr(it?.iconSlug) || "",
+          domain: safeStr(it?.domain) || "",
+          glyph: safeStr(it?.glyph) || ""
+        });
+      }
+      return out.length ? out : DEFAULTS.items.slice();
+    }
+
+    function normalizeCfg(inCfg) {
+      const c = Object.assign({}, inCfg || {});
+      c.enabled = (c.enabled !== false);
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
+      c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 20);
+      c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
+      c.hideOnVote = (c.hideOnVote !== false);
+      c.mode = (safeStr(c.mode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
+      c.showClocks = (c.showClocks !== false);
+      c.clocks = normalizeClocks(c.clocks);
+      c.items = normalizeItems(c.items);
+      return c;
+    }
+
+    function cfgFromUrl() {
+      const out = {};
+      if (P.econSpeed) out.speedPxPerSec = clamp(num(P.econSpeed, DEFAULTS.speedPxPerSec), 20, 140);
+      if (P.econRefresh) out.refreshMins = clamp(num(P.econRefresh, DEFAULTS.refreshMins), 1, 20);
+      if (P.econTop) out.topPx = clamp(num(P.econTop, DEFAULTS.topPx), 0, 120);
+      if (P.econHideOnVote === "0") out.hideOnVote = false;
+      if (P.econHideOnVote === "1") out.hideOnVote = true;
+      if (P.econMode) out.mode = (safeStr(P.econMode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
+      if (P.econClocks === "0") out.showClocks = false;
+      if (P.econClocks === "1") out.showClocks = true;
+      if (P.econ === "0") out.enabled = false;
+      return out;
+    }
+
+    function readCfgMerged() {
+      return readJson(CFG_KEY_NS) || readJson(CFG_KEY_LEGACY) || null;
+    }
+
+    function writeCfgCompat(cfg) {
+      try { writeJson(CFG_KEY_NS, cfg); } catch (_) {}
+      try { writeJson(CFG_KEY_LEGACY, cfg); } catch (_) {}
+    }
+
+    let CFG = normalizeCfg(Object.assign({}, DEFAULTS, readCfgMerged() || {}, cfgFromUrl()));
+
+    function ensureUI() {
+      let root = qs("#rlcEconTicker");
+      if (root) return root;
+
+      root = document.createElement("div");
+      root.id = "rlcEconTicker";
+      root.setAttribute("role", "region");
+      root.setAttribute("aria-label", "Ticker económico");
+
+      root.innerHTML = `
+        <div class="tickerInner">
+          <div class="tickerBadge"><span id="rlcEconTickerLabel">MARKETS · MERCADOS</span></div>
+          <div class="tickerText">
+            <div class="tickerMarquee" id="rlcEconMarquee" aria-live="polite"></div>
+          </div>
+        </div>
+      `.trim();
+
+      document.body.appendChild(root);
+      return root;
+    }
+
+    function setVisible(on) {
+      const root = ensureUI();
+      root.classList.toggle("hidden", !on);
+      root.setAttribute("aria-hidden", on ? "false" : "true");
+    }
+
+    // ───────────────────────── Flags + clocks + fmt
+    function flagEmoji(country2) {
+      const cc = safeStr(country2).toUpperCase();
+      if (!cc) return "🏳️";
+      if (cc === "UN") return "🌐";
+      if (cc === "EU") return "🇪🇺";
+      if (!/^[A-Z]{2}$/.test(cc)) return "🏳️";
+      const A = 0x1F1E6;
+      const c1 = cc.charCodeAt(0) - 65;
+      const c2 = cc.charCodeAt(1) - 65;
+      return String.fromCodePoint(A + c1, A + c2);
+    }
+
+    function fmtTime(tz) {
+      try {
+        return new Intl.DateTimeFormat(undefined, {
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+          hour12: false, timeZone: tz
+        }).format(new Date());
+      } catch (_) {
+        const d = new Date();
+        return d.toTimeString().slice(0, 8);
+      }
+    }
+
+    function fmtNum(n, decimals) {
+      if (!Number.isFinite(n)) return "—";
+      const d = clamp(num(decimals, 2), 0, 8);
+      return new Intl.NumberFormat(undefined, {
+        minimumFractionDigits: d,
+        maximumFractionDigits: d
+      }).format(n);
+    }
+
+    function currencyPrefix(ccy) {
+      const c = safeStr(ccy).toUpperCase();
+      if (c === "USD") return "$";
+      if (c === "EUR") return "€";
+      if (c === "GBP") return "£";
+      if (c === "JPY") return "¥";
+      return c ? (c + " ") : "";
+    }
+
+    // Icons (FREE)
+    function simpleIconUrl(slug) {
+      const s = safeStr(slug).toLowerCase();
+      if (!s) return "";
+      return `https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/${encodeURIComponent(s)}.svg`;
+    }
+    function faviconUrl(domain) {
+      const d = safeStr(domain).toLowerCase();
+      if (!d) return "";
+      return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64`;
+    }
+    function guessGlyph(kind) {
+      const k = safeStr(kind).toLowerCase();
+      if (k === "crypto") return "🪙";
+      if (k === "fx") return "💱";
+      if (k === "stock") return "🏛️";
+      if (k === "index") return "📈";
+      if (k === "commodity") return "⛏️";
+      return "•";
+    }
+    function iconFor(it) {
+      const slug = safeStr(it.iconSlug);
+      if (slug) return { type: "img", url: simpleIconUrl(slug) };
+      const dom = safeStr(it.domain);
+      if (dom) return { type: "img", url: faviconUrl(dom) };
+      const glyph = safeStr(it.glyph) || guessGlyph(it.kind);
+      return { type: "glyph", glyph };
+    }
+
+    // ───────────────────────── Stooq
+    const stooqLastUrl  = (sym) => `https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`;
+    const stooqDailyUrl = (sym) => `https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`;
+
+    const csvLineSplit = (text) => String(text || "").trim().split(/\r?\n/).filter(Boolean);
+    const csvSplitRow  = (line) => String(line || "").split(",").map(s => s.trim());
+    const toNum = (v) => {
+      const s = String(v ?? "").trim();
+      if (!s || s === "N/D" || s === "ND" || s === "NA") return null;
+      const n = parseFloat(s.replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    };
+
+    async function getLastClose(sym) {
+      const txt = await fetchTextRobust(stooqLastUrl(sym));
+      const lines = csvLineSplit(txt);
+      if (lines.length < 2) throw new Error("CSV short");
+      const head = csvSplitRow(lines[0]);
+      const row  = csvSplitRow(lines[1]);
+
+      const idxClose = head.findIndex(h => h.toLowerCase() === "close");
+      const idxDate  = head.findIndex(h => h.toLowerCase() === "date");
+      const idxTime  = head.findIndex(h => h.toLowerCase() === "time");
+
+      const close = toNum(row[idxClose]);
+      const dt = `${row[idxDate] || ""} ${row[idxTime] || ""}`.trim();
+
+      if (!Number.isFinite(close)) throw new Error("No close");
+      return { close, dt };
+    }
+
+    function parseDailyPrevClose(txt) {
+      const lines = csvLineSplit(txt);
+      if (lines.length < 3) return null;
+
+      const head = csvSplitRow(lines[0]);
+      const idxClose = head.findIndex(h => h.toLowerCase() === "close");
+      if (idxClose < 0) return null;
+
+      const row1 = csvSplitRow(lines[1]);
+      const row2 = csvSplitRow(lines[2]);
+
+      const close1 = toNum(row1[idxClose]);
+      const close2 = toNum(row2[idxClose]);
+      if (!Number.isFinite(close1)) return null;
+
+      return Number.isFinite(close2) ? close2 : close1;
+    }
+
+    // cache
+    const cacheKey = () => {
+      const list = (CFG.items || []).map(x => safeStr(x.stooq)).join(",");
+      return `m=${CFG.mode}|list=${list}`;
+    };
+
+    function readCache() {
+      const c = readJson(CACHE_KEY_NS) || readJson(CACHE_KEY_LEGACY);
+      if (!c || typeof c !== "object") return null;
+      if (!c.map || typeof c.map !== "object") return null;
+      return c;
+    }
+
+    function writeCache(key, map) {
+      writeJson(CACHE_KEY_NS, { ts: Date.now(), key, map });
+      if (!KEY) writeJson(CACHE_KEY_LEGACY, { ts: Date.now(), key, map });
+    }
+
+    function clampLen(s, max) {
+      let t = safeStr(s).replace(/\s+/g, " ").trim();
+      if (t.length > max) t = t.slice(0, Math.max(8, max - 1)).trim() + "…";
+      return t;
+    }
+
+    // clocks live updater (no fetch)
+    let clockTimer = null;
+    function startClockTimer() {
+      if (clockTimer) return;
+      clockTimer = setInterval(() => {
+        try {
+          const nodes = document.querySelectorAll("[data-rlc-tz][data-rlc-clock='1']");
+          nodes.forEach((n) => {
+            const tz = n.getAttribute("data-rlc-tz") || "UTC";
+            n.textContent = fmtTime(tz);
+          });
+        } catch (_) {}
+      }, 1000);
+    }
+
+    // Render (mismo estilo que NEWS)
+    function buildSegment(model) {
+      const seg = document.createElement("span");
+      seg.className = "tkSeg";
+
+      let first = true;
+      const addSep = () => {
+        const s = document.createElement("span");
+        s.className = "tkSep";
+        s.textContent = "•";
+        seg.appendChild(s);
+      };
+
+      // clocks
+      if (CFG.showClocks && Array.isArray(model.clocks) && model.clocks.length) {
+        for (const c of model.clocks) {
+          if (!first) addSep();
+          first = false;
+
+          const el = document.createElement("span");
+          el.className = "tkItem";
+
+          const meta = document.createElement("span");
+          meta.className = "tkMeta";
+          meta.textContent = `${flagEmoji(c.country)} ${c.label || "CLK"} `;
+
+          const clk = document.createElement("span");
+          clk.className = "tkMeta";
+          clk.setAttribute("data-rlc-clock", "1");
+          clk.setAttribute("data-rlc-tz", c.tz || "UTC");
+          clk.textContent = fmtTime(c.tz || "UTC");
+
+          el.appendChild(meta);
+          el.appendChild(clk);
+          seg.appendChild(el);
+        }
+      }
+
+      // assets
+      for (const it of (model.items || [])) {
+        if (!first) addSep();
+        first = false;
+
+        const a = document.createElement("a");
+        a.className = "tkItem";
+        a.href = `https://stooq.com/q/?s=${encodeURIComponent(it.stooq)}`;
+        a.target = "_blank";
+        a.rel = "noreferrer noopener";
+
+        const icoWrap = document.createElement("span");
+        icoWrap.className = "tkIco";
+        const ic = iconFor(it);
+
+        if (ic.type === "img") {
+          const img = document.createElement("img");
+          img.loading = "lazy";
+          img.referrerPolicy = "no-referrer";
+          img.src = ic.url;
+          img.alt = "";
+          img.onerror = () => {
+            try {
+              img.remove();
+              const sp = document.createElement("span");
+              sp.className = "tkGlyph";
+              sp.textContent = safeStr(it.glyph) || guessGlyph(it.kind);
+              icoWrap.appendChild(sp);
+            } catch (_) {}
+          };
+          icoWrap.appendChild(img);
+        } else {
+          const sp = document.createElement("span");
+          sp.className = "tkGlyph";
+          sp.textContent = ic.glyph;
+          icoWrap.appendChild(sp);
+        }
+
+        const nm = document.createElement("span");
+        nm.className = "tkNm";
+        nm.textContent = clampLen(it.label || it.stooq.toUpperCase(), 18);
+
+        const px = document.createElement("span");
+        px.className = "tkPx";
+        px.textContent = it.priceText || "—";
+
+        const chg = document.createElement("span");
+        chg.className = "tkChg";
+        if (it.changeText) {
+          chg.textContent = it.changeText;
+          if (it.changeDir === "up") chg.classList.add("up");
+          else if (it.changeDir === "down") chg.classList.add("down");
+        } else {
+          chg.textContent = "";
+        }
+
+        const meta = document.createElement("span");
+        meta.className = "tkMeta";
+        meta.textContent = `${flagEmoji(it.country)} ${fmtTime(it.tz || "UTC")}`;
+
+        a.appendChild(icoWrap);
+        a.appendChild(nm);
+        a.appendChild(px);
+        if (it.changeText) a.appendChild(chg);
+        a.appendChild(meta);
+
+        seg.appendChild(a);
+      }
+
+      return seg;
+    }
+
+    function setTickerItems(model) {
+      const root = ensureUI();
+      const marquee = qs("#rlcEconMarquee", root);
+      if (!marquee) return;
+
+      marquee.innerHTML = "";
+
+      const seg1 = buildSegment(model);
+      const seg2 = seg1.cloneNode(true);
+
+      marquee.appendChild(seg1);
+      marquee.appendChild(seg2);
+
+      startClockTimer();
+
+      const textWrap = marquee.parentElement;
+      const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
+      const w = Math.max(300, seg1.scrollWidth || 300);
+
+      if (w > vw * 1.05) {
+        root.setAttribute("data-marquee", "1");
+        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+        root.style.setProperty("--rlcTickerDur", `${durSec}s`);
+      } else {
+        root.setAttribute("data-marquee", "0");
+        root.style.removeProperty("--rlcTickerDur");
+      }
+    }
+
+    // hide-on-vote
+    let voteObs = null;
+    let domObs = null;
+
+    function setupHideOnVote() {
+      try { voteObs?.disconnect(); } catch (_) {}
+      voteObs = null;
+
+      const vote = qs("#voteBox");
+      if (!vote) return;
+
+      const apply = () => {
+        if (!CFG.enabled) { setVisible(false); return; }
+        if (!CFG.hideOnVote) { setVisible(true); return; }
+        const voteVisible = isElementVisible(vote);
+        setVisible(!voteVisible);
+      };
+
+      apply();
+
+      voteObs = new MutationObserver(apply);
+      voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
+    }
+
+    function watchForVoteBox() {
+      try { domObs?.disconnect(); } catch (_) {}
+      domObs = null;
+
+      domObs = new MutationObserver(() => {
+        const vote = qs("#voteBox");
+        if (vote) setupHideOnVote();
+      });
+      domObs.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    async function buildModel() {
+      const items = CFG.items || [];
+      const cache = readCache();
+      const ck = cacheKey();
+      const map = (cache && cache.key === ck && cache.map && typeof cache.map === "object") ? cache.map : {};
+
+      const outItems = [];
+      const maxConc = 3;
+
+      let idx = 0;
+      async function worker() {
+        while (idx < items.length) {
+          const i = idx++;
+          const it = items[i];
+          const sym = it.stooq;
+
+          let price = null;
+          let prev = null;
+          let dt = "";
+          let err = "";
+
+          const cached = map[sym] || null;
+
+          try {
+            const last = await getLastClose(sym);
+            price = last.close;
+            dt = last.dt || "";
+
+            if (CFG.mode === "daily") {
+              try {
+                const dailyTxt = await fetchTextRobust(stooqDailyUrl(sym));
+                prev = parseDailyPrevClose(dailyTxt);
+              } catch (_) { prev = null; }
+            } else {
+              prev = (cached && Number.isFinite(cached.price)) ? cached.price : null;
+            }
+
+            map[sym] = { ts: Date.now(), price, prev: Number.isFinite(prev) ? prev : null, dt };
+          } catch (e) {
+            err = String(e?.message || e || "");
+            if (cached && Number.isFinite(cached.price)) {
+              price = cached.price;
+              prev = cached.prev ?? null;
+              dt = cached.dt || "";
+            }
+          }
+
+          let priceText = "—";
+          let changeText = "";
+          let changeDir = "";
+
+          if (Number.isFinite(price)) {
+            priceText = `${currencyPrefix(it.currency)}${fmtNum(price, it.decimals)}`;
+
+            if (Number.isFinite(prev) && prev !== 0) {
+              const d = price - prev;
+              const p = (d / prev) * 100;
+              const sign = (d > 0) ? "+" : (d < 0) ? "−" : "";
+              changeText = `${sign}${fmtNum(Math.abs(d), 2)} (${sign}${Math.abs(p).toFixed(2)}%)`;
+              changeDir = (d > 0) ? "up" : (d < 0) ? "down" : "";
+            }
+          } else if (err && DEBUG) {
+            log("quote fail", sym, err);
+          }
+
+          outItems.push(Object.assign({}, it, { priceText, changeText, changeDir, _dt: dt }));
+        }
+      }
+
+      const workers = [];
+      for (let k = 0; k < Math.min(maxConc, items.length); k++) workers.push(worker());
+      await Promise.allSettled(workers);
+
+      const order = new Map(items.map((x, i) => [x.stooq, i]));
+      outItems.sort((a, b) => (order.get(a.stooq) ?? 0) - (order.get(b.stooq) ?? 0));
+
+      writeCache(ck, map);
+
+      return { clocks: CFG.clocks || [], items: outItems };
+    }
+
+    // refresh loop
+    let refreshTimer = null;
+    let refreshInFlight = false;
+
+    async function refresh() {
+      if (!CFG.enabled) { setVisible(false); return; }
+      setVisible(true);
+
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+
+      try {
+        const model = await buildModel();
+        setTickerItems(model);
+      } catch (e) {
+        log("refresh error:", e?.message || e);
+        setTickerItems({ clocks: CFG.clocks || [], items: [] });
+      } finally {
+        refreshInFlight = false;
+      }
+    }
+
+    function startTimer() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      const every = Math.max(60000, CFG.refreshMins * 60 * 1000);
+      refreshTimer = setInterval(refresh, every);
+    }
+
+    function applyCfg(nextCfg, persist = false) {
+      CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
+      if (persist) writeCfgCompat(CFG);
+
+      if (!CFG.enabled) setVisible(false);
+      else setVisible(true);
+
+      setupHideOnVote();
+      startTimer();
+      refresh();
+    }
+
+    function onMessage(msg, fromNamespaced) {
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "ECON_CFG" && msg.cfg && typeof msg.cfg === "object") {
+        if (!keyOk(msg, fromNamespaced)) return;
+        applyCfg(msg.cfg, true);
+      }
+    }
+
+    function boot() {
+      if (P.econ === "0") { CFG.enabled = false; }
+      ensureUI();
+      applyCfg(CFG, false);
+
+      setupHideOnVote();
+      watchForVoteBox();
+
+      refresh();
+
+      log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
+    }
+
+    function getCfg() { return CFG; }
+    function isOn() { return !!CFG.enabled; }
+
+    return { boot, onMessage, applyCfg, getCfg, isOn };
+  })();
+
+  // ───────────────────────── Layout sync (stack always)
+  function syncLayout() {
+    const nCfg = NEWS.getCfg ? NEWS.getCfg() : null;
+    const eCfg = ECON.getCfg ? ECON.getCfg() : null;
+
+    LAYOUT.apply({
+      newsOn: NEWS.isOn ? NEWS.isOn() : !!nCfg?.enabled,
+      econOn: ECON.isOn ? ECON.isOn() : !!eCfg?.enabled,
+      newsCfgTop: nCfg?.topPx ?? 10,
+      econCfgTop: eCfg?.topPx ?? 10
+    });
+  }
+
+  // ───────────────────────── Message routing
+  function onBusMessage(msg, fromNamespaced) {
+    NEWS.onMessage(msg, fromNamespaced);
+    ECON.onMessage(msg, fromNamespaced);
+    // tras aplicar cfg por bus, re-stack
+    setTimeout(syncLayout, 0);
+  }
+
+  function boot() {
+    NEWS.boot();
+    ECON.boot();
+
+    // primer layout
+    syncLayout();
+
+    // Bus listeners
+    try {
+      if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
+      if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
+    } catch (_) {}
+
+    // postMessage fallback
+    window.addEventListener("message", (ev) => {
+      const msg = ev?.data;
+      if (!msg || typeof msg !== "object") return;
+      onBusMessage(msg, false);
+    });
+
+    // storage sync (cfg)
+    window.addEventListener("storage", (e) => {
+      if (!e || !e.key) return;
+
+      if (e.key.startsWith("rlc_ticker_cfg_v1")) {
+        const stored =
+          readJson(KEY ? `rlc_ticker_cfg_v1:${KEY}` : "rlc_ticker_cfg_v1") ||
+          readJson("rlc_ticker_cfg_v1");
+        if (stored) NEWS.applyCfg(stored, false);
+        setTimeout(syncLayout, 0);
+      }
+
+      if (e.key.startsWith("rlc_econ_cfg_v1")) {
+        const stored =
+          readJson(KEY ? `rlc_econ_cfg_v1:${KEY}` : "rlc_econ_cfg_v1") ||
+          readJson("rlc_econ_cfg_v1");
+        if (stored) ECON.applyCfg(stored, false);
+        setTimeout(syncLayout, 0);
+      }
+    });
+
+    // por si cambia el tamaño/zoom (Opera GX…)
+    window.addEventListener("resize", () => {
+      syncLayout();
+    }, { passive: true });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
+  }
+})();
