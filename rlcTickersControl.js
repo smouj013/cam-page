@@ -1,7 +1,7 @@
-/* rlcTickersControl.js — RLC Unified Tickers Control v2.0.0
+/* rlcTickersControl.js — RLC Unified Tickers Control v2.1.0
    ✅ Unifica:
-      - newsTickerControl.js (v1.5.x)
-      - econTickerControl.js (v1.2.x)
+      - newsTickerControl.js
+      - econTickerControl.js
    ✅ Solo para control.html
    ✅ Storage por key + legacy/base
    ✅ BroadcastChannel namespaced + legacy + postMessage fallback
@@ -13,7 +13,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_CONTROL_LOADED_V200";
+  const LOAD_GUARD = "__RLC_TICKERS_CONTROL_LOADED_V210";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
@@ -69,6 +69,8 @@
 }
 .rlcCtlBtn:hover{ background: rgba(255,255,255,.10); }
 .rlcCtlFull{ grid-column: 1 / -1; }
+.pill--ok{ border-color: rgba(25,226,138,.35) !important; color: rgba(25,226,138,.95) !important; }
+.pill--bad{ border-color: rgba(255,90,90,.35) !important; color: rgba(255,90,90,.95) !important; }
 @media (max-width: 720px){
   .rlcCtlGrid{ grid-template-columns: 1fr; }
 }
@@ -157,10 +159,8 @@
       topPx: 10,              // 0..120
       hideOnVote: true,
       timespan: "1d",
-
       bilingual: true,
       translateMax: 10,
-
       sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
     };
 
@@ -478,8 +478,7 @@
 
     function normalizeMode(v) {
       const s = safeStr(v).toLowerCase();
-      if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sinceLast") return "sinceLast";
-      return "daily";
+      return s.includes("since") ? "sinceLast" : "daily";
     }
 
     function normalizeClocks(list) {
@@ -643,11 +642,11 @@
       setStatus(c.enabled ? `Econ: ON · ${where}` : `Econ: OFF · ${where}`, c.enabled);
     }
 
-    function safeJsonParse(s, fb) {
+    function safeJsonParse(s) {
       try {
         const o = JSON.parse(String(s || ""));
-        return (o && typeof o === "object") ? o : fb;
-      } catch (_) { return fb; }
+        return o;
+      } catch (_) { return null; }
     }
 
     function collectCfgFromUI() {
@@ -662,18 +661,18 @@
       let items;
       const itemsTa = qs("#ctlEconItems");
       if (itemsTa) {
-        const parsed = safeJsonParse(itemsTa.value, null);
+        const parsed = safeJsonParse(itemsTa.value);
         if (Array.isArray(parsed)) items = parsed;
       }
 
       let clocks;
       const clocksTa = qs("#ctlEconClocksJson");
       if (clocksTa) {
-        const parsed = safeJsonParse(clocksTa.value, null);
+        const parsed = safeJsonParse(clocksTa.value);
         if (Array.isArray(parsed)) clocks = parsed;
       }
 
-      return normalizeCfg({
+      const cfg = normalizeCfg({
         enabled: (on !== "off"),
         speedPxPerSec: speed,
         refreshMins: refresh,
@@ -684,6 +683,16 @@
         ...(Array.isArray(items) ? { items } : {}),
         ...(Array.isArray(clocks) ? { clocks } : {})
       });
+
+      // Si JSON inválido, avisamos (sin romper)
+      if (itemsTa && itemsTa.value.trim() && !Array.isArray(items)) {
+        setStatus("Items JSON inválido (usa array) — manteniendo último válido", false);
+      }
+      if (clocksTa && clocksTa.value.trim() && !Array.isArray(clocks)) {
+        setStatus("Clocks JSON inválido (usa array) — manteniendo último válido", false);
+      }
+
+      return cfg;
     }
 
     function buildPlayerUrlWithEcon(cfg) {
@@ -714,6 +723,7 @@
         const cfg = collectCfgFromUI();
         if (persist) writeCfg(CFG_KEY_NS, CFG_KEY_LEGACY, cfg);
         sendMsg("ECON_CFG", cfg);
+        // si antes mostramos error por JSON, refrescamos status “normal” al instante
         applyUIFromCfg(cfg);
       };
 

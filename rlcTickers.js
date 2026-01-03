@@ -1,8 +1,9 @@
-/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.1.1 (NO RLCUiBars)
+/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.2.0 (NO RLCUiBars)
    ✅ NEWS + ECON con MISMO markup + MISMA piel (Neo-Atlas)
    ✅ Siempre full-width y en stack: NEWS arriba, ECON abajo
    ✅ Calcula y aplica: --rlcNewsTop, --rlcEconTop, --rlcTickerH
-   ✅ Robust fetch: direct -> AllOrigins -> r.jina.ai
+   ✅ Hide-on-vote ahora también ajusta layout (sin gap fantasma)
+   ✅ Robust fetch: direct -> AllOrigins -> (solo JSON) r.jina.ai
    ✅ No rompe IDs/clases existentes: #rlcNewsTicker #rlcEconTicker, .tickerInner/.tickerBadge/.tickerText/.tickerMarquee
 */
 
@@ -11,7 +12,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V211";
+  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V220";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers
@@ -68,7 +69,7 @@
   const P = parseParams();
   const KEY = P.key;
 
-  // ───────────────────────── Bus + storage keys (namespaced + legacy)
+  // ───────────────────────── Bus + keys (namespaced + legacy)
   const BUS_BASE = "rlc_bus_v1";
   const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
 
@@ -99,11 +100,12 @@
     return `https://r.jina.ai/https://${u}`;
   };
 
-  async function fetchTextRobust(url) {
+  // Text robust (para XML/CSV preferimos NO usar Jina porque puede “romper” el formato)
+  async function fetchTextRobust(url, { allowJina = false } = {}) {
     const tries = [
       () => fetchText(url),
       () => fetchText(allOrigins(url)),
-      () => fetchText(jina(url))
+      ...(allowJina ? [() => fetchText(jina(url))] : [])
     ];
     let lastErr = null;
     for (const fn of tries) {
@@ -121,13 +123,11 @@
     const s = safeStr(txt);
     if (!s) return null;
 
-    // JSONP: callback({...})
     const m = s.match(/^[a-zA-Z_$][\w$]*\(([\s\S]+)\)\s*;?\s*$/);
     if (m && m[1]) { try { return JSON.parse(m[1]); } catch (_) {} }
 
     try { return JSON.parse(s); } catch (_) {}
 
-    // extract first {...}
     const a = s.indexOf("{");
     const b = s.lastIndexOf("}");
     if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch (_) {} }
@@ -186,19 +186,18 @@
       try { document.documentElement.style.setProperty(name, val); } catch (_) {}
     }
 
-    // newsCfgTop / econCfgTop: topPx individuales (si ambos ON, se usa el menor para alinear el bloque)
-    function apply({ newsOn, econOn, newsCfgTop, econCfgTop }) {
+    function apply({ newsVisible, econVisible, newsTopPx, econTopPx }) {
       const barH = cssPx("--rlcBarH", 34);
-      const gap  = cssPx("--rlcTickerGap", 12);
+      const gap = cssPx("--rlcTickerGap", 12);
 
-      const onN = !!newsOn;
-      const onE = !!econOn;
+      const onN = !!newsVisible;
+      const onE = !!econVisible;
 
+      // baseTop: si ambos visibles -> el menor; si solo uno -> el suyo; si ninguno -> 0
       const baseTop =
-        (onN && onE) ? Math.min((newsCfgTop ?? 10), (econCfgTop ?? 10))
-        : (onN ? (newsCfgTop ?? 10)
-        : (onE ? (econCfgTop ?? 10)
-        : (newsCfgTop ?? econCfgTop ?? 10)));
+        (onN && onE) ? Math.min(newsTopPx ?? 10, econTopPx ?? 10)
+        : (onN ? (newsTopPx ?? 10)
+        : (onE ? (econTopPx ?? 10) : 0));
 
       const newsTop = baseTop;
       const econTop = baseTop + (onN ? (barH + gap) : 0);
@@ -219,6 +218,17 @@
 
     return { apply };
   })();
+
+  // ───────────────────────── Layout sync scheduler
+  let _layoutQueued = false;
+  function requestLayoutSync() {
+    if (_layoutQueued) return;
+    _layoutQueued = true;
+    queueMicrotask(() => {
+      _layoutQueued = false;
+      syncLayout();
+    });
+  }
 
   // ======================================================================
   // NEWS TICKER
@@ -363,6 +373,7 @@
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
+      requestLayoutSync();
     }
 
     function uiLangEffective() {
@@ -398,6 +409,7 @@
       let t = safeStr(s).replace(/\s+/g, " ").trim();
       if (t.length < 14) return "";
       if (t.length > 140) t = t.slice(0, 137).trim() + "…";
+      // filtra scripts de feeds raros (árabe/chino/coreano) para no “romper” el look
       if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
       return t;
     }
@@ -572,7 +584,8 @@
     }
 
     async function getHeadlinesFromRss(id, url) {
-      const xml = await fetchTextRobust(url);
+      // XML: no Jina
+      const xml = await fetchTextRobust(url, { allowJina: false });
       const source = ({
         googlenews: "GNEWS",
         bbc: "BBC",
@@ -784,7 +797,8 @@
 
     async function refresh(force = false) {
       if (!CFG.enabled) { setVisible(false); return; }
-      setVisible(true);
+      // visible real se decide en setupHideOnVote; aquí no forzamos ON “a lo loco”
+      if (!CFG.hideOnVote) setVisible(true);
 
       const ck = cacheKey();
 
@@ -826,11 +840,15 @@
       if (persist) writeCfgCompat(CFG);
 
       if (!CFG.enabled) setVisible(false);
-      else setVisible(true);
+      else {
+        // si hide-on-vote, setupHideOnVote decide; si no, mostramos
+        if (!CFG.hideOnVote) setVisible(true);
+      }
 
       setupHideOnVote();
       startTimer();
       refresh(true);
+      requestLayoutSync();
     }
 
     function onMessage(msg, fromNamespaced) {
@@ -858,9 +876,14 @@
     }
 
     function getCfg() { return CFG; }
-    function isOn() { return !!CFG.enabled; }
+    function isEnabled() { return !!CFG.enabled; }
+    function isVisibleNow() {
+      const root = qs("#rlcNewsTicker");
+      return !!(CFG.enabled && root && !root.classList.contains("hidden") && isElementVisible(root));
+    }
+    function getLayoutState() { return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10 }; }
 
-    return { boot, onMessage, applyCfg, getCfg, isOn };
+    return { boot, onMessage, applyCfg, getCfg, isEnabled, isVisibleNow, getLayoutState };
   })();
 
   // ======================================================================
@@ -1006,6 +1029,7 @@
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
+      requestLayoutSync();
     }
 
     // ───────────────────────── Flags + clocks + fmt
@@ -1094,7 +1118,8 @@
     };
 
     async function getLastClose(sym) {
-      const txt = await fetchTextRobust(stooqLastUrl(sym));
+      // CSV: no Jina
+      const txt = await fetchTextRobust(stooqLastUrl(sym), { allowJina: false });
       const lines = csvLineSplit(txt);
       if (lines.length < 2) throw new Error("CSV short");
       const head = csvSplitRow(lines[0]);
@@ -1372,7 +1397,7 @@
 
             if (CFG.mode === "daily") {
               try {
-                const dailyTxt = await fetchTextRobust(stooqDailyUrl(sym));
+                const dailyTxt = await fetchTextRobust(stooqDailyUrl(sym), { allowJina: false });
                 prev = parseDailyPrevClose(dailyTxt);
               } catch (_) { prev = null; }
             } else {
@@ -1429,7 +1454,7 @@
 
     async function refresh() {
       if (!CFG.enabled) { setVisible(false); return; }
-      setVisible(true);
+      if (!CFG.hideOnVote) setVisible(true);
 
       if (refreshInFlight) return;
       refreshInFlight = true;
@@ -1456,11 +1481,14 @@
       if (persist) writeCfgCompat(CFG);
 
       if (!CFG.enabled) setVisible(false);
-      else setVisible(true);
+      else {
+        if (!CFG.hideOnVote) setVisible(true);
+      }
 
       setupHideOnVote();
       startTimer();
       refresh();
+      requestLayoutSync();
     }
 
     function onMessage(msg, fromNamespaced) {
@@ -1485,21 +1513,26 @@
     }
 
     function getCfg() { return CFG; }
-    function isOn() { return !!CFG.enabled; }
+    function isEnabled() { return !!CFG.enabled; }
+    function isVisibleNow() {
+      const root = qs("#rlcEconTicker");
+      return !!(CFG.enabled && root && !root.classList.contains("hidden") && isElementVisible(root));
+    }
+    function getLayoutState() { return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10 }; }
 
-    return { boot, onMessage, applyCfg, getCfg, isOn };
+    return { boot, onMessage, applyCfg, getCfg, isEnabled, isVisibleNow, getLayoutState };
   })();
 
   // ───────────────────────── Layout sync (stack always)
   function syncLayout() {
-    const nCfg = NEWS.getCfg ? NEWS.getCfg() : null;
-    const eCfg = ECON.getCfg ? ECON.getCfg() : null;
+    const n = NEWS.getLayoutState ? NEWS.getLayoutState() : { visible: false, topPx: 10 };
+    const e = ECON.getLayoutState ? ECON.getLayoutState() : { visible: false, topPx: 10 };
 
     LAYOUT.apply({
-      newsOn: NEWS.isOn ? NEWS.isOn() : !!nCfg?.enabled,
-      econOn: ECON.isOn ? ECON.isOn() : !!eCfg?.enabled,
-      newsCfgTop: nCfg?.topPx ?? 10,
-      econCfgTop: eCfg?.topPx ?? 10
+      newsVisible: !!n.visible,
+      econVisible: !!e.visible,
+      newsTopPx: n.topPx ?? 10,
+      econTopPx: e.topPx ?? 10
     });
   }
 
@@ -1507,14 +1540,15 @@
   function onBusMessage(msg, fromNamespaced) {
     NEWS.onMessage(msg, fromNamespaced);
     ECON.onMessage(msg, fromNamespaced);
-    setTimeout(syncLayout, 0);
+    requestLayoutSync();
   }
 
   function boot() {
     NEWS.boot();
     ECON.boot();
 
-    syncLayout();
+    // primer layout
+    requestLayoutSync();
 
     // Bus listeners
     try {
@@ -1538,7 +1572,7 @@
           readJson(KEY ? `rlc_ticker_cfg_v1:${KEY}` : "rlc_ticker_cfg_v1") ||
           readJson("rlc_ticker_cfg_v1");
         if (stored) NEWS.applyCfg(stored, false);
-        setTimeout(syncLayout, 0);
+        requestLayoutSync();
       }
 
       if (e.key.startsWith("rlc_econ_cfg_v1")) {
@@ -1546,13 +1580,13 @@
           readJson(KEY ? `rlc_econ_cfg_v1:${KEY}` : "rlc_econ_cfg_v1") ||
           readJson("rlc_econ_cfg_v1");
         if (stored) ECON.applyCfg(stored, false);
-        setTimeout(syncLayout, 0);
+        requestLayoutSync();
       }
     });
 
     // por si cambia el tamaño/zoom (Opera GX…)
     window.addEventListener("resize", () => {
-      syncLayout();
+      requestLayoutSync();
     }, { passive: true });
   }
 
