@@ -49,6 +49,9 @@
 
   <!-- Newsroom Skin (solo control.html) -->
   <style>
+    html,body{height:100%}
+    body{margin:0}
+
     :root{
       --news-bg0:#05060b;--news-bg1:#070b14;--news-bg2:#0a1528;
       --news-panel:rgba(10,14,22,.72);--news-panel2:rgba(10,14,22,.86);
@@ -87,11 +90,11 @@
 
     .controlWrap{position:relative;z-index:1}
 
-    /* ✅ FIX: el header YA NO es sticky (no se queda pegado / no “acompaña” al scroll) */
+    /* ✅ FIX: el header YA NO es sticky */
     .controlHeader{
-      position:relative; /* antes: sticky */
-      top:auto;          /* antes: top:0 */
-      z-index:2;         /* no hace falta 5 si no es sticky */
+      position:relative;
+      top:auto;
+      z-index:2;
       background:linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
       border:1px solid var(--news-stroke);box-shadow:var(--news-glow);
       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);

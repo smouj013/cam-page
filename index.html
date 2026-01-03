@@ -57,21 +57,28 @@
 
   <!-- HARDEN: layers + ticker SIEMPRE por encima -->
   <style>
-    #stage{isolation:isolate}
+    html,body{height:100%}
+    body{margin:0}
+
+    #stage{isolation:isolate; position:relative; overflow:hidden}
     #stage .layer{position:absolute;inset:0}
     #stage .layer-media{z-index:1}
-    #fallback{z-index:5}
+    #fallback{z-index:5; pointer-events:auto}
     #stage .layer-ui{z-index:10}
+
     /* ticker fixed fuera de stacking/overflow */
     #rlcNewsTicker{
       position:fixed!important;
       left:10px!important;right:10px!important;
       top:var(--rlcTickerTop,10px)!important;
       z-index:2147483647!important;
+      pointer-events:none; /* ✅ no bloquea clicks */
     }
+
     /* placeholder catálogo */
     #rlcCatalog{position:absolute;inset:0;z-index:2;display:none;pointer-events:none}
-    #rlcCatalog.on{display:block}
+    #rlcCatalog.on{display:block;pointer-events:auto} /* ✅ clickable solo ON */
+
     /* countdown mínimo */
     #rlcCountdown{
       position:absolute;z-index:50;
