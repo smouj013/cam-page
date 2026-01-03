@@ -349,23 +349,33 @@
 
     function ensureUI() {
       let root = qs("#rlcNewsTicker");
-      if (root) return root;
 
-      root = document.createElement("div");
-      root.id = "rlcNewsTicker";
-      root.setAttribute("role", "region");
-      root.setAttribute("aria-label", "Ticker de noticias");
+      // crea si no existe
+      if (!root) {
+        root = document.createElement("div");
+        root.id = "rlcNewsTicker";
+        document.body.appendChild(root);
+      }
 
-      root.innerHTML = `
-        <div class="tickerInner">
-          <div class="tickerBadge"><span id="rlcNewsTickerLabel"></span></div>
-          <div class="tickerText">
-            <div class="tickerMarquee" id="rlcNewsMarquee" aria-live="polite"></div>
+      // ✅ repair: si existe pero no tiene markup, lo inyectamos
+      const needs =
+        !qs(".tickerInner", root) ||
+        !qs("#rlcNewsMarquee", root) ||
+        !qs("#rlcNewsTickerLabel", root);
+
+      if (needs) {
+        root.setAttribute("role", "region");
+        root.setAttribute("aria-label", "Ticker de noticias");
+        root.innerHTML = `
+          <div class="tickerInner">
+            <div class="tickerBadge"><span id="rlcNewsTickerLabel"></span></div>
+            <div class="tickerText">
+              <div class="tickerMarquee" id="rlcNewsMarquee" aria-live="polite"></div>
+            </div>
           </div>
-        </div>
-      `.trim();
+        `.trim();
+      }
 
-      document.body.appendChild(root);
       return root;
     }
 
@@ -373,6 +383,10 @@
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
+
+      // ✅ hard hide (por si tu CSS no define .hidden)
+      root.style.display = on ? "" : "none";
+
       requestLayoutSync();
     }
 
@@ -1005,23 +1019,33 @@
 
     function ensureUI() {
       let root = qs("#rlcEconTicker");
-      if (root) return root;
 
-      root = document.createElement("div");
-      root.id = "rlcEconTicker";
-      root.setAttribute("role", "region");
-      root.setAttribute("aria-label", "Ticker económico");
+      // crea si no existe
+      if (!root) {
+        root = document.createElement("div");
+        root.id = "rlcEconTicker";
+        document.body.appendChild(root);
+      }
 
-      root.innerHTML = `
-        <div class="tickerInner">
-          <div class="tickerBadge"><span id="rlcEconTickerLabel">MARKETS · MERCADOS</span></div>
-          <div class="tickerText">
-            <div class="tickerMarquee" id="rlcEconMarquee" aria-live="polite"></div>
+      // ✅ repair: si existe pero no tiene markup, lo inyectamos
+      const needs =
+        !qs(".tickerInner", root) ||
+        !qs("#rlcEconMarquee", root) ||
+        !qs("#rlcEconTickerLabel", root);
+
+      if (needs) {
+        root.setAttribute("role", "region");
+        root.setAttribute("aria-label", "Ticker económico");
+        root.innerHTML = `
+          <div class="tickerInner">
+            <div class="tickerBadge"><span id="rlcEconTickerLabel">MARKETS · MERCADOS</span></div>
+            <div class="tickerText">
+              <div class="tickerMarquee" id="rlcEconMarquee" aria-live="polite"></div>
+            </div>
           </div>
-        </div>
-      `.trim();
+        `.trim();
+      }
 
-      document.body.appendChild(root);
       return root;
     }
 
@@ -1029,6 +1053,10 @@
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
+
+      // ✅ hard hide (por si tu CSS no define .hidden)
+      root.style.display = on ? "" : "none";
+
       requestLayoutSync();
     }
 
@@ -1534,6 +1562,13 @@
       newsTopPx: n.topPx ?? 10,
       econTopPx: e.topPx ?? 10
     });
+
+    // fallback top: si tu CSS no usa --rlcNewsTop/--rlcEconTop, aquí lo garantizamos
+    const nEl = qs("#rlcNewsTicker");
+    if (nEl) nEl.style.top = "var(--rlcNewsTop, 10px)";
+    const eEl = qs("#rlcEconTicker");
+    if (eEl) eEl.style.top = "var(--rlcEconTop, 56px)";
+    
   }
 
   // ───────────────────────── Message routing

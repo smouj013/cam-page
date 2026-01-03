@@ -21,8 +21,10 @@
       try{
         const V = String(window.APP_VERSION || "");
         if(!V) return;
+
         const K = "rlc_app_version_seen_v1";
         const prev = (() => { try { return localStorage.getItem(K) || ""; } catch(_) { return ""; } })();
+
         if(prev !== V){
           try { localStorage.setItem(K, V); } catch(_){}
           const u = new URL(location.href);
@@ -32,8 +34,11 @@
             return;
           }
         }
+
         if("serviceWorker" in navigator){
-          navigator.serviceWorker.getRegistration().then(reg => { try{ reg && reg.update && reg.update(); }catch(_){}}).catch(()=>{});
+          navigator.serviceWorker.getRegistration()
+            .then(reg => { try{ reg && reg.update && reg.update(); }catch(_){}})
+            .catch(()=>{});
         }
       }catch(_){}
     })();
@@ -48,6 +53,7 @@
       try{
         const u = new URL(location.href);
         if(!u.searchParams.has("repair")) return;
+
         const go = async () => {
           try{
             if("serviceWorker" in navigator){
@@ -63,10 +69,12 @@
           }catch(_){}
           try{ localStorage.clear(); }catch(_){}
           try{ sessionStorage.clear(); }catch(_){}
+
           u.searchParams.delete("repair");
           u.searchParams.set("v", window.APP_VERSION || "repair");
           location.replace(u.toString());
         };
+
         go();
       }catch(_){}
     })();
@@ -115,7 +123,7 @@
 
     .controlWrap{position:relative;z-index:1}
 
-    /* ✅ FIX: el header YA NO es sticky */
+    /* ✅ Header NO sticky */
     .controlHeader{
       position:relative;
       top:auto;

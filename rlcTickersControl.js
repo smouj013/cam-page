@@ -1,11 +1,9 @@
-/* rlcTickersControl.js — RLC Unified Tickers Control v2.1.0
-   ✅ Unifica:
-      - newsTickerControl.js
-      - econTickerControl.js
-   ✅ Solo para control.html
+/* rlcTickersControl.js — RLC Unified Tickers Control v2.2.0
+   ✅ Unifica NEWS + ECON (solo control.html)
    ✅ Storage por key + legacy/base
    ✅ BroadcastChannel namespaced + legacy + postMessage fallback
-   ✅ Inyecta cards si faltan (no rompe tu Control Room)
+   ✅ Inyecta cards si faltan + REPARA si existen incompletas (no rompe tu Control Room)
+   ✅ Update-aware singleton: si hay versión previa cargada, se destruye y se aplica la nueva
 */
 
 (() => {
@@ -13,11 +11,21 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_CONTROL_LOADED_V210";
-  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+  // ───────────────────────── Update-aware singleton
+  const INSTANCE_KEY = "__RLC_TICKERS_CONTROL_INSTANCE";
+  try {
+    if (g[INSTANCE_KEY] && typeof g[INSTANCE_KEY].destroy === "function") {
+      g[INSTANCE_KEY].destroy();
+    }
+  } catch (_) {}
+
+  const instance = {
+    version: "2.2.0",
+    destroy: () => {}
+  };
+  try { g[INSTANCE_KEY] = instance; } catch (_) {}
 
   const BUS_BASE = "rlc_bus_v1";
-
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
@@ -34,8 +42,35 @@
   const KEY = P.key;
 
   const BUS_NS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+
+  // Broadcast channels
   const bcNs = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_NS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_BASE) : null;
+
+  // Cleanup refs
+  const _cleanup = {
+    listeners: [],
+    intervals: [],
+    observers: []
+  };
+  function on(el, ev, fn, opts) {
+    if (!el) return;
+    el.addEventListener(ev, fn, opts);
+    _cleanup.listeners.push(() => el.removeEventListener(ev, fn, opts));
+  }
+  function onWin(ev, fn, opts) { on(window, ev, fn, opts); }
+
+  // destroy
+  instance.destroy = () => {
+    try { _cleanup.listeners.forEach(fn => fn()); } catch (_) {}
+    try { _cleanup.intervals.forEach(id => clearInterval(id)); } catch (_) {}
+    try { _cleanup.observers.forEach(o => { try { o.disconnect(); } catch (_) {} }); } catch (_) {}
+
+    try { if (bcNs) bcNs.close(); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.close(); } catch (_) {}
+
+    try { if (g[INSTANCE_KEY] === instance) delete g[INSTANCE_KEY]; } catch (_) {}
+  };
 
   // ───────────────────────── Shared UI styles
   function ensureCtlStyles() {
@@ -79,7 +114,31 @@
   }
 
   function pickGrid() {
-    return qs(".controlGrid") || qs(".control-grid") || qs("main .controlGrid") || qs("main") || document.body;
+    return (
+      qs(".controlGrid") ||
+      qs(".control-grid") ||
+      qs("main .controlGrid") ||
+      qs("main") ||
+      document.body
+    );
+  }
+
+  function mountCard(cardEl, { afterId = "" } = {}) {
+    const grid = pickGrid();
+    if (!grid || !cardEl) return;
+
+    // si ya está dentro, no hacemos nada
+    if (cardEl.parentElement === grid) return;
+
+    // si quieres que ECON vaya después del NEWS
+    if (afterId) {
+      const after = qs(`#${afterId}`, grid);
+      if (after && after.parentElement === grid) {
+        after.insertAdjacentElement("afterend", cardEl);
+        return;
+      }
+    }
+    grid.appendChild(cardEl);
   }
 
   async function copyToClipboard(text) {
@@ -153,10 +212,10 @@
 
     const DEFAULTS = {
       enabled: true,
-      lang: "auto",           // auto|es|en
-      speedPxPerSec: 55,      // 20..140
-      refreshMins: 12,        // 3..60
-      topPx: 10,              // 0..120
+      lang: "auto",
+      speedPxPerSec: 55,
+      refreshMins: 12,
+      topPx: 10,
       hideOnVote: true,
       timespan: "1d",
       bilingual: true,
@@ -207,16 +266,8 @@
       return c;
     }
 
-    function ensurePanel() {
-      if (qs("#ctlTickerApply") && qs("#ctlTickerOn")) return;
-
-      ensureCtlStyles();
-
-      const grid = pickGrid();
-      const card = document.createElement("div");
-      card.className = "card rlcCtlCard";
-      card.id = "ctlTickerCard";
-      card.innerHTML = `
+    function renderCardHtml() {
+      return `
         <div class="rlcCtlHeader">
           <h3>NEWS TICKER</h3>
           <div class="pill mono" id="ctlTickerStatus">Ticker: —</div>
@@ -293,8 +344,22 @@
           <button class="rlcCtlBtn" id="ctlTickerCopyUrl">Copiar URL player</button>
         </div>
       `.trim();
+    }
 
-      grid.appendChild(card);
+    function ensurePanel() {
+      ensureCtlStyles();
+
+      // ✅ repair-mode: si existe el card pero está incompleto, lo reconstruimos
+      let card = qs("#ctlTickerCard");
+      const okMarkup = !!(qs("#ctlTickerApply") && qs("#ctlTickerOn"));
+      if (!card) {
+        card = document.createElement("div");
+        card.className = "card rlcCtlCard";
+        card.id = "ctlTickerCard";
+      }
+      if (!okMarkup) card.innerHTML = renderCardHtml();
+
+      mountCard(card);
     }
 
     function setStatus(text, ok = true) {
@@ -325,7 +390,7 @@
     }
 
     function collectCfgFromUI() {
-      const on = qs("#ctlTickerOn")?.value || "on";
+      const onv = qs("#ctlTickerOn")?.value || "on";
       const lang = qs("#ctlTickerLang")?.value || "auto";
       const speed = num(qs("#ctlTickerSpeed")?.value, DEFAULTS.speedPxPerSec);
       const refresh = num(qs("#ctlTickerRefresh")?.value, DEFAULTS.refreshMins);
@@ -338,7 +403,7 @@
       const sources = normalizeSources(qs("#ctlTickerSources")?.value || "");
 
       return normalizeCfg({
-        enabled: (on !== "off"),
+        enabled: (onv !== "off"),
         lang,
         speedPxPerSec: speed,
         refreshMins: refresh,
@@ -386,9 +451,8 @@
         applyUIFromCfg(cfg);
       };
 
-      qs("#ctlTickerApply").addEventListener("click", () => doApply(true));
-
-      qs("#ctlTickerReset").addEventListener("click", () => {
+      on(qs("#ctlTickerApply"), "click", () => doApply(true));
+      on(qs("#ctlTickerReset"), "click", () => {
         clearCfg(CFG_KEY_NS, CFG_KEY_LEGACY);
         const cfg = normalizeCfg(DEFAULTS);
         writeCfg(CFG_KEY_NS, CFG_KEY_LEGACY, cfg);
@@ -396,7 +460,7 @@
         applyUIFromCfg(cfg);
       });
 
-      qs("#ctlTickerCopyUrl").addEventListener("click", async () => {
+      on(qs("#ctlTickerCopyUrl"), "click", async () => {
         const cfg = collectCfgFromUI();
         const url = buildPlayerUrlWithTicker(cfg);
         const ok = await copyToClipboard(url);
@@ -416,21 +480,20 @@
         "#ctlTickerTranslateMax",
         "#ctlTickerSources"
       ];
-
       const applyDebounced = debounce(() => doApply(true), 160);
 
       for (const sel of liveEls) {
         const el = qs(sel);
         if (!el) continue;
 
-        el.addEventListener("change", () => doApply(true));
-        el.addEventListener("input", () => {
+        on(el, "change", () => doApply(true));
+        on(el, "input", () => {
           const tag = (el.tagName || "").toUpperCase();
           if (tag === "INPUT" || tag === "TEXTAREA") applyDebounced();
         });
       }
 
-      window.addEventListener("storage", (e) => {
+      onWin("storage", (e) => {
         if (!e || !e.key) return;
         if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
           const c = readCfg(CFG_KEY_NS, CFG_KEY_LEGACY);
@@ -455,11 +518,11 @@
 
     const DEFAULTS = {
       enabled: true,
-      speedPxPerSec: 60,   // 20..140
-      refreshMins: 2,      // 1..20
-      topPx: 10,           // 0..120
+      speedPxPerSec: 60,
+      refreshMins: 2,
+      topPx: 10,
       hideOnVote: true,
-      mode: "daily",       // daily|sinceLast
+      mode: "daily",
       showClocks: true,
       clocks: [
         { label: "MAD", country: "ES", tz: "Europe/Madrid" },
@@ -532,16 +595,8 @@
       return c;
     }
 
-    function ensurePanel() {
-      if (qs("#ctlEconApply") && qs("#ctlEconOn")) return;
-
-      ensureCtlStyles();
-
-      const grid = pickGrid();
-      const card = document.createElement("div");
-      card.className = "card rlcCtlCard";
-      card.id = "ctlEconCard";
-      card.innerHTML = `
+    function renderCardHtml() {
+      return `
         <div class="rlcCtlHeader">
           <h3>ECON TICKER</h3>
           <div class="pill mono" id="ctlEconStatus">Econ: —</div>
@@ -612,8 +667,22 @@
           <button class="rlcCtlBtn" id="ctlEconCopyUrl">Copiar URL player</button>
         </div>
       `.trim();
+    }
 
-      grid.appendChild(card);
+    function ensurePanel() {
+      ensureCtlStyles();
+
+      let card = qs("#ctlEconCard");
+      const okMarkup = !!(qs("#ctlEconApply") && qs("#ctlEconOn"));
+      if (!card) {
+        card = document.createElement("div");
+        card.className = "card rlcCtlCard";
+        card.id = "ctlEconCard";
+      }
+      if (!okMarkup) card.innerHTML = renderCardHtml();
+
+      // ✅ montamos después del NEWS card para que el orden sea pro
+      mountCard(card, { afterId: "ctlTickerCard" });
     }
 
     function setStatus(text, ok = true) {
@@ -643,14 +712,11 @@
     }
 
     function safeJsonParse(s) {
-      try {
-        const o = JSON.parse(String(s || ""));
-        return o;
-      } catch (_) { return null; }
+      try { return JSON.parse(String(s || "")); } catch (_) { return null; }
     }
 
     function collectCfgFromUI() {
-      const on = qs("#ctlEconOn")?.value || "on";
+      const onv = qs("#ctlEconOn")?.value || "on";
       const speed = num(qs("#ctlEconSpeed")?.value, DEFAULTS.speedPxPerSec);
       const refresh = num(qs("#ctlEconRefresh")?.value, DEFAULTS.refreshMins);
       const topPx = num(qs("#ctlEconTop")?.value, DEFAULTS.topPx);
@@ -673,7 +739,7 @@
       }
 
       const cfg = normalizeCfg({
-        enabled: (on !== "off"),
+        enabled: (onv !== "off"),
         speedPxPerSec: speed,
         refreshMins: refresh,
         topPx,
@@ -684,7 +750,6 @@
         ...(Array.isArray(clocks) ? { clocks } : {})
       });
 
-      // Si JSON inválido, avisamos (sin romper)
       if (itemsTa && itemsTa.value.trim() && !Array.isArray(items)) {
         setStatus("Items JSON inválido (usa array) — manteniendo último válido", false);
       }
@@ -723,13 +788,11 @@
         const cfg = collectCfgFromUI();
         if (persist) writeCfg(CFG_KEY_NS, CFG_KEY_LEGACY, cfg);
         sendMsg("ECON_CFG", cfg);
-        // si antes mostramos error por JSON, refrescamos status “normal” al instante
         applyUIFromCfg(cfg);
       };
 
-      qs("#ctlEconApply").addEventListener("click", () => doApply(true));
-
-      qs("#ctlEconReset").addEventListener("click", () => {
+      on(qs("#ctlEconApply"), "click", () => doApply(true));
+      on(qs("#ctlEconReset"), "click", () => {
         clearCfg(CFG_KEY_NS, CFG_KEY_LEGACY);
         const cfg = normalizeCfg(DEFAULTS);
         writeCfg(CFG_KEY_NS, CFG_KEY_LEGACY, cfg);
@@ -737,7 +800,7 @@
         applyUIFromCfg(cfg);
       });
 
-      qs("#ctlEconCopyUrl").addEventListener("click", async () => {
+      on(qs("#ctlEconCopyUrl"), "click", async () => {
         const cfg = collectCfgFromUI();
         const url = buildPlayerUrlWithEcon(cfg);
         const ok = await copyToClipboard(url);
@@ -763,11 +826,11 @@
         const el = qs(sel);
         if (!el) continue;
 
-        el.addEventListener("change", () => doApply(true));
-        el.addEventListener("input", () => applyDebounced());
+        on(el, "change", () => doApply(true));
+        on(el, "input", () => applyDebounced());
       }
 
-      window.addEventListener("storage", (e) => {
+      onWin("storage", (e) => {
         if (!e || !e.key) return;
         if (e.key === CFG_KEY_NS || e.key === CFG_KEY_LEGACY) {
           const c = readCfg(CFG_KEY_NS, CFG_KEY_LEGACY);
@@ -781,10 +844,10 @@
     return { boot };
   })();
 
-  // ───────────────────────── boot
+  // ───────────────────────── boot (hard safe: si uno falla, el otro sigue)
   function boot() {
-    NEWS.boot();
-    ECON.boot();
+    try { NEWS.boot(); } catch (e) { console.warn("[RLC:TICKERS:CTL] NEWS boot failed", e); }
+    try { ECON.boot(); } catch (e) { console.warn("[RLC:TICKERS:CTL] ECON boot failed", e); }
   }
 
   if (document.readyState === "loading") {

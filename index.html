@@ -21,8 +21,10 @@
       try{
         const V = String(window.APP_VERSION || "");
         if(!V) return;
+
         const K = "rlc_app_version_seen_v1";
         const prev = (() => { try { return localStorage.getItem(K) || ""; } catch(_) { return ""; } })();
+
         if(prev !== V){
           try { localStorage.setItem(K, V); } catch(_){}
           const u = new URL(location.href);
@@ -32,8 +34,11 @@
             return;
           }
         }
+
         if("serviceWorker" in navigator){
-          navigator.serviceWorker.getRegistration().then(reg => { try{ reg && reg.update && reg.update(); }catch(_){}}).catch(()=>{});
+          navigator.serviceWorker.getRegistration()
+            .then(reg => { try{ reg && reg.update && reg.update(); }catch(_){}})
+            .catch(()=>{});
         }
       }catch(_){}
     })();
@@ -48,6 +53,7 @@
       try{
         const u = new URL(location.href);
         if(!u.searchParams.has("repair")) return;
+
         const go = async () => {
           try{
             if("serviceWorker" in navigator){
@@ -63,10 +69,12 @@
           }catch(_){}
           try{ localStorage.clear(); }catch(_){}
           try{ sessionStorage.clear(); }catch(_){}
+
           u.searchParams.delete("repair");
           u.searchParams.set("v", window.APP_VERSION || "repair");
           location.replace(u.toString());
         };
+
         go();
       }catch(_){}
     })();
@@ -84,6 +92,7 @@
   <style>
     html,body{height:100%}
     body{margin:0}
+
     /* 🔒 Alturas robustas (Opera GX / móviles) */
     body{min-height:100vh; min-height:100svh; min-height:100dvh; overflow:hidden; overscroll-behavior:none;}
 
@@ -128,15 +137,18 @@
     #rlcCatalog{position:absolute;inset:0;z-index:2;display:none;pointer-events:none}
     #rlcCatalog.on{display:block;pointer-events:auto}
 
-    /* countdown mínimo */
+    /* countdown mínimo (con fallbacks de vars para no romper si styles.css cambia) */
     #rlcCountdown{
       position:absolute;z-index:50;
       top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset, 0px));
       right:max(14px, env(safe-area-inset-right));
       display:flex;flex-direction:column;gap:6px;
       padding:10px 12px;border-radius:14px;
-      background:linear-gradient(180deg, var(--news-bg-top), var(--news-bg-bot));
-      border:1px solid var(--stroke);
+      background:linear-gradient(180deg,
+        var(--news-bg-top, rgba(10,14,22,.72)),
+        var(--news-bg-bot, rgba(10,14,22,.86))
+      );
+      border:1px solid var(--stroke, rgba(255,255,255,.12));
       backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
       box-shadow:0 18px 55px rgba(0,0,0,.55);
       color:rgba(255,255,255,.94);
@@ -144,9 +156,21 @@
       overflow:hidden;pointer-events:none;
     }
     #rlcCountdown.hidden{display:none}
-    #rlcCountdown .lbl{font:950 12px/1 ui-sans-serif,system-ui;letter-spacing:.14em;opacity:.92;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:8px}
-    #rlcCountdown .lbl::before{content:"";width:8px;height:8px;border-radius:999px;background:var(--news-red);box-shadow:0 0 0 3px rgba(255,55,95,.18),0 0 16px rgba(255,55,95,.45)}
-    #rlcCountdown .time{font:950 20px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+    #rlcCountdown .lbl{
+      font:950 12px/1 ui-sans-serif,system-ui;
+      letter-spacing:.14em;opacity:.92;text-transform:uppercase;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      display:flex;align-items:center;gap:8px
+    }
+    #rlcCountdown .lbl::before{
+      content:"";width:8px;height:8px;border-radius:999px;
+      background:var(--news-red, #ff375f);
+      box-shadow:0 0 0 3px rgba(255,55,95,.18),0 0 16px rgba(255,55,95,.45)
+    }
+    #rlcCountdown .time{
+      font:950 20px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      letter-spacing:.02em;font-variant-numeric:tabular-nums
+    }
     #rlcCountdown.tr{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px));right:max(14px, env(safe-area-inset-right));left:auto;bottom:auto}
     #rlcCountdown.tl{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px));left:max(14px, env(safe-area-inset-left));right:auto;bottom:auto}
     #rlcCountdown.br{bottom:max(14px, env(safe-area-inset-bottom));right:max(14px, env(safe-area-inset-right));top:auto;left:auto}
@@ -397,19 +421,25 @@
       const DEFAULTS={enabled:false,label:"FIN DE AÑO",targetMs:0,targetIso:"",position:"tr",hideHudWhenCatalog:true};
 
       function readJson(key){
-        try{const raw=localStorage.getItem(key); if(!raw) return null; const obj=JSON.parse(raw);
+        try{
+          const raw=localStorage.getItem(key);
+          if(!raw) return null;
+          const obj=JSON.parse(raw);
           return (obj&&typeof obj==="object")?obj:null;
         }catch(_){return null}
       }
+
       function normalizeCfg(inCfg){
         const c=Object.assign({},DEFAULTS,inCfg||{});
         c.enabled=(c.enabled===true);
         c.label=safeStr(c.label||DEFAULTS.label).slice(0,60)||DEFAULTS.label;
         c.position=(c.position==="tl"||c.position==="tr"||c.position==="bl"||c.position==="br")?c.position:"tr";
         c.hideHudWhenCatalog=(c.hideHudWhenCatalog!==false);
+
         const ms=(typeof c.targetMs==="number")?c.targetMs:parseInt(String(c.targetMs||"0"),10);
         c.targetMs=Number.isFinite(ms)?Math.max(0,ms):0;
         c.targetIso=safeStr(c.targetIso||"");
+
         if(!c.targetMs && safeStr(c.targetIso).match(/^\d{10,13}$/)){
           const n=parseInt(c.targetIso,10);
           if(Number.isFinite(n)) c.targetMs=(String(n).length===10)?(n*1000):n;
@@ -417,9 +447,11 @@
         }
         return c;
       }
+
       function cfgFromUrlParams(){
         const on=(P.countdown==="1"||P.countdown==="true");
         if(!on && !P.countdownTo && !P.countdownLabel) return null;
+
         let targetMs=0;
         const rawTo=safeStr(P.countdownTo||"");
         if(rawTo){
@@ -427,36 +459,56 @@
             const n=parseInt(rawTo,10);
             if(Number.isFinite(n)) targetMs=(String(n).length===10)?(n*1000):n;
           }else{
-            const d=new Date(rawTo);const ms=d.getTime();
+            const d=new Date(rawTo);
+            const ms=d.getTime();
             if(Number.isFinite(ms)&&ms>0) targetMs=ms;
           }
         }
         return normalizeCfg({enabled:on||!!targetMs,label:P.countdownLabel||DEFAULTS.label,targetMs,position:P.countdownPos||"tr"});
       }
+
       function loadCfg(){
         const stored=readJson(CD_KEY)||readJson(CD_KEY_LEGACY);
         const urlCfg=cfgFromUrlParams();
         return normalizeCfg(stored||urlCfg||DEFAULTS);
       }
+
       let CFG=loadCfg();
       const root=qs("#rlcCountdown"), elLbl=qs("#rlcCountdownLabel"), elTime=qs("#rlcCountdownTime"), hud=qs("#hud");
-      function setPos(pos){if(!root) return; root.classList.remove("tr","tl","br","bl"); root.classList.add(pos||"tr");}
-      function show(on){if(!root) return; root.classList.toggle("hidden",!on);}
-      function nextNewYearLocalMs(){try{const now=new Date();const y=now.getFullYear()+1;return new Date(y,0,1,0,0,0,0).getTime();}catch(_){return 0}}
+
+      function setPos(pos){
+        if(!root) return;
+        root.classList.remove("tr","tl","br","bl");
+        root.classList.add(pos||"tr");
+      }
+
+      function show(on){
+        if(!root) return;
+        root.classList.toggle("hidden",!on);
+      }
+
+      function nextNewYearLocalMs(){
+        try{const now=new Date();const y=now.getFullYear()+1;return new Date(y,0,1,0,0,0,0).getTime();}catch(_){return 0}
+      }
+
       let targetMs=0;
 
       function applyCfg(cfg){
         CFG=normalizeCfg(cfg);
         if(elLbl) elLbl.textContent=CFG.label||DEFAULTS.label;
         setPos(CFG.position||"tr");
+
         targetMs=CFG.targetMs||0;
         if(!targetMs && CFG.targetIso){
-          const d=new Date(CFG.targetIso);const ms=d.getTime();
+          const d=new Date(CFG.targetIso);
+          const ms=d.getTime();
           if(Number.isFinite(ms)&&ms>0) targetMs=ms;
         }
         if(!targetMs && CFG.enabled) targetMs=nextNewYearLocalMs();
+
         show(!!(CFG.enabled && targetMs>0));
       }
+
       function fmtRemain(ms){
         ms=Math.max(0,ms|0);
         const sec=(ms/1000)|0;
@@ -468,11 +520,21 @@
         if(d>0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
         return `${pad(h)}:${pad(m)}:${pad(s)}`;
       }
-      function isCatalogOn(){const c=qs("#rlcCatalog");return !!(c && c.classList.contains("on"));}
+
+      function isCatalogOn(){
+        const c=qs("#rlcCatalog");
+        return !!(c && c.classList.contains("on"));
+      }
+
       function tick(){
-        try{if(hud && CFG.hideHudWhenCatalog){hud.style.display=isCatalogOn()?"none":"";}}catch(_){}
+        try{
+          if(hud && CFG.hideHudWhenCatalog){
+            hud.style.display=isCatalogOn()?"none":"";
+          }
+        }catch(_){}
         if(!root || root.classList.contains("hidden")) return;
         if(!targetMs) return;
+
         const ms=targetMs-Date.now();
         if(ms<=0){
           if(elTime) elTime.textContent="🎉 00:00:00";
@@ -481,8 +543,10 @@
         }
         if(elTime) elTime.textContent=fmtRemain(ms);
       }
+
       function onBusMessage(msg,isMain){
         if(!msg||typeof msg!=="object") return;
+
         if(msg.type==="COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg==="object"){
           if(!keyOk(msg,isMain)) return;
           applyCfg(msg.cfg);return;
@@ -492,11 +556,21 @@
           applyCfg(msg.payload);return;
         }
       }
+
       if(bcMain) bcMain.onmessage=(ev)=>onBusMessage(ev?.data,true);
       if(bcLegacy) bcLegacy.onmessage=(ev)=>onBusMessage(ev?.data,false);
-      window.addEventListener("storage",(e)=>{if(!e||!e.key) return; if(e.key===CD_KEY||e.key===CD_KEY_LEGACY) applyCfg(loadCfg());});
 
-      function boot(){applyCfg(loadCfg());tick();setInterval(tick,250);}
+      window.addEventListener("storage",(e)=>{
+        if(!e||!e.key) return;
+        if(e.key===CD_KEY||e.key===CD_KEY_LEGACY) applyCfg(loadCfg());
+      });
+
+      function boot(){
+        applyCfg(loadCfg());
+        tick();
+        setInterval(tick,250);
+      }
+
       if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot,{once:true});
       else boot();
     })();
