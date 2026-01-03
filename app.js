@@ -1,20 +1,28 @@
-/* app.js — RLC Player v2.2.5 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST)
+/* app.js — RLC Player v2.3.4 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE)
    ✅ FIX CLAVE (mantenido):
       - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
       - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
-      - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead)
+      - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead) (+ PRE si voteUi > lead+window)
       - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
       - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
-   ✅ Mejora v2.2.5:
+   ✅ Mejora v2.3.4:
       - parseParams más robusto (bools tipo "true/false/1/0")
       - setShown añade aria-hidden y refuerzo de display:none
       - guardas extra en filtros / listas vacías
+      - voteUi ahora soporta fase PRE (solo auto). Por defecto: comportamiento idéntico (PRE=0).
+   ✅ Compat UI (HUD footer):
+      - Space: play/pause
+      - N: siguiente
+      - P: anterior
+      - H: ocultar/mostrar HUD
+      - I: detalles (collapse/expand)
+      - C: chat on/off
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V225_PRO";
+  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V234_PRO";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -121,7 +129,7 @@
       seed: u.searchParams.get("seed") || "",
       autoskip: parseBoolParam(u.searchParams.get("autoskip") ?? "1", true),
       mode: (u.searchParams.get("mode") || "").toLowerCase(),
-      debug: (u.searchParams.get("debug") === "1"),
+      debug: parseBoolParam(u.searchParams.get("debug"), false) || (u.searchParams.get("debug") === "1"),
       key,
       allowLegacy,
 
@@ -142,7 +150,10 @@
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
 
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
+
+      // voteUi: segundos extra de UI ANTES del lead (solo en auto si > lead+window; si 0 => auto)
       voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
+
       stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
 
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
@@ -1095,26 +1106,33 @@
 
   let voteWindowCfgSec = P.voteWindow | 0;
   let voteAtCfgSec = P.voteAt | 0;      // remaining cuando empieza el voto real
-  let voteLeadCfgSec = P.voteLead | 0;  // pre-warning
-  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : (voteLeadCfgSec + voteWindowCfgSec);
+  let voteLeadCfgSec = P.voteLead | 0;  // pre-warning (lead)
+  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : 0; // 0 => auto (lead+window)
   let stayMins = P.stayMins | 0;
 
+  // Segment schedule (auto)
   let voteWindowSegSec = voteWindowCfgSec;
-  let voteAtSegSec = voteAtCfgSec;         // trigger (lead start) = voteAt + lead
+  let voteAtSegSec = voteAtCfgSec;         // trigger UI (lead/pre) por remaining
   let voteAtSegBaseSec = voteAtCfgSec;     // base (vote start)
   let voteLeadSegSec = voteLeadCfgSec;
-  let voteUiSegSec = voteUiCfgSec;
+  let voteUiSegSec = 0;                    // ui total (pre+lead+vote) calculado
+  let votePreSegSec = 0;                   // pre extra calculado
 
+  // Active session
   let voteWindowActiveSec = voteWindowCfgSec;
   let voteLeadActiveSec = voteLeadCfgSec;
+  let voteUiActiveSec = 0;
+  let votePreActiveSec = 0;
 
   let voteCmdStr = String(P.voteCmd || "!next,!cam|!stay,!keep").trim();
-  let cmdYes = new Set(["!next","!cam"]);
-  let cmdNo = new Set(["!stay","!keep"]);
+  let cmdYes = new Set(["!next", "!cam"]);
+  let cmdNo = new Set(["!stay", "!keep"]);
 
   let voteSessionActive = false;
-  let votePhase = "idle";
+  let votePhase = "idle"; // idle | pre | lead | vote
+  let preEndsAt = 0;
   let leadEndsAt = 0;
+  let voteStartsAt = 0;
   let voteEndsAt = 0;
 
   let votesYes = 0, votesNo = 0;
@@ -1127,15 +1145,17 @@
     const parts = voteCmdStr.split("|");
     const a = (parts[0] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
     const b = (parts[1] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-    cmdYes = new Set(a.length ? a : ["!next","!cam"]);
-    cmdNo = new Set(b.length ? b : ["!stay","!keep"]);
+    cmdYes = new Set(a.length ? a : ["!next", "!cam"]);
+    cmdNo = new Set(b.length ? b : ["!stay", "!keep"]);
   }
   parseVoteCmds(voteCmdStr);
 
   function voteReset() {
     voteSessionActive = false;
     votePhase = "idle";
+    preEndsAt = 0;
     leadEndsAt = 0;
+    voteStartsAt = 0;
     voteEndsAt = 0;
     votesYes = 0; votesNo = 0;
     voters = new Set();
@@ -1145,16 +1165,30 @@
   function recalcVoteScheduleForSegment(segTotalSec) {
     const total = clamp(segTotalSec | 0, 1, 120 * 60);
 
-    voteWindowSegSec = clamp(voteWindowCfgSec | 0, 5, 180);
+    // Base voteAt (remaining when vote really starts)
+    voteAtSegBaseSec = clamp(voteAtCfgSec | 0, 1, total);
+
+    // Lead fixed clamp
     voteLeadSegSec = clamp(voteLeadCfgSec | 0, 0, 30);
 
-    voteAtSegBaseSec = clamp(voteAtCfgSec | 0, 1, total);
-    voteAtSegSec = clamp((voteAtSegBaseSec + voteLeadSegSec) | 0, 1, total);
+    // Window effective in auto cannot exceed voteAt base (para no “cortar”)
+    const wCfg = clamp(voteWindowCfgSec | 0, 5, 180);
+    voteWindowSegSec = clamp(Math.min(wCfg, voteAtSegBaseSec), 5, 180);
 
-    voteUiSegSec = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : (voteLeadSegSec + voteWindowSegSec);
+    // UI total: 0 => auto = lead + windowEffective
+    const minUi = (voteLeadSegSec + voteWindowSegSec) | 0;
+    const uiCfg = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : 0;
+    voteUiSegSec = (uiCfg > 0) ? Math.max(uiCfg, minUi) : minUi;
+
+    // PRE extra = UI - (lead + window)
+    votePreSegSec = Math.max(0, (voteUiSegSec - minUi) | 0);
+
+    // Trigger por remaining: baseAt + lead + pre
+    voteAtSegSec = clamp((voteAtSegBaseSec + voteLeadSegSec + votePreSegSec) | 0, 1, total);
   }
 
-  function voteStartSequence(windowSec, leadSec) {
+  // uiSec: si >0 permite fase PRE (solo úsalo en auto). En manual pásalo como 0.
+  function voteStartSequence(windowSec, leadSec, uiSec = 0) {
     if (!voteEnabled || !twitchChannel) return;
 
     const w = clamp(windowSec | 0, 5, 180);
@@ -1163,21 +1197,58 @@
     voteWindowActiveSec = w;
     voteLeadActiveSec = lead;
 
+    // ui final: si uiSec<=0 => sin PRE (ui=lead+window)
+    const minUi = (lead + w) | 0;
+    let uiFinal = (uiSec | 0);
+    if (uiFinal <= 0) uiFinal = minUi;
+    uiFinal = clamp(uiFinal, 0, 300);
+    if (uiFinal < minUi) uiFinal = minUi;
+
+    const pre = Math.max(0, (uiFinal - minUi) | 0);
+
+    voteUiActiveSec = uiFinal;
+    votePreActiveSec = pre;
+
     votesYes = 0; votesNo = 0;
     voters = new Set();
-
     voteSessionActive = true;
+
+    const now = Date.now();
+
+    preEndsAt = 0;
+    leadEndsAt = 0;
+    voteStartsAt = 0;
+    voteEndsAt = 0;
+
+    if (pre > 0) {
+      votePhase = "pre";
+      preEndsAt = now + pre * 1000;
+
+      if (lead > 0) {
+        leadEndsAt = preEndsAt + lead * 1000;
+        voteStartsAt = leadEndsAt;
+      } else {
+        leadEndsAt = 0;
+        voteStartsAt = preEndsAt;
+      }
+
+      voteEndsAt = voteStartsAt + w * 1000;
+      renderVote();
+      return;
+    }
 
     if (lead > 0) {
       votePhase = "lead";
-      leadEndsAt = Date.now() + lead * 1000;
-      voteEndsAt = leadEndsAt + w * 1000;
-    } else {
-      votePhase = "vote";
-      leadEndsAt = 0;
-      voteEndsAt = Date.now() + w * 1000;
+      leadEndsAt = now + lead * 1000;
+      voteStartsAt = leadEndsAt;
+      voteEndsAt = voteStartsAt + w * 1000;
+      renderVote();
+      return;
     }
 
+    votePhase = "vote";
+    voteStartsAt = now;
+    voteEndsAt = now + w * 1000;
     renderVote();
   }
 
@@ -1212,10 +1283,21 @@
 
     const now = Date.now();
     const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
+    const no0 = [...cmdNo][0] || "!stay";
+
+    if (votePhase === "pre") {
+      const remToStart = Math.max(0, Math.ceil(((voteStartsAt || now) - now) / 1000));
+      if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remToStart);
+      if (voteHintEl) voteHintEl.textContent = `Votación pronto… (${yes0} / ${no0})`;
+      if (voteYesN) voteYesN.textContent = "0";
+      if (voteNoN) voteNoN.textContent = "0";
+      if (voteYesFill) voteYesFill.style.width = "0%";
+      if (voteNoFill) voteNoFill.style.width = "0%";
+      return;
+    }
 
     if (votePhase === "lead") {
-      const remLead = Math.max(0, Math.ceil((leadEndsAt - now) / 1000));
+      const remLead = Math.max(0, Math.ceil(((leadEndsAt || now) - now) / 1000));
       if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remLead);
       if (voteHintEl) voteHintEl.textContent = `Votación en… (${yes0} / ${no0})`;
       if (voteYesN) voteYesN.textContent = "0";
@@ -1225,7 +1307,7 @@
       return;
     }
 
-    const remVote = Math.max(0, Math.ceil((voteEndsAt - now) / 1000));
+    const remVote = Math.max(0, Math.ceil(((voteEndsAt || now) - now) / 1000));
     if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remVote);
     if (voteHintEl) voteHintEl.textContent = `Vota: ${yes0} o ${no0}`;
 
@@ -1265,10 +1347,12 @@
       callVoteCooldownUntil = now + REQUEST_COOLDOWN_MS;
 
       voteTriggeredForSegment = true;
-      voteStartSequence(voteWindowSegSec, 0);
+
+      // Chat-trigger: empieza VOTE ya (sin PRE), por defecto sin lead
+      voteStartSequence(voteWindowSegSec, 0, 0);
 
       const yes0 = [...cmdYes][0] || "!next";
-      const no0  = [...cmdNo][0]  || "!stay";
+      const no0 = [...cmdNo][0] || "!stay";
       botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSegSec}s`);
     }
   }
@@ -1335,7 +1419,7 @@
     const st = document.createElement("style");
     st.id = "rlcTagVoteStyles";
     st.textContent =
-      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none}" +
+      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none;display:none}" +
       ".rlcTagVoteCard{background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.12);border-radius:18px;box-shadow:0 16px 46px rgba(0,0,0,.40);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 14px}" +
       ".rlcTagVoteTop{display:flex;justify-content:space-between;align-items:center;gap:12px}.rlcTagVoteTitle{font-weight:900;font-size:13px;color:rgba(255,255,255,.95)}" +
       ".rlcTagVoteTime{font-weight:900;font-size:12px;color:rgba(255,255,255,.85)}.rlcTagVoteHint{margin-top:4px;font-size:12px;color:rgba(255,255,255,.78)}" +
@@ -1612,7 +1696,7 @@
     lastHelpAt = now;
 
     const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
+    const no0 = [...cmdNo][0] || "!stay";
     botSay(`🛰️ Comandos: !now · !help · Vota: ${yes0} / ${no0} · Pedir voto: !callvote (5) · TagVote: !tagvote (5) y luego !1 !2 !3`);
   }
 
@@ -1711,13 +1795,13 @@
     const start = el.volume;
     const end = clamp(+targetVol || 0, 0, 1);
     const dur = clamp(ms | 0, 0, 2000);
-    if (dur <= 0) { try { el.volume = end; } catch(_) {} return; }
+    if (dur <= 0) { try { el.volume = end; } catch (_) {} return; }
     const t0 = Date.now();
     const timer = setInterval(() => {
       const k = clamp((Date.now() - t0) / dur, 0, 1);
       const v = start + (end - start) * k;
-      try { el.volume = clamp(v, 0, 1); } catch(_) {}
-      if (k >= 1) { try { clearInterval(timer); } catch(_) {} }
+      try { el.volume = clamp(v, 0, 1); } catch (_) {}
+      if (k >= 1) { try { clearInterval(timer); } catch (_) {} }
     }, 40);
   }
 
@@ -1739,7 +1823,7 @@
     if (!bgmEnabled || !bgmList.length || !bgmEl) return;
     try {
       if (!bgmEl.src) bgmLoadTrack(bgmIdx);
-      try { bgmEl.volume = 0; } catch(_) {}
+      try { bgmEl.volume = 0; } catch (_) {}
       const p = bgmEl.play();
       if (p && typeof p.then === "function") await p;
       fadeAudioTo(bgmEl, bgmVol, 320);
@@ -1752,7 +1836,7 @@
     try {
       if (bgmEl) {
         fadeAudioTo(bgmEl, 0, 220);
-        setTimeout(() => { try { bgmEl.pause(); } catch(_) {} }, 240);
+        setTimeout(() => { try { bgmEl.pause(); } catch (_) {} }, 240);
       }
     } catch (_) {}
     bgmPlaying = false;
@@ -1994,7 +2078,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.5",
+      version: "2.3.4",
       playing,
       idx,
       total: cams.length,
@@ -2027,10 +2111,14 @@
         uiSec: voteUiCfgSec,
         stayMins,
         cmd: voteCmdStr,
+
         segWindowSec: voteWindowSegSec,
         segVoteAtSec: voteAtSegSec,
         segVoteAtBaseSec: voteAtSegBaseSec,
         segLeadSec: voteLeadSegSec,
+        segUiSec: voteUiSegSec,
+        segPreSec: votePreSegSec,
+
         sessionActive: voteSessionActive,
         phase: votePhase,
         yes: votesYes,
@@ -2151,7 +2239,7 @@
           if (payload.windowSec != null) voteWindowCfgSec = clamp(payload.windowSec | 0, 5, 180);
           if (payload.voteAtSec != null) voteAtCfgSec = clamp(payload.voteAtSec | 0, 5, 600);
           if (payload.leadSec != null) voteLeadCfgSec = clamp(payload.leadSec | 0, 0, 30);
-          if (payload.uiSec != null) voteUiCfgSec = clamp(payload.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
+          if (payload.uiSec != null) voteUiCfgSec = clamp(payload.uiSec | 0, 0, 300) || 0;
           if (payload.stayMins != null) stayMins = clamp(payload.stayMins | 0, 1, 120);
           if (payload.cmd != null) parseVoteCmds(String(payload.cmd || ""));
         } else {
@@ -2165,10 +2253,12 @@
 
       case "START_VOTE":
       case "VOTE_START": {
+        // Manual start: sin PRE por defecto (uiSec=0)
         voteTriggeredForSegment = true;
         const w = clamp((payload?.windowSec ?? voteWindowSegSec) | 0, 5, 180);
         const lead = clamp((payload?.leadSec ?? voteLeadSegSec) | 0, 0, 30);
-        voteStartSequence(w, lead);
+        const ui = (payload?.uiSec != null) ? clamp(payload.uiSec | 0, 0, 300) : 0;
+        voteStartSequence(w, lead, ui);
         postState({ reason: "vote_start" });
       } break;
 
@@ -2361,7 +2451,7 @@
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 3,
+        v: 4,
         ts: Date.now(),
         key: KEY || "",
         curId: cam.id || "",
@@ -2446,10 +2536,29 @@
     const t = (e.target && e.target.tagName) ? String(e.target.tagName).toLowerCase() : "";
     if (t === "input" || t === "textarea" || (e.target && e.target.isContentEditable)) return;
 
-    if (e.key === "ArrowRight") { e.preventDefault(); nextCam("key"); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); prevCam(); }
-    else if (e.key === " " || e.code === "Space") { e.preventDefault(); togglePlay(); }
-    else if (e.key.toLowerCase() === "h") { setHudHidden(!hud?.classList?.contains?.("hidden")); }
+    const k = String(e.key || "");
+    const low = k.toLowerCase();
+
+    if (k === "ArrowRight") { e.preventDefault(); nextCam("key"); return; }
+    if (k === "ArrowLeft") { e.preventDefault(); prevCam(); return; }
+
+    if (k === " " || e.code === "Space") { e.preventDefault(); togglePlay(); return; }
+
+    // HUD: H hide/show, I details (collapse)
+    if (low === "h") { e.preventDefault(); setHudHidden(!hud?.classList?.contains?.("hidden")); return; }
+    if (low === "i") {
+      e.preventDefault();
+      const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
+      setHudCollapsed(!collapsed);
+      return;
+    }
+
+    // N/P
+    if (low === "n") { e.preventDefault(); nextCam("key_n"); return; }
+    if (low === "p") { e.preventDefault(); prevCam(); return; }
+
+    // C chat toggle
+    if (low === "c") { e.preventDefault(); chatSetEnabled(!chatEnabled); return; }
   });
 
   // ───────────────────────── Main tick loop ─────────────────────────
@@ -2458,7 +2567,18 @@
 
     if (voteSessionActive) {
       const now = Date.now();
-      if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) { votePhase = "vote"; renderVote(); }
+
+      if (votePhase === "pre" && preEndsAt && now >= preEndsAt) {
+        if (voteLeadActiveSec > 0) votePhase = "lead";
+        else votePhase = "vote";
+        renderVote();
+      }
+
+      if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) {
+        votePhase = "vote";
+        renderVote();
+      }
+
       if (voteEndsAt && now >= voteEndsAt) voteFinish();
     }
 
@@ -2474,16 +2594,16 @@
       }
     } catch (_) {}
 
-    // ✅ Auto-trigger vote por remaining (a falta)
+    // ✅ Auto-trigger vote por remaining (a falta) + PRE (voteUi)
     if (playing && !voteSessionActive && !tagVoteActive && voteEnabled && twitchChannel) {
       const rem = remainingSeconds();
       if (!voteTriggeredForSegment && rem > 0 && rem <= (voteAtSegSec | 0)) {
         voteTriggeredForSegment = true;
 
-        const wAuto = clamp(Math.min(voteWindowSegSec | 0, voteAtSegBaseSec | 0), 5, 180);
+        const wAuto = clamp(voteWindowSegSec | 0, 5, 180);
         const leadAuto = clamp(voteLeadSegSec | 0, 0, 30);
-
-        voteStartSequence(wAuto, leadAuto);
+        const uiAuto = clamp(voteUiSegSec | 0, 0, 300);
+        voteStartSequence(wAuto, leadAuto, uiAuto);
       }
     }
 
@@ -2537,7 +2657,7 @@
         if (saved.vote.windowSec != null) voteWindowCfgSec = clamp(saved.vote.windowSec | 0, 5, 180);
         if (saved.vote.voteAtSec != null) voteAtCfgSec = clamp(saved.vote.voteAtSec | 0, 5, 600);
         if (saved.vote.leadSec != null) voteLeadCfgSec = clamp(saved.vote.leadSec | 0, 0, 30);
-        if (saved.vote.uiSec != null) voteUiCfgSec = clamp(saved.vote.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
+        if (saved.vote.uiSec != null) voteUiCfgSec = clamp(saved.vote.uiSec | 0, 0, 300) || 0;
         if (saved.vote.stayMins != null) stayMins = clamp(saved.vote.stayMins | 0, 1, 120);
         if (saved.vote.cmd != null) parseVoteCmds(String(saved.vote.cmd || ""));
       }
