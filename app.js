@@ -1,15 +1,19 @@
-/* app.js — RLC Player v2.3.4 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE)
+/* app.js — RLC Player v2.3.5 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE)
    ✅ FIX CLAVE (mantenido):
       - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
       - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
       - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead) (+ PRE si voteUi > lead+window)
       - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
       - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
-   ✅ Mejora v2.3.4:
+   ✅ Mejora v2.3.4 (mantenido):
       - parseParams más robusto (bools tipo "true/false/1/0")
       - setShown añade aria-hidden y refuerzo de display:none
       - guardas extra en filtros / listas vacías
       - voteUi ahora soporta fase PRE (solo auto). Por defecto: comportamiento idéntico (PRE=0).
+   ✅ v2.3.5:
+      - VERSION sincronizada con window.APP_VERSION (fallback 2.3.5)
+      - LOAD_GUARD actualizado (V235) + state.version usa VERSION
+      - savePlayerState bump schema v:5 (compatible hacia atrás)
    ✅ Compat UI (HUD footer):
       - Space: play/pause
       - N: siguiente
@@ -22,7 +26,10 @@
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V234_PRO";
+  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.5");
+  const VDIG = VERSION.replace(/\D/g, "") || "235";
+
+  const LOAD_GUARD = `__RLC_PLAYER_LOADED_V${VDIG}_PRO`;
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -1897,10 +1904,18 @@
       const ytId = cam.youtubeId || "";
       if (!ytId) { healthFail(tok, cam, "youtube_missing_id"); return; }
 
+      const origin = (() => {
+        try {
+          const o = String(location.origin || "");
+          return (o && o !== "null") ? o : "";
+        } catch (_) { return ""; }
+      })();
+
       const src =
         `${base}/embed/${encodeURIComponent(ytId)}` +
         `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1` +
-        `&enablejsapi=1&origin=${encodeURIComponent(location.origin)}` +
+        `&enablejsapi=1` +
+        (origin ? `&origin=${encodeURIComponent(origin)}` : "") +
         `&widgetid=1`;
 
       ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
@@ -2078,7 +2093,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.3.4",
+      version: VERSION,
       playing,
       idx,
       total: cams.length,
@@ -2451,9 +2466,10 @@
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 4,
+        v: 5, // v2.3.5 schema bump (backward compatible)
         ts: Date.now(),
         key: KEY || "",
+        version: VERSION,
         curId: cam.id || "",
         playing: !!playing,
         mins: Math.max(1, (roundSeconds / 60) | 0),
