@@ -1,7 +1,8 @@
-/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.1.0 (NO RLCUiBars)
+/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.3.5 (HARD FIX: Z-INDEX + SAFE TOP + VOTE LAYOUT SYNC)
    ✅ NEWS + ECON con MISMO markup + MISMA piel (Neo-Atlas)
    ✅ Siempre full-width y en stack: NEWS arriba, ECON abajo
-   ✅ Calcula y aplica: --rlcNewsTop, --rlcEconTop, --rlcTickerH
+   ✅ Calcula y aplica: --rlcNewsTop, --rlcEconTop, --rlcTickerH, --rlcTickerTop
+   ✅ Respeta: --ui-top-offset + safe-area-inset-top (iOS/overlay)
    ✅ Robust fetch: direct -> AllOrigins -> r.jina.ai
    ✅ No rompe IDs/clases existentes: #rlcNewsTicker #rlcEconTicker, .tickerInner/.tickerBadge/.tickerText/.tickerMarquee
 */
@@ -11,7 +12,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V210";
+  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V235";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers
@@ -171,44 +172,106 @@
     return (r.width > 0 && r.height > 0);
   }
 
-  // ───────────────────────── Layout (NO RLCUiBars)
+  // ───────────────────────── HARD inline base style (para que SIEMPRE se vea)
+  const BASE_Z = 2147483000; // “por encima de todo” sin romper clicks
+  function ensureHardStyle(root, topVar) {
+    if (!root || root.__rlcHardStyled) return;
+    root.__rlcHardStyled = true;
+
+    try {
+      root.style.position = "fixed";
+      root.style.left = "0";
+      root.style.right = "0";
+      root.style.width = "100%";
+      root.style.top = `var(${topVar}, 10px)`;
+      root.style.zIndex = String(BASE_Z);
+      root.style.pointerEvents = "auto";
+      root.style.transform = "translateZ(0)";
+      root.style.willChange = "transform";
+      root.style.contain = "layout paint style";
+    } catch (_) {}
+  }
+
+  function dispatchLayout() {
+    try { window.dispatchEvent(new Event("rlcTickers:layout")); } catch (_) {}
+  }
+
+  // ───────────────────────── Layout (NO RLCUiBars) + SAFE TOP
   const LAYOUT = (() => {
-    function cssPx(varName, fb) {
+    function cssPx(varName, fb = 0) {
       try {
         const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
         const n = parseFloat(String(v).replace("px", "").trim());
         return Number.isFinite(n) ? n : fb;
       } catch (_) { return fb; }
     }
+
+    // Leer env(safe-area-inset-top) vía un nodo temporal (JS no puede leer env() directo).
+    function safeAreaTopPx() {
+      try {
+        const el = document.createElement("div");
+        el.style.cssText = "position:fixed;top:env(safe-area-inset-top);left:0;visibility:hidden;pointer-events:none;";
+        document.documentElement.appendChild(el);
+        const top = parseFloat(getComputedStyle(el).top || "0") || 0;
+        el.remove();
+        return Number.isFinite(top) ? top : 0;
+      } catch (_) { return 0; }
+    }
+
     function setVar(name, val) {
       try { document.documentElement.style.setProperty(name, val); } catch (_) {}
     }
 
-    // newsCfgTop / econCfgTop: topPx individuales (si ambos ON, se usa el menor para alinear el bloque)
-    function apply({ newsOn, econOn, newsCfgTop, econCfgTop }) {
-      const barH = cssPx("--rlcBarH", 34);
-      const gap = cssPx("--rlcTickerGap", cssPx("--rlcTickerGap", 12)) || 12;
+    function apply({ newsVis, econVis, newsCfgTop, econCfgTop, newsEl, econEl }) {
+      const barH = cssPx("--rlcBarH", 34) || 34;
+      const gap = cssPx("--rlcTickerGap", 12) || 12;
 
-      const onN = !!newsOn;
-      const onE = !!econOn;
+      const uiTop = cssPx("--ui-top-offset", 0) || 0;
+      const safeTop = safeAreaTopPx();
+      const baseSafe = uiTop + safeTop;
 
-      const baseTop =
-        (onN && onE) ? Math.min(newsCfgTop ?? 10, econCfgTop ?? 10)
-        : (onN ? (newsCfgTop ?? 10)
-        : (onE ? (econCfgTop ?? 10) : (newsCfgTop ?? econCfgTop ?? 10)));
+      const onN = !!newsVis;
+      const onE = !!econVis;
 
-      const newsTop = baseTop;
-      const econTop = baseTop + (onN ? (barH + gap) : 0);
+      const nTopWanted = baseSafe + (num(newsCfgTop, 10) || 10);
+      const eTopWanted = baseSafe + (num(econCfgTop, 10) || 10);
 
-      const count = (onN ? 1 : 0) + (onE ? 1 : 0);
-      const totalH = (count === 0) ? 0 : (count * barH + ((count > 1) ? gap : 0));
+      let newsTop = nTopWanted;
+      let econTop = eTopWanted;
+
+      if (onN && onE) {
+        // ECON siempre debajo de NEWS como mínimo
+        const minEcon = newsTop + barH + gap;
+        econTop = Math.max(econTop, minEcon);
+      }
+
+      // baseTop: el menor top visible (para --rlcTickerTop)
+      const tops = [];
+      if (onN) tops.push(newsTop);
+      if (onE) tops.push(econTop);
+      const baseTop = tops.length ? Math.min(...tops) : baseSafe + (num(newsCfgTop ?? econCfgTop, 10) || 10);
+
+      // altura total real (si el usuario empuja econTop más abajo, se respeta)
+      let totalH = 0;
+      if (!onN && !onE) totalH = 0;
+      else if (onN && !onE) totalH = barH;
+      else if (!onN && onE) totalH = barH;
+      else {
+        const highestTop = Math.max(newsTop, econTop);
+        totalH = (highestTop - baseTop) + barH;
+      }
 
       setVar("--rlcTickerTop", `${baseTop}px`);
       setVar("--rlcNewsTop", `${newsTop}px`);
       setVar("--rlcEconTop", `${econTop}px`);
-      setVar("--rlcTickerH", `${totalH}px`);
+      setVar("--rlcTickerH", `${Math.max(0, totalH)}px`);
 
-      // útil para debug visual si quieres
+      // Aplicar inline TOP por si el CSS no está pillando vars
+      try {
+        if (newsEl) newsEl.style.top = `${newsTop}px`;
+        if (econEl) econEl.style.top = `${econTop}px`;
+      } catch (_) {}
+
       try {
         document.documentElement.dataset.rlcNewsOn = onN ? "1" : "0";
         document.documentElement.dataset.rlcEconOn = onE ? "1" : "0";
@@ -354,13 +417,20 @@
       `.trim();
 
       document.body.appendChild(root);
+
+      ensureHardStyle(root, "--rlcNewsTop");
       return root;
     }
 
     function setVisible(on) {
       const root = ensureUI();
+
+      // no dependas de CSS .hidden
       root.classList.toggle("hidden", !on);
+      root.style.display = on ? "" : "none";
       root.setAttribute("aria-hidden", on ? "false" : "true");
+
+      dispatchLayout();
     }
 
     function uiLangEffective() {
@@ -396,6 +466,7 @@
       let t = safeStr(s).replace(/\s+/g, " ").trim();
       if (t.length < 14) return "";
       if (t.length > 140) t = t.slice(0, 137).trim() + "…";
+      // filtra scripts no latinos para evitar feeds raros
       if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
       return t;
     }
@@ -516,9 +587,9 @@
       if (errMsg && /error|invalid|failed/i.test(errMsg)) throw new Error(errMsg || "GDELT error");
 
       const articles = Array.isArray(data?.articles) ? data.articles
-                     : Array.isArray(data?.results) ? data.results
-                     : Array.isArray(data?.artlist) ? data.artlist
-                     : [];
+        : Array.isArray(data?.results) ? data.results
+        : Array.isArray(data?.artlist) ? data.artlist
+        : [];
 
       const mapped = articles.map(a => {
         const title = cleanTitle(a?.title || a?.name || "");
@@ -599,6 +670,7 @@
         if (Array.isArray(got) && got.length) chunks.push(got);
       }
 
+      // interleave round-robin
       const merged = [];
       let guard = 0;
       while (merged.length < API.maxItems && guard < 600) {
@@ -744,24 +816,34 @@
     // hide-on-vote
     let voteObs = null;
     let domObs = null;
+    let voteVisible = false;
+
+    function computeVoteVisible() {
+      const vote = qs("#voteBox");
+      voteVisible = vote ? isElementVisible(vote) : false;
+      return voteVisible;
+    }
 
     function setupHideOnVote() {
       try { voteObs?.disconnect(); } catch (_) {}
       voteObs = null;
 
       const vote = qs("#voteBox");
-      if (!vote) return;
+      if (!vote) { computeVoteVisible(); return; }
 
       const apply = () => {
+        computeVoteVisible();
         if (!CFG.enabled) { setVisible(false); return; }
         if (!CFG.hideOnVote) { setVisible(true); return; }
-        const voteVisible = isElementVisible(vote);
         setVisible(!voteVisible);
       };
 
       apply();
 
-      voteObs = new MutationObserver(apply);
+      voteObs = new MutationObserver(() => {
+        apply();
+        dispatchLayout();
+      });
       voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
     }
 
@@ -774,6 +856,13 @@
         if (vote) setupHideOnVote();
       });
       domObs.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    function isVisibleNow() {
+      if (!CFG.enabled) return false;
+      if (!CFG.hideOnVote) return true;
+      computeVoteVisible();
+      return !voteVisible;
     }
 
     // refresh loop
@@ -829,6 +918,8 @@
       setupHideOnVote();
       startTimer();
       refresh(true);
+
+      dispatchLayout();
     }
 
     function onMessage(msg, fromNamespaced) {
@@ -841,7 +932,10 @@
 
     function boot() {
       if (P.ticker === "0") { CFG.enabled = false; }
-      ensureUI();
+
+      const root = ensureUI();
+      ensureHardStyle(root, "--rlcNewsTop");
+
       applyCfg(CFG, false);
 
       setupHideOnVote();
@@ -857,8 +951,9 @@
 
     function getCfg() { return CFG; }
     function isOn() { return !!CFG.enabled; }
+    function getEl() { return qs("#rlcNewsTicker"); }
 
-    return { boot, onMessage, applyCfg, getCfg, isOn };
+    return { boot, onMessage, applyCfg, getCfg, isOn, isVisibleNow, getEl };
   })();
 
   // ======================================================================
@@ -876,7 +971,6 @@
 
     const DEBUG = (P.econDebug === "1" || P.econDebug === "true");
     const log = (...a) => { if (DEBUG) console.log("[RLC:ECON]", ...a); };
-
 
     const DEFAULTS = {
       enabled: true,
@@ -905,12 +999,8 @@
 
     function normalizeMode(v) {
       const s = safeStr(v).toLowerCase();
-      if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sincelast") return "sinceLast";
-      if (s === "sincelast" || s === "sincelast") return "sinceLast";
-      if (s === "sincelast") return "sinceLast";
-      if (s === "sinceLast") return "sinceLast";
-      if (s === "since_last" || s === "since-last") return "sinceLast";
-      return (s === "sincelast") ? "sinceLast" : (s === "sinceLast" ? "sinceLast" : (s === "daily" ? "daily" : "daily"));
+      if (s === "sincelast" || s === "since_last" || s === "since-last" || s === "sincelast" || s === "sincelast" || s === "sinceLast") return "sinceLast";
+      return "daily";
     }
 
     function normalizeClocks(list) {
@@ -957,7 +1047,7 @@
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 20);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
       c.hideOnVote = (c.hideOnVote !== false);
-      c.mode = (safeStr(c.mode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
+      c.mode = normalizeMode(c.mode);
       c.showClocks = (c.showClocks !== false);
       c.clocks = normalizeClocks(c.clocks);
       c.items = normalizeItems(c.items);
@@ -971,7 +1061,7 @@
       if (P.econTop) out.topPx = clamp(num(P.econTop, DEFAULTS.topPx), 0, 120);
       if (P.econHideOnVote === "0") out.hideOnVote = false;
       if (P.econHideOnVote === "1") out.hideOnVote = true;
-      if (P.econMode) out.mode = (safeStr(P.econMode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
+      if (P.econMode) out.mode = normalizeMode(P.econMode);
       if (P.econClocks === "0") out.showClocks = false;
       if (P.econClocks === "1") out.showClocks = true;
       if (P.econ === "0") out.enabled = false;
@@ -1008,13 +1098,18 @@
       `.trim();
 
       document.body.appendChild(root);
+
+      ensureHardStyle(root, "--rlcEconTop");
       return root;
     }
 
     function setVisible(on) {
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
+      root.style.display = on ? "" : "none";
       root.setAttribute("aria-hidden", on ? "false" : "true");
+
+      dispatchLayout();
     }
 
     // ───────────────────────── Flags + clocks + fmt
@@ -1319,24 +1414,34 @@
     // hide-on-vote
     let voteObs = null;
     let domObs = null;
+    let voteVisible = false;
+
+    function computeVoteVisible() {
+      const vote = qs("#voteBox");
+      voteVisible = vote ? isElementVisible(vote) : false;
+      return voteVisible;
+    }
 
     function setupHideOnVote() {
       try { voteObs?.disconnect(); } catch (_) {}
       voteObs = null;
 
       const vote = qs("#voteBox");
-      if (!vote) return;
+      if (!vote) { computeVoteVisible(); return; }
 
       const apply = () => {
+        computeVoteVisible();
         if (!CFG.enabled) { setVisible(false); return; }
         if (!CFG.hideOnVote) { setVisible(true); return; }
-        const voteVisible = isElementVisible(vote);
         setVisible(!voteVisible);
       };
 
       apply();
 
-      voteObs = new MutationObserver(apply);
+      voteObs = new MutationObserver(() => {
+        apply();
+        dispatchLayout();
+      });
       voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
     }
 
@@ -1349,6 +1454,13 @@
         if (vote) setupHideOnVote();
       });
       domObs.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    function isVisibleNow() {
+      if (!CFG.enabled) return false;
+      if (!CFG.hideOnVote) return true;
+      computeVoteVisible();
+      return !voteVisible;
     }
 
     async function buildModel() {
@@ -1470,6 +1582,8 @@
       setupHideOnVote();
       startTimer();
       refresh();
+
+      dispatchLayout();
     }
 
     function onMessage(msg, fromNamespaced) {
@@ -1482,7 +1596,10 @@
 
     function boot() {
       if (P.econ === "0") { CFG.enabled = false; }
-      ensureUI();
+
+      const root = ensureUI();
+      ensureHardStyle(root, "--rlcEconTop");
+
       applyCfg(CFG, false);
 
       setupHideOnVote();
@@ -1495,8 +1612,9 @@
 
     function getCfg() { return CFG; }
     function isOn() { return !!CFG.enabled; }
+    function getEl() { return qs("#rlcEconTicker"); }
 
-    return { boot, onMessage, applyCfg, getCfg, isOn };
+    return { boot, onMessage, applyCfg, getCfg, isOn, isVisibleNow, getEl };
   })();
 
   // ───────────────────────── Layout sync (stack always)
@@ -1504,11 +1622,20 @@
     const nCfg = NEWS.getCfg ? NEWS.getCfg() : null;
     const eCfg = ECON.getCfg ? ECON.getCfg() : null;
 
+    const newsEl = NEWS.getEl ? NEWS.getEl() : qs("#rlcNewsTicker");
+    const econEl = ECON.getEl ? ECON.getEl() : qs("#rlcEconTicker");
+
+    // Garantiza hard style incluso si se crearon antes del CSS
+    ensureHardStyle(newsEl, "--rlcNewsTop");
+    ensureHardStyle(econEl, "--rlcEconTop");
+
     LAYOUT.apply({
-      newsOn: NEWS.isOn ? NEWS.isOn() : !!nCfg?.enabled,
-      econOn: ECON.isOn ? ECON.isOn() : !!eCfg?.enabled,
+      newsVis: (NEWS.isVisibleNow ? NEWS.isVisibleNow() : !!nCfg?.enabled),
+      econVis: (ECON.isVisibleNow ? ECON.isVisibleNow() : !!eCfg?.enabled),
       newsCfgTop: nCfg?.topPx ?? 10,
-      econCfgTop: eCfg?.topPx ?? 10
+      econCfgTop: eCfg?.topPx ?? 10,
+      newsEl,
+      econEl
     });
   }
 
@@ -1516,7 +1643,6 @@
   function onBusMessage(msg, fromNamespaced) {
     NEWS.onMessage(msg, fromNamespaced);
     ECON.onMessage(msg, fromNamespaced);
-    // tras aplicar cfg por bus, re-stack
     setTimeout(syncLayout, 0);
   }
 
@@ -1526,6 +1652,9 @@
 
     // primer layout
     syncLayout();
+
+    // re-layout event
+    window.addEventListener("rlcTickers:layout", () => syncLayout(), { passive: true });
 
     // Bus listeners
     try {
@@ -1561,10 +1690,14 @@
       }
     });
 
-    // por si cambia el tamaño/zoom (Opera GX…)
-    window.addEventListener("resize", () => {
-      syncLayout();
-    }, { passive: true });
+    // Opera GX / zoom / resize
+    const relayout = () => syncLayout();
+    window.addEventListener("resize", relayout, { passive: true });
+    window.addEventListener("orientationchange", relayout, { passive: true });
+
+    // último “por si acaso”
+    setTimeout(syncLayout, 60);
+    setTimeout(syncLayout, 400);
   }
 
   if (document.readyState === "loading") {
