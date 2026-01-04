@@ -2170,20 +2170,15 @@
   }
 
   function cmdKeyOk(msg, isMainChannel) {
-    // KEY activo:
-    //  - acepta msg.key === KEY
-    //  - si allowLegacy: acepta mensajes sin key (legacy)
-    //  - en canal legacy (isMainChannel=false) y allowLegacy: aceptamos también (compat) aunque venga key distinta
+    // Si el player NO está namespaced (sin KEY), acepta todo.
     if (!KEY) return true;
 
+    // Si el mensaje trae key, debe coincidir SIEMPRE.
     const mk = safeStr(msg?.key).trim();
-    if (mk && mk === KEY) return true;
+    if (mk) return mk === KEY;
 
-    if (ALLOW_LEGACY) {
-      if (!mk) return true;
-      if (!isMainChannel) return true; // compat: legacy channel es global (solo si allowLegacy)
-    }
-    return false;
+    // Si no trae key, solo lo aceptamos si allowLegacy.
+    return !!ALLOW_LEGACY;
   }
 
   function applyCommand(cmd, payload) {
