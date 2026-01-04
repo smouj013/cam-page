@@ -6,6 +6,12 @@
       - Refresca CAM_LIST aunque se rellene “in-place” (push/splice) usando firma+length
       - Doble click / Enter en lista = GOTO
       - Selecciona en lista la cam actual al recibir state (sin pisar si el user está interactuando)
+   ✅ Compat extra (sin romper):
+      - Modo Catálogo: incluye parámetros en URL/Preview/Copiar (aunque lo gestione catalogControl.js)
+      - Sync HUD Details desde state + comando alias opcional
+      - ADS payload incluye adDurSec (player puede ignorar si no lo usa)
+      - Preview evita reasignar src si no cambió (menos “parpadeo” y CPU)
+      - Expone API global segura (__RLC_CONTROL_API_V1__) para otros módulos
 */
 
 (() => {
@@ -188,7 +194,6 @@
           ? (Number(st.ts || st.lastTs || 0) || 0)
           : 0;
 
-        // si no hay ts, al menos usa “ahora” como señal débil
         const score = ts || 1;
         if (score > bestTs) {
           bestTs = score;
@@ -285,7 +290,6 @@
     if (payload && typeof payload === "object") {
       const id = payload.id ?? payload.camId ?? payload.cameraId ?? payload.value ?? null;
       if (id != null) {
-        // algunos players esperan camId en vez de id
         if (payload.id == null) push(cmd, Object.assign({}, payload, { id }));
         if (payload.camId == null) push(cmd, Object.assign({}, payload, { camId: id }));
         if (payload.cameraId == null) push(cmd, Object.assign({}, payload, { cameraId: id }));
@@ -294,6 +298,23 @@
 
     for (const a of (aliases || [])) push(a, payload);
   }
+
+  // API global segura (para catalogControl/pointsControl/otros)
+  const API_KEY = "__RLC_CONTROL_API_V1__";
+  try {
+    g[API_KEY] = {
+      kind: "RLC_CONTROL_API",
+      version: APP_VERSION,
+      key: KEY,
+      bus: BUS,
+      sendCmd,
+      sendCmdAliases,
+      busPost,
+      getState: () => lastState,
+      refreshLists: (force = false) => refreshGlobalLists(!!force),
+      buildStreamUrlFromUI: () => buildStreamUrlFromUI(),
+    };
+  } catch (_) {}
 
   // ───────────────────────── DOM cache
   let
@@ -304,6 +325,12 @@
     ctlPreviewOn, ctlPreviewWrap, ctlPreview,
     ctlCopyStreamUrl,
     ctlBgmOn, ctlBgmVol, ctlBgmTrack, ctlBgmPrev, ctlBgmPlay, ctlBgmNext, ctlBgmShuffle, ctlBgmNow,
+
+    // CATALOG (nuevo en HTML, no rompe si no existe)
+    ctlCatalogOn, ctlCatalogStatus, ctlCatalogLayout, ctlCatalogGap, ctlCatalogLabels,
+    ctlCatalogMode, ctlCatalogFollowSlot, ctlCatalogClickCycle, ctlCatalogYtCookies,
+    ctlCatalogWxTiles, ctlCatalogWxRefreshSec, ctlCatalogMuted, ctlCatalogApply, ctlCatalogReset,
+
     ctlTwitchChannel, ctlVoteOn, ctlVoteOverlay, ctlVoteWindow, ctlVoteAt, ctlVoteLead, ctlVoteCmd, ctlVoteStart, ctlVoteApply, ctlStayMins, ctlYtCookies,
     ctlChatOn, ctlChatHideCmd, ctlAlertsOn,
     ctlAdsOn, ctlAdLead, ctlAdDur, ctlAdShowDuring, ctlAdChatText, ctlAdNoticeBtn, ctlAdBeginBtn, ctlAdClearBtn,
@@ -355,6 +382,22 @@
     ctlBgmShuffle = qs("#ctlBgmShuffle");
     ctlBgmNow = qs("#ctlBgmNow");
 
+    // Catalog (si existe)
+    ctlCatalogOn = qs("#ctlCatalogOn");
+    ctlCatalogStatus = qs("#ctlCatalogStatus");
+    ctlCatalogLayout = qs("#ctlCatalogLayout");
+    ctlCatalogGap = qs("#ctlCatalogGap");
+    ctlCatalogLabels = qs("#ctlCatalogLabels");
+    ctlCatalogMode = qs("#ctlCatalogMode");
+    ctlCatalogFollowSlot = qs("#ctlCatalogFollowSlot");
+    ctlCatalogClickCycle = qs("#ctlCatalogClickCycle");
+    ctlCatalogYtCookies = qs("#ctlCatalogYtCookies");
+    ctlCatalogWxTiles = qs("#ctlCatalogWxTiles");
+    ctlCatalogWxRefreshSec = qs("#ctlCatalogWxRefreshSec");
+    ctlCatalogMuted = qs("#ctlCatalogMuted");
+    ctlCatalogApply = qs("#ctlCatalogApply");
+    ctlCatalogReset = qs("#ctlCatalogReset");
+
     ctlTwitchChannel = qs("#ctlTwitchChannel");
     ctlVoteOn = qs("#ctlVoteOn");
     ctlVoteOverlay = qs("#ctlVoteOverlay");
@@ -389,6 +432,7 @@
     ctlBotTestText = qs("#ctlBotTestText");
     ctlBotTestSend = qs("#ctlBotTestSend");
 
+    // (opcionales / si inyecta otro script)
     ctlTickerOn = qs("#ctlTickerOn");
     ctlTickerLang = qs("#ctlTickerLang");
     ctlTickerSpeed = qs("#ctlTickerSpeed");
@@ -433,10 +477,17 @@
 
   function camListSignature(list) {
     try {
-      const n = Math.min(12, list.length);
+      const L = list.length || 0;
+      if (!L) return "";
+
+      // sample distribuido (mejor que “solo first 12”)
+      const take = Math.min(12, L);
       const ids = [];
-      for (let i = 0; i < n; i++) ids.push(String(list[i]?.id || ""));
-      return ids.join("|");
+      for (let i = 0; i < take; i++) {
+        const idx = (take === 1) ? 0 : Math.round((i * (L - 1)) / (take - 1));
+        ids.push(String(list[idx]?.id || ""));
+      }
+      return `${L}|${ids.join("|")}`;
     } catch (_) { return ""; }
   }
 
@@ -541,7 +592,7 @@
       const hay = `${cam?.title || ""} ${cam?.place || ""} ${cam?.source || ""}`.toLowerCase();
       if (f && !hay.includes(f)) continue;
       const opt = document.createElement("option");
-      opt.value = cam.id;
+      opt.value = String(cam.id ?? "");
       opt.textContent = label(cam);
       frag.appendChild(opt);
     }
@@ -602,7 +653,7 @@
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
   }
 
-  // ───────────────────────── Ticker cfg
+  // ───────────────────────── Ticker cfg (opcional)
   const TICKER_DEFAULTS = {
     enabled: true,
     lang: "auto",
@@ -1270,6 +1321,27 @@
     return u;
   }
 
+  function readCatalogUIForUrl() {
+    const enabled = ctlCatalogOn ? (ctlCatalogOn.value !== "off") : false;
+    const layout = ctlCatalogLayout ? String(ctlCatalogLayout.value || "quad") : "quad";
+    const gap = ctlCatalogGap ? clamp(parseInt(ctlCatalogGap.value || "8", 10) || 8, 0, 24) : 8;
+    const labels = ctlCatalogLabels ? (ctlCatalogLabels.value !== "off") : true;
+
+    const mode = ctlCatalogMode ? String(ctlCatalogMode.value || "follow") : "follow"; // follow|sync
+    const followSlot = ctlCatalogFollowSlot ? clamp(parseInt(ctlCatalogFollowSlot.value || "0", 10) || 0, 0, 3) : 0;
+
+    const clickCycle = ctlCatalogClickCycle ? (ctlCatalogClickCycle.value !== "off") : true;
+
+    const ytCookies = ctlCatalogYtCookies ? (ctlCatalogYtCookies.value !== "off") : true;
+
+    const wxTiles = ctlCatalogWxTiles ? (ctlCatalogWxTiles.value !== "off") : true;
+    const wxRefreshSec = ctlCatalogWxRefreshSec ? clamp(parseInt(ctlCatalogWxRefreshSec.value || "30", 10) || 30, 10, 180) : 30;
+
+    const muted = ctlCatalogMuted ? (ctlCatalogMuted.value !== "off") : true;
+
+    return { enabled, layout, gap, labels, mode, followSlot, clickCycle, ytCookies, wxTiles, wxRefreshSec, muted };
+  }
+
   function buildStreamUrlFromUI() {
     const u = getBasePlayerUrl();
 
@@ -1303,6 +1375,9 @@
 
     const tcfg = readTickerUI();
     const ccfg = readCountdownUI();
+
+    // catalog (solo URL/preview/copy; ejecución real la hace catalogControl.js si quieres)
+    const cat = readCatalogUIForUrl();
 
     u.searchParams.set("mins", String(mins));
     u.searchParams.set("fit", fit);
@@ -1344,6 +1419,19 @@
     u.searchParams.set("countdown", boolParam(!!ccfg.enabled));
     u.searchParams.set("countdownLabel", String(ccfg.label || "Fin de año"));
     u.searchParams.set("countdownTarget", String(ccfg.targetMs || 0));
+
+    // Catalog params (no rompe si player no los usa)
+    u.searchParams.set("catalog", boolParam(!!cat.enabled));
+    u.searchParams.set("catalogLayout", String(cat.layout || "quad"));
+    u.searchParams.set("catalogGap", String(cat.gap ?? 8));
+    u.searchParams.set("catalogLabels", boolParam(!!cat.labels));
+    u.searchParams.set("catalogMode", String(cat.mode || "follow"));
+    u.searchParams.set("catalogFollowSlot", String(cat.followSlot ?? 0));
+    u.searchParams.set("catalogClickCycle", boolParam(!!cat.clickCycle));
+    u.searchParams.set("catalogYtCookies", boolParam(!!cat.ytCookies));
+    u.searchParams.set("catalogWxTiles", boolParam(!!cat.wxTiles));
+    u.searchParams.set("catalogWxRefreshSec", String(cat.wxRefreshSec ?? 30));
+    u.searchParams.set("catalogMuted", boolParam(!!cat.muted));
 
     return u.toString();
   }
@@ -1429,13 +1517,49 @@
     if (ctlAutoskip && !isEditing(ctlAutoskip)) ctlAutoskip.value = st.autoskip ? "on" : "off";
     if (ctlAdfree && !isEditing(ctlAdfree)) ctlAdfree.value = st.adfree ? "on" : "off";
     if (ctlHud && !isEditing(ctlHud)) ctlHud.value = st.hudHidden ? "off" : "on";
+
+    // HUD Details (sync extra)
+    try {
+      let details = null;
+      if (typeof st.hudDetails === "boolean") details = st.hudDetails;
+      else if (typeof st.hudDetailsHidden === "boolean") details = !st.hudDetailsHidden;
+      if (ctlHudDetails && details !== null && !isEditing(ctlHudDetails)) ctlHudDetails.value = details ? "on" : "off";
+    } catch (_) {}
+
     if (ctlYtCookies && !isEditing(ctlYtCookies)) ctlYtCookies.value = st.ytCookies ? "on" : "off";
 
+    // Vote subset
     if (st.vote && typeof st.vote === "object") {
       if (ctlTwitchChannel && !isEditing(ctlTwitchChannel) && st.vote.channel) ctlTwitchChannel.value = st.vote.channel;
       if (ctlVoteOn && !isEditing(ctlVoteOn)) ctlVoteOn.value = st.vote.enabled ? "on" : "off";
       if (ctlVoteOverlay && !isEditing(ctlVoteOverlay)) ctlVoteOverlay.value = st.vote.overlay ? "on" : "off";
     }
+
+    // BGM subset (si viene en state)
+    try {
+      const b = st.bgm;
+      if (b && typeof b === "object") {
+        if (ctlBgmOn && !isEditing(ctlBgmOn) && typeof b.enabled === "boolean") ctlBgmOn.value = b.enabled ? "on" : "off";
+        if (ctlBgmVol && !isEditing(ctlBgmVol) && typeof b.vol === "number") ctlBgmVol.value = String(clamp(b.vol, 0, 1));
+        if (ctlBgmTrack && !isEditing(ctlBgmTrack) && (typeof b.idx === "number")) ctlBgmTrack.value = String(clamp(b.idx | 0, 0, Math.max(0, bgmList.length - 1)));
+        if (ctlBgmNow) {
+          const txt = (b.title || b.now || b.track) ? String(b.title || b.now || b.track) : "";
+          if (txt) ctlBgmNow.textContent = txt;
+        }
+      }
+    } catch (_) {}
+
+    // Catalog status (si viene en state)
+    try {
+      let catEnabled = null;
+      const cat = (st.catalog && typeof st.catalog === "object") ? st.catalog : null;
+      if (cat && typeof cat.enabled === "boolean") catEnabled = cat.enabled;
+      else if (typeof st.catalogEnabled === "boolean") catEnabled = st.catalogEnabled;
+      else if (typeof st.catalogOn === "boolean") catEnabled = st.catalogOn;
+
+      if (ctlCatalogOn && catEnabled !== null && !isEditing(ctlCatalogOn)) ctlCatalogOn.value = catEnabled ? "on" : "off";
+      if (ctlCatalogStatus && catEnabled !== null) setPill(ctlCatalogStatus, catEnabled ? "Catálogo: ON" : "Catálogo: OFF", !!catEnabled);
+    } catch (_) {}
 
     syncPreviewUrl();
   }
@@ -1499,13 +1623,25 @@
   }
 
   // ───────────────────────── UI actions
+  let _lastPreviewUrl = "";
+
   function syncPreviewUrl() {
     if (!ctlPreviewOn || !ctlPreviewWrap || !ctlPreview) return;
     const on = (ctlPreviewOn.value !== "off");
     try { ctlPreviewWrap.style.display = on ? "" : "none"; } catch (_) {}
-    if (!on) return;
 
-    try { ctlPreview.src = buildStreamUrlFromUI(); } catch (_) {}
+    if (!on) {
+      _lastPreviewUrl = "";
+      return;
+    }
+
+    try {
+      const url = buildStreamUrlFromUI();
+      if (url && url !== _lastPreviewUrl) {
+        _lastPreviewUrl = url;
+        ctlPreview.src = url;
+      }
+    } catch (_) {}
   }
 
   function applyBasicSettings() {
@@ -1516,6 +1652,8 @@
     sendCmdAliases("SET_FIT", { fit }, ["FIT"]);
 
     if (ctlHud) sendCmdAliases("HUD", { hidden: (ctlHud.value === "off") }, ["SET_HUD"]);
+    if (ctlHudDetails) sendCmdAliases("HUD_DETAILS", { enabled: (ctlHudDetails.value !== "off") }, ["SET_HUD_DETAILS", "HUDDETAILS"]);
+
     if (ctlAutoskip) sendCmdAliases("SET_AUTOSKIP", { enabled: (ctlAutoskip.value !== "off") }, ["AUTOSKIP"]);
     if (ctlAdfree) sendCmdAliases("SET_MODE", { mode: (ctlAdfree.value !== "off") ? "adfree" : "" }, ["MODE"]);
     if (ctlYtCookies) sendCmdAliases("YT_COOKIES", { enabled: (ctlYtCookies.value !== "off") }, ["SET_YT_COOKIES"]);
@@ -1570,7 +1708,8 @@
     const showDuring = ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true;
     const chatText = String(ctlAdChatText?.value || "").trim();
 
-    sendCmdAliases("SET_ADS", { enabled, adLead, showDuring, chatText }, ["ADS_SET", "ADS"]);
+    // ✅ incluye adDurSec (no rompe si player lo ignora)
+    sendCmdAliases("SET_ADS", { enabled, adLead, adDurSec, showDuring, chatText }, ["ADS_SET", "ADS"]);
 
     try { lsSet((KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1"), JSON.stringify({ adDurSec })); } catch (_) {}
     syncPreviewUrl();
@@ -1612,7 +1751,6 @@
     if (!id) return;
 
     sendCmdAliases("GOTO", { id }, ["CAM_GOTO", "SET_CAM", "GOTO_CAM", "NAV_GOTO"]);
-    // algunos players esperan "index" o "value"
     sendCmdAliases("GOTO", { camId: id }, []);
     syncPreviewUrl();
   }
@@ -1703,7 +1841,7 @@
 
     safeOn(ctlSearch, "input", debounce(() => syncList(ctlSearch.value), 120));
 
-    // ✅ Transporte
+    // Transporte
     safeOn(ctlPrev, "click", doPrev);
     safeOn(ctlPlay, "click", doTogglePlay);
     safeOn(ctlNext, "click", doNext);
@@ -1717,14 +1855,11 @@
 
     safeOn(ctlApplySettings, "click", applyBasicSettings);
 
-    // ✅ Lista cams
+    // Lista cams
     safeOn(ctlGo, "click", doGoSelected);
     safeOn(ctlBan, "click", doBanSelectedOrCurrent);
 
-    // doble click = ir
     safeOn(ctlSelect, "dblclick", (e) => { e.preventDefault(); doGoSelected(); });
-
-    // Enter dentro del select
     safeOn(ctlSelect, "keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); doGoSelected(); }
     });
@@ -1762,7 +1897,7 @@
     safeOn(ctlAdBeginBtn, "click", adBeginNow);
     safeOn(ctlAdClearBtn, "click", adClearNow);
 
-    // ticker
+    // ticker (si existe UI)
     safeOn(ctlTickerApply, "click", applyTickerNow);
     safeOn(ctlTickerReset, "click", readTickerReset);
     safeOn(ctlTickerCopyUrl, "click", async () => {
@@ -1801,9 +1936,16 @@
       sendCmdAliases("BGM_TRACK", { idx }, ["SET_BGM_TRACK"]);
     });
 
+    // Auto preview sync cuando cambias selects/inputs
     const autoSync = debounce(syncPreviewUrl, 160);
     [
       ctlMins, ctlFit, ctlHud, ctlHudDetails, ctlAutoskip, ctlAdfree, ctlTwitchChannel,
+
+      // catalog (solo para URL/preview/copy)
+      ctlCatalogOn, ctlCatalogLayout, ctlCatalogGap, ctlCatalogLabels, ctlCatalogMode,
+      ctlCatalogFollowSlot, ctlCatalogClickCycle, ctlCatalogYtCookies, ctlCatalogWxTiles,
+      ctlCatalogWxRefreshSec, ctlCatalogMuted,
+
       ctlVoteOn, ctlVoteOverlay, ctlVoteWindow, ctlVoteAt, ctlVoteLead, ctlVoteCmd, ctlStayMins,
       ctlChatOn, ctlChatHideCmd, ctlAlertsOn,
       ctlAdsOn, ctlAdLead, ctlAdDur, ctlAdShowDuring, ctlAdChatText,
@@ -1922,6 +2064,14 @@
       }
     } catch (_) {}
 
+    // pre-status catálogo
+    try {
+      if (ctlCatalogStatus && ctlCatalogOn) {
+        const on = (ctlCatalogOn.value !== "off");
+        setPill(ctlCatalogStatus, on ? "Catálogo: ON" : "Catálogo: OFF", on);
+      }
+    } catch (_) {}
+
     syncTickerUIFromStore();
     syncCountdownUIFromStore();
     syncHelixUIFromStore();
@@ -1963,6 +2113,7 @@
     }
     disposers.length = 0;
 
+    try { if (g[API_KEY]) g[API_KEY] = null; } catch (_) {}
     try { if (g[SINGLETON_KEY] === instance) g[SINGLETON_KEY] = null; } catch (_) {}
   };
 
