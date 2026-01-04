@@ -34,18 +34,20 @@
     return 0;
   }
 
-  // ───────────────────────── Singleton anti-dup (upgrade-safe)
-  const SINGLETON_KEY = "__RLC_CONTROL_SINGLETON__";
+  // ───────────────────────── Singleton anti-dup (upgrade-safe) — BLINDADO
+  const SINGLETON_KEY = "__RLC_CONTROL_JS_SINGLETON__"; // ✅ ÚNICO para ESTE archivo
+  const SINGLETON_KIND = "RLC_CONTROL_JS";             // ✅ evita colisiones con otros scripts
+
   try {
     const existing = g[SINGLETON_KEY];
-    if (existing && typeof existing === "object") {
+    if (existing && typeof existing === "object" && existing.kind === SINGLETON_KIND) {
       const prevVer = String(existing.version || "0.0.0");
       if (compareVer(prevVer, APP_VERSION) >= 0) return; // igual o más nuevo ya cargado
       try { existing.destroy?.(); } catch (_) {}
     }
   } catch (_) {}
 
-  const instance = { version: APP_VERSION, _disposed: false, destroy: null };
+  const instance = { kind: SINGLETON_KIND, version: APP_VERSION, _disposed: false, destroy: null };
   try { g[SINGLETON_KEY] = instance; } catch (_) {}
 
   // ───────────────────────── Utils

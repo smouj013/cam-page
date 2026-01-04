@@ -12,7 +12,7 @@
   <title>Random Live Cams — Control</title>
   <meta name="description" content="Random Live Cams — Control Room (votación, overlays, ticker, catálogo CCTV, ads notice, bot IRC, auto título Helix)." />
 
-  <script>window.APP_VERSION = "2.3.7";</script>
+  <script>window.APP_VERSION = "2.3.8";</script>
 
   <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
   <script>
@@ -415,58 +415,6 @@
         </div>
 
         <div class="hint">✅ Muestra 4 cams (CCTV). En player, el HUD de single-cam se oculta cuando catálogo está ON.</div>
-      </div>
-
-      <!-- NEWS TICKER -->
-      <div class="card card--ticker">
-        <div class="cardTitle">Noticias (ticker)</div>
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlTickerOn">
-            <span>Ticker</span>
-            <select id="ctlTickerOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
-          </label>
-          <div class="pill mono" id="ctlTickerStatus" aria-live="polite">Ticker: —</div>
-        </div>
-
-        <label class="row" for="ctlTickerLang">
-          <span>Idioma</span>
-          <select id="ctlTickerLang" class="select"><option value="auto">AUTO</option><option value="es">ES</option><option value="en">EN</option></select>
-        </label>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlTickerSpeed">
-            <span>Velocidad (px/s)</span>
-            <input id="ctlTickerSpeed" class="input" type="number" min="20" max="140" step="1" value="55" inputmode="numeric" />
-          </label>
-          <label class="row" style="margin:0" for="ctlTickerRefresh">
-            <span>Refresh (min)</span>
-            <input id="ctlTickerRefresh" class="input" type="number" min="3" max="60" step="1" value="12" inputmode="numeric" />
-          </label>
-        </div>
-
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlTickerTop">
-            <span>Offset top (px)</span>
-            <input id="ctlTickerTop" class="input" type="number" min="0" max="120" step="1" value="10" inputmode="numeric" />
-          </label>
-          <label class="row" style="margin:0" for="ctlTickerHideOnVote">
-            <span>Ocultar en voto</span>
-            <select id="ctlTickerHideOnVote" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
-          </label>
-        </div>
-
-        <label class="row" for="ctlTickerSpan">
-          <span>Timespan</span>
-          <input id="ctlTickerSpan" class="input" type="text" value="1d" autocomplete="off" />
-        </label>
-
-        <div class="row2">
-          <button id="ctlTickerApply" class="btn full" type="button">Aplicar ticker</button>
-          <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
-        </div>
-
-        <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">Copiar URL Stream (con ticker)</button>
-        <div class="hint">✅ Se guarda en local y se envía al player por <b>BroadcastChannel</b>.</div>
       </div>
 
       <!-- AUTO TITLE -->
