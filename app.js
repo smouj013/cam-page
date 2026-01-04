@@ -1,10 +1,11 @@
-/* app.js — RLC Player v2.3.7 PRO
+/* app.js — RLC Player v2.3.8 PRO
    ✅ ADMIN PANEL RELIABILITY FIX (CLAVE):
       - Polling de comandos (localStorage) para casos donde "storage" no dispara (iframes/misma pestaña)
-      - Dedup robusto por firma: acepta comandos con mismo ts si el payload cambia
+      - Dedup ROBUSTO cross-canal (BC/LS/postMessage) sin duplicar ejecuciones
+      - Dedup por “firma” estable: permite mismo ts si payload cambia
       - Fallback por postMessage (mismo origin)
       - Aliases extra típicos de botones de control (HUD/SETTINGS/APPLY)
-   ✅ Mantiene TODO lo de v2.3.6:
+   ✅ Mantiene TODO lo de v2.3.6/2.3.7:
       - Auto voto por remaining + PRE (voteUi)
       - ADS lead→live fix + hint duration
       - TAGVOTE_START/STOP + refresh tags
@@ -15,8 +16,8 @@
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.7");
-  const VDIG = VERSION.replace(/\D/g, "") || "237";
+  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.8");
+  const VDIG = VERSION.replace(/\D/g, "") || "238";
 
   const LOAD_GUARD = `__RLC_PLAYER_LOADED_V${VDIG}_PRO`;
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
@@ -2150,17 +2151,38 @@
   }
 
   // ───────────────────────── Commands (ADMIN HARDENED) ─────────────────────────
+  // ✅ FIX: dedupe cross-canal SIN prefijos "ls:/bc:/pm:" (evita dobles ejecuciones)
+  // ✅ FIX: ventana de dedupe rápida para casos donde BC y LS generen ts distintos
   let lastCmdTs = 0;
   let lastCmdSig = "";
+  let lastCmdSeenAt = 0;
+  const CMD_DEDUPE_WINDOW_MS = 250;
+
+  function safeStr(x) { try { return String(x ?? ""); } catch (_) { return ""; } }
 
   function cmdSigFrom(msg) {
-    try { return JSON.stringify(msg); } catch (_) { return String(msg?.cmd || "") + "|" + String(msg?.ts || 0); }
+    // Firma estable: cmd|key|payload (sin ts) -> dedupe cross-canal
+    const cmd = safeStr(msg?.cmd).trim().toUpperCase();
+    const key = safeStr(msg?.key).trim();
+    let payloadRaw = "";
+    try { payloadRaw = JSON.stringify(msg?.payload ?? null); } catch (_) { payloadRaw = safeStr(msg?.payload); }
+    return `${cmd}|${key}|${payloadRaw}`;
   }
 
   function cmdKeyOk(msg, isMainChannel) {
+    // KEY activo:
+    //  - acepta msg.key === KEY
+    //  - si allowLegacy: acepta mensajes sin key (legacy)
+    //  - en canal legacy (isMainChannel=false) y allowLegacy: aceptamos también (compat) aunque venga key distinta
     if (!KEY) return true;
-    if (msg && msg.key === KEY) return true;
-    if (ALLOW_LEGACY && msg && !msg.key) return true;
+
+    const mk = safeStr(msg?.key).trim();
+    if (mk && mk === KEY) return true;
+
+    if (ALLOW_LEGACY) {
+      if (!mk) return true;
+      if (!isMainChannel) return true; // compat: legacy channel es global (solo si allowLegacy)
+    }
     return false;
   }
 
@@ -2497,17 +2519,22 @@
 
     const ts = (msg.ts | 0) || 0;
     const s = sig || cmdSigFrom(msg);
+    const nowSeen = Date.now();
 
-    // ✅ FIX admin botones: no descartes si ts igual pero firma distinta
+    // ✅ Dedup rápida cross-canal (por si BC/LS llegan con ts distinto)
+    if (s && s === lastCmdSig && (nowSeen - (lastCmdSeenAt || 0)) < CMD_DEDUPE_WINDOW_MS) return;
+
+    // ✅ Orden por ts (no re-ejecutar viejos) + permite mismo ts si firma distinta
     if (ts) {
       if (ts < lastCmdTs) return;
       if (ts === lastCmdTs && s && s === lastCmdSig) return;
       lastCmdTs = ts;
-      lastCmdSig = s || lastCmdSig;
     } else {
       if (s && s === lastCmdSig) return;
-      lastCmdSig = s || lastCmdSig;
     }
+
+    lastCmdSig = s || lastCmdSig;
+    lastCmdSeenAt = nowSeen;
 
     const cmd = String(msg.cmd || "");
     const payload = msg.payload || {};
@@ -2519,11 +2546,11 @@
     if (!raw) return;
     const msg = safeJson(raw, null);
     if (!msg) return;
-    handleCmdMsg(msg, isMainChannel, "ls:" + raw);
+    handleCmdMsg(msg, isMainChannel, cmdSigFrom(msg));
   }
 
-  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true, "bc:" + cmdSigFrom(ev?.data)); } catch (_) {}
-  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false, "bcL:" + cmdSigFrom(ev?.data)); } catch (_) {}
+  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true, cmdSigFrom(ev?.data)); } catch (_) {}
+  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false, cmdSigFrom(ev?.data)); } catch (_) {}
 
   // ✅ Fallback extra por postMessage (mismo origin)
   window.addEventListener("message", (ev) => {
@@ -2533,7 +2560,7 @@
       const d = ev.data;
       const msg = (typeof d === "string") ? safeJson(d, null) : d;
       if (!msg) return;
-      if (msg.type === "cmd") handleCmdMsg(msg, true, "pm:" + cmdSigFrom(msg));
+      if (msg.type === "cmd") handleCmdMsg(msg, true, cmdSigFrom(msg));
     } catch (_) {}
   }, false);
 
