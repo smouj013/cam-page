@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#060812" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>RLC — OBS Cam Panel</title>
+
+  <style>
+    :root{
+      --bg:#05060a; --bg2:#070a14;
+      --panel:rgba(12,16,24,.70);
+      --stroke:rgba(255,255,255,.12);
+      --stroke2:rgba(255,255,255,.18);
+      --txt:rgba(255,255,255,.92);
+      --mut:rgba(255,255,255,.70);
+      --acc:#37d6ff;
+      --ok:#19e28a;
+      --warn:#ffce57;
+      --bad:#ff5a5a;
+      --shadow:0 14px 44px rgba(0,0,0,.45);
+      --r:16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background: radial-gradient(1200px 700px at 10% -10%, rgba(55,214,255,.10), transparent 60%),
+                  radial-gradient(900px 600px at 120% 20%, rgba(255,206,87,.08), transparent 60%),
+                  linear-gradient(180deg, var(--bg), var(--bg2));
+      color:var(--txt);
+    }
+    a{color:inherit}
+    .wrap{padding:10px 10px 14px; max-width:980px; margin:0 auto;}
+    .top{
+      display:flex; gap:10px; align-items:center; justify-content:space-between;
+      padding:10px 12px; border-radius:var(--r);
+      background:var(--panel); border:1px solid var(--stroke); box-shadow:var(--shadow);
+    }
+    .left{display:flex; gap:10px; align-items:center; min-width:0}
+    .brand{
+      display:flex; flex-direction:column; gap:2px; min-width:0;
+    }
+    .brand .k{font-weight:900; letter-spacing:.3px; font-size:12px; color:var(--mut)}
+    .brand .n{font-weight:1000; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    .pill{
+      display:inline-flex; gap:8px; align-items:center;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid var(--stroke2);
+      background:rgba(255,255,255,.06);
+      font-weight:900; font-size:12px;
+      white-space:nowrap;
+    }
+    .dot{width:8px; height:8px; border-radius:99px; background:var(--warn); box-shadow:0 0 0 3px rgba(255,206,87,.16)}
+    .dot.ok{background:var(--ok); box-shadow:0 0 0 3px rgba(25,226,138,.16)}
+    .dot.bad{background:var(--bad); box-shadow:0 0 0 3px rgba(255,90,90,.16)}
+    .right{display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
+    button{
+      appearance:none; border:1px solid var(--stroke2);
+      background:rgba(255,255,255,.06);
+      color:var(--txt);
+      padding:8px 10px; border-radius:12px;
+      font-weight:900; font-size:12px;
+      cursor:pointer;
+    }
+    button:hover{border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.09)}
+    button:active{transform:translateY(1px)}
+    button.primary{
+      border-color:rgba(55,214,255,.35);
+      background:rgba(55,214,255,.10);
+    }
+    button.danger{
+      border-color:rgba(255,90,90,.35);
+      background:rgba(255,90,90,.10);
+    }
+    .row{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns: 1.2fr .7fr .7fr .7fr;
+      gap:10px;
+    }
+    .card{
+      background:var(--panel);
+      border:1px solid var(--stroke);
+      border-radius:var(--r);
+      box-shadow:var(--shadow);
+      padding:10px 12px;
+      min-width:0;
+    }
+    .field label{
+      display:block;
+      font-weight:900;
+      font-size:12px;
+      color:var(--mut);
+      margin-bottom:6px;
+    }
+    input, select{
+      width:100%;
+      border:1px solid var(--stroke2);
+      border-radius:12px;
+      padding:10px 10px;
+      background:rgba(0,0,0,.25);
+      color:var(--txt);
+      outline:none;
+      font-weight:800;
+    }
+    .mono{font-family:var(--mono)}
+    .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
+    .listTop{
+      margin-top:10px;
+      display:flex; gap:10px; align-items:center; justify-content:space-between;
+      padding:8px 10px;
+      border:1px solid var(--stroke);
+      background:rgba(255,255,255,.04);
+      border-radius:14px;
+    }
+    .listTop .meta{font-size:12px; color:var(--mut); font-weight:900}
+    .list{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap:10px;
+    }
+    .cam{
+      border:1px solid var(--stroke);
+      background:rgba(255,255,255,.04);
+      border-radius:14px;
+      padding:10px 10px;
+      display:flex;
+      gap:10px;
+      align-items:flex-start;
+      min-width:0;
+    }
+    .cam.active{border-color:rgba(55,214,255,.48); background:rgba(55,214,255,.08)}
+    .cam .mini{
+      flex:0 0 auto;
+      width:42px; height:42px;
+      border-radius:12px;
+      border:1px solid var(--stroke2);
+      background:rgba(0,0,0,.25);
+      display:grid; place-items:center;
+      font-weight:1000;
+      color:rgba(255,255,255,.88);
+      font-family:var(--mono);
+    }
+    .cam .body{min-width:0; flex:1 1 auto}
+    .t1{
+      font-weight:1000;
+      font-size:13px;
+      line-height:1.1;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .t2{
+      margin-top:3px;
+      font-size:12px;
+      color:var(--mut);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .tags{
+      margin-top:6px;
+      display:flex; gap:6px; flex-wrap:wrap;
+    }
+    .tag{
+      font-size:11px; font-weight:1000;
+      border:1px solid var(--stroke2);
+      background:rgba(255,255,255,.06);
+      padding:4px 7px;
+      border-radius:999px;
+      color:rgba(255,255,255,.86);
+      max-width:100%;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .tag.kind{border-color:rgba(255,255,255,.22); background:rgba(0,0,0,.22)}
+    .tag.src{border-color:rgba(55,214,255,.22); background:rgba(55,214,255,.08)}
+    .tag.place{border-color:rgba(255,206,87,.22); background:rgba(255,206,87,.08)}
+    .cam .actions{
+      flex:0 0 auto;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      align-items:stretch;
+    }
+    .smallBtn{
+      padding:7px 9px;
+      border-radius:12px;
+      font-size:12px;
+      font-weight:1000;
+    }
+    .star{
+      border-color:rgba(255,206,87,.28);
+      background:rgba(255,206,87,.10);
+    }
+    .star.on{
+      border-color:rgba(255,206,87,.52);
+      background:rgba(255,206,87,.18);
+    }
+    .foot{
+      margin-top:10px;
+      font-size:12px;
+      color:var(--mut);
+      line-height:1.35;
+    }
+    @media (max-width:860px){
+      .row{grid-template-columns:1fr 1fr; }
+      .list{grid-template-columns:1fr;}
+    }
+  </style>
+
+  <!-- Intento directo: cargar cams.js (ideal que exponga window.CAM_LIST o var CAM_LIST) -->
+  <script id="camsScript" src="./cams.js"></script>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <div class="top">
+      <div class="left">
+        <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Conectando…</span></div>
+        <div class="brand">
+          <div class="k">OBS CAM PANEL</div>
+          <div class="n" id="nowTxt">—</div>
+        </div>
+      </div>
+      <div class="right">
+        <button class="smallBtn" id="btnPrev">⟵ PREV</button>
+        <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
+        <button class="smallBtn" id="btnPlay">⏯ PLAY</button>
+        <button class="smallBtn" id="btnReload">↻ RECARGAR LISTA</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card field">
+        <label>Buscar</label>
+        <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube…" />
+        <div class="hint">Tip: la lista resalta la cámara activa (según <span class="mono">rlc_state_v1</span>). Click en “IR” para saltar.</div>
+      </div>
+
+      <div class="card field">
+        <label>Filtro kind</label>
+        <select id="kind">
+          <option value="">Todos</option>
+          <option value="youtube">YouTube</option>
+          <option value="hls">HLS</option>
+          <option value="image">Image</option>
+          <option value="other">Otros</option>
+        </select>
+        <div class="hint">Si tienes <span class="mono">?key=</span> en el player, ponlo también aquí.</div>
+      </div>
+
+      <div class="card field">
+        <label>Key (namespacing)</label>
+        <input id="key" class="mono" placeholder="vacío = sin key" />
+        <div class="hint"><span class="mono">allowLegacy</span>: <span id="legacyTxt">1</span></div>
+      </div>
+
+      <div class="card field">
+        <label>Player</label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="smallBtn" id="btnOpen">Abrir player</button>
+          <button class="smallBtn" id="btnSync">Ir a activa</button>
+        </div>
+        <div class="hint">Asegúrate de abrir este panel y el player en el **mismo dominio** (GitHub Pages) para que BC/LS funcionen.</div>
+      </div>
+    </div>
+
+    <div class="listTop">
+      <div class="meta" id="countTxt">Cams: —</div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="smallBtn" id="btnFavs">★ Solo favoritos</button>
+        <button class="smallBtn danger" id="btnClearFavs">✕ Limpiar favs</button>
+      </div>
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <div class="foot">
+      Si algo no responde: revisa que <b>player</b> esté en la misma <b>origin</b> que este panel, y que el player use la misma <span class="mono">key</span>.
+      Este panel manda comandos por <span class="mono">BroadcastChannel</span> + <span class="mono">localStorage</span> a <span class="mono">rlc_cmd_v1(:key)</span>.
+    </div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ───────────────────────── Helpers ─────────────────────────
+  const qs = (s, r=document) => r.querySelector(s);
+  const safeJson = (raw, fb=null) => { try { return JSON.parse(raw); } catch (_) { return fb; } };
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const norm = (s)=>String(s||"").trim().toLowerCase();
+  const esc = (s)=>String(s||"");
+  const now = ()=>Date.now();
+
+  function uuidLike(){
+    try { return crypto.randomUUID(); } catch(_){}
+    return "n"+Math.random().toString(16).slice(2)+String(Date.now());
+  }
+
+  // ───────────────────────── Params / settings ─────────────────────────
+  const u = new URL(location.href);
+  const allowLegacy = (u.searchParams.get("allowLegacy") == null) ? true : (u.searchParams.get("allowLegacy")==="1" || u.searchParams.get("allowLegacy")==="true");
+  qs("#legacyTxt").textContent = allowLegacy ? "1" : "0";
+
+  const KEY_STORE = "rlc_obs_panel_key_v1";
+  const KEY_PARAM = (u.searchParams.get("key") || "").trim();
+  const KEY_SAVED = (localStorage.getItem(KEY_STORE) || "").trim();
+  let KEY = KEY_PARAM || KEY_SAVED || "";
+
+  const playerUrlParam = (u.searchParams.get("player") || "./index.html").trim();
+
+  // ───────────────────────── Bus keys ─────────────────────────
+  const BUS_BASE = "rlc_bus_v1";
+  const CMD_KEY_BASE = "rlc_cmd_v1";
+  const STATE_KEY_BASE = "rlc_state_v1";
+
+  let BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  let CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
+  let STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+
+  // legacy (global)
+  const CMD_KEY_LEGACY = CMD_KEY_BASE;
+  const STATE_KEY_LEGACY = STATE_KEY_BASE;
+  const BUS_LEGACY = BUS_BASE;
+
+  let bc = null;
+  let bcLegacy = null;
+
+  function openChannels(){
+    try { bc?.close?.(); } catch(_){}
+    try { bcLegacy?.close?.(); } catch(_){}
+    bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
+    bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+    try {
+      if (bc) bc.onmessage = (ev)=>onBus(ev?.data, true);
+    } catch(_){}
+    try {
+      if (bcLegacy) bcLegacy.onmessage = (ev)=>onBus(ev?.data, false);
+    } catch(_){}
+  }
+
+  // ───────────────────────── UI refs ─────────────────────────
+  const dot = qs("#dot");
+  const statusTxt = qs("#statusTxt");
+  const nowTxt = qs("#nowTxt");
+
+  const listEl = qs("#list");
+  const qEl = qs("#q");
+  const kindEl = qs("#kind");
+  const keyEl = qs("#key");
+  const countTxt = qs("#countTxt");
+
+  const btnPrev = qs("#btnPrev");
+  const btnNext = qs("#btnNext");
+  const btnPlay = qs("#btnPlay");
+  const btnReload = qs("#btnReload");
+  const btnOpen = qs("#btnOpen");
+  const btnSync = qs("#btnSync");
+  const btnFavs = qs("#btnFavs");
+  const btnClearFavs = qs("#btnClearFavs");
+
+  keyEl.value = KEY;
+
+  // ───────────────────────── Storage helpers ─────────────────────────
+  function lsGet(k){ try { return localStorage.getItem(k); } catch(_) { return null; } }
+  function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(_){} }
+
+  // ───────────────────────── Command send ─────────────────────────
+  let lastSendAt = 0;
+  function sendCmd(cmd, payload={}){
+    const t = now();
+    if (t - lastSendAt < 70) return; // micro rate-limit
+    lastSendAt = t;
+
+    const msg = { type:"cmd", ts: t, nonce: uuidLike(), cmd: String(cmd||""), payload: payload||{} };
+    if (KEY) msg.key = KEY;
+
+    const raw = JSON.stringify(msg);
+
+    // main
+    lsSet(CMD_KEY, raw);
+    try { bc && bc.postMessage(msg); } catch(_){}
+
+    // legacy opcional
+    if (allowLegacy){
+      lsSet(CMD_KEY_LEGACY, raw);
+      try { bcLegacy && bcLegacy.postMessage(msg); } catch(_){}
+    }
+  }
+
+  // ───────────────────────── State read / status ─────────────────────────
+  let lastState = null;
+  let lastSeenAt = 0;
+
+  function setConn(ok){
+    dot.classList.remove("ok","bad");
+    if (ok === true) dot.classList.add("ok");
+    else if (ok === false) dot.classList.add("bad");
+  }
+
+  function readState(){
+    const a = safeJson(lsGet(STATE_KEY), null);
+    const b = allowLegacy ? safeJson(lsGet(STATE_KEY_LEGACY), null) : null;
+    // si hay KEY, preferimos state con key matching; si no, cualquiera
+    let s = null;
+    if (KEY){
+      if (a && String(a.key||"") === KEY) s = a;
+      else if (b && String(b.key||"") === KEY) s = b;
+      else if (a && !a.key) s = a;
+      else if (b && !b.key) s = b;
+    } else {
+      s = a || b;
+    }
+    if (s && typeof s === "object") return s;
+    return null;
+  }
+
+  function renderTopFromState(s){
+    if (!s) return;
+    const cam = s.cam || {};
+    const title = cam.title || "—";
+    const place = cam.place ? ` — ${cam.place}` : "";
+    const kind = cam.kind ? ` · ${cam.kind}` : "";
+    nowTxt.textContent = `${title}${place}${kind}`;
+
+    const playing = !!s.playing;
+    statusTxt.textContent = playing ? "LIVE" : "PAUSA";
+    setConn(true);
+    btnPlay.textContent = playing ? "⏸ PAUSE" : "▶ PLAY";
+  }
+
+  function onBus(msg, isMain){
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "state"){
+      if (KEY){
+        const mk = String(msg.key||"").trim();
+        if (mk && mk !== KEY) return;
+        if (!mk && !allowLegacy) return;
+      }
+      lastState = msg;
+      lastSeenAt = now();
+      renderTopFromState(msg);
+      markActiveCam();
+    }
+  }
+
+  window.addEventListener("storage", (e)=>{
+    const k = String(e.key||"");
+    if (!k) return;
+    if (k === STATE_KEY || (allowLegacy && k === STATE_KEY_LEGACY)){
+      const s = readState();
+      if (s){
+        lastState = s; lastSeenAt = now();
+        renderTopFromState(s);
+        markActiveCam();
+      }
+    }
+  });
+
+  // ───────────────────────── CAM LIST load ─────────────────────────
+  let cams = [];
+  let favOnly = false;
+
+  const FAV_KEY_BASE = "rlc_obs_favs_v1";
+  const FAV_KEY = KEY ? `${FAV_KEY_BASE}:${KEY}` : FAV_KEY_BASE;
+
+  function loadFavs(){
+    const arr = safeJson(lsGet(FAV_KEY), []);
+    const set = new Set(Array.isArray(arr) ? arr.map(String) : []);
+    return set;
+  }
+  function saveFavs(set){
+    lsSet(FAV_KEY, JSON.stringify(Array.from(set)));
+  }
+  let favs = loadFavs();
+
+  function getGlobalCamList(){
+    // intenta window.CAM_LIST primero
+    if (Array.isArray(window.CAM_LIST)) return window.CAM_LIST.slice();
+    // si cams.js declaró var CAM_LIST, en no-module suele vivir en global también
+    try {
+      if (typeof CAM_LIST !== "undefined" && Array.isArray(CAM_LIST)) return CAM_LIST.slice();
+    } catch(_){}
+    return null;
+  }
+
+  async function fetchEvalCams(path){
+    try {
+      const res = await fetch(path, { cache:"no-store" });
+      const code = await res.text();
+      // Ejecuta en función para poder "return CAM_LIST" aunque sea const/let
+      const fn = new Function("window", code + "\n;return (window.CAM_LIST || (typeof CAM_LIST!=='undefined'?CAM_LIST:null));");
+      const out = fn(window);
+      if (Array.isArray(out)) return out.slice();
+    } catch(_){}
+    return null;
+  }
+
+  async function loadCams(){
+    // 1) ya está
+    let list = getGlobalCamList();
+    // 2) espera un pelín por si script está cargando
+    if (!list){
+      await new Promise(r=>setTimeout(r, 120));
+      list = getGlobalCamList();
+    }
+    // 3) fallback fetch+eval (si no expone global)
+    if (!list){
+      const path = (u.searchParams.get("cams") || "./cams.js").trim();
+      list = await fetchEvalCams(path);
+    }
+
+    cams = Array.isArray(list) ? list.filter(Boolean) : [];
+    renderList();
+  }
+
+  // ───────────────────────── Render list ─────────────────────────
+  function camKindBadge(kind){
+    const k = norm(kind);
+    if (k === "youtube") return "YT";
+    if (k === "hls") return "HLS";
+    if (k === "image") return "IMG";
+    return "CAM";
+  }
+
+  function camText(c){
+    return [
+      c.id, c.kind, c.title, c.place, c.source, c.originUrl,
+      (Array.isArray(c.tags) ? c.tags.join(" ") : (c.tags || "")),
+      (c.tag || ""), (c.category || ""), (c.categories || "")
+    ].map(x=>String(x||"")).join(" ").toLowerCase();
+  }
+
+  function kindFilterOk(c){
+    const kf = norm(kindEl.value);
+    if (!kf) return true;
+    const ck = norm(c.kind);
+    if (kf === "other") return ck !== "youtube" && ck !== "hls" && ck !== "image";
+    return ck === kf;
+  }
+
+  function queryOk(c){
+    const q = norm(qEl.value);
+    if (!q) return true;
+    return camText(c).includes(q);
+  }
+
+  function renderList(){
+    const filtered = cams.filter(c => c && c.id != null).filter(kindFilterOk).filter(queryOk)
+      .filter(c => !favOnly || favs.has(String(c.id)));
+
+    countTxt.textContent = `Cams: ${filtered.length}/${cams.length}${favOnly ? " · ★ favs" : ""}`;
+
+    listEl.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
+    for (const c of filtered){
+      const id = String(c.id);
+      const el = document.createElement("div");
+      el.className = "cam";
+      el.dataset.id = id;
+
+      const mini = document.createElement("div");
+      mini.className = "mini";
+      mini.textContent = camKindBadge(c.kind);
+
+      const body = document.createElement("div");
+      body.className = "body";
+
+      const t1 = document.createElement("div");
+      t1.className = "t1";
+      t1.textContent = c.title || `Cam ${id}`;
+
+      const t2 = document.createElement("div");
+      t2.className = "t2";
+      t2.textContent = `${c.place ? c.place + " · " : ""}${c.source || ""}`.trim() || "—";
+
+      const tags = document.createElement("div");
+      tags.className = "tags";
+
+      const tagKind = document.createElement("div");
+      tagKind.className = "tag kind";
+      tagKind.textContent = (c.kind || "cam");
+
+      const tagId = document.createElement("div");
+      tagId.className = "tag";
+      tagId.textContent = `id:${id}`;
+
+      tags.appendChild(tagKind);
+      tags.appendChild(tagId);
+
+      if (c.source){
+        const s = document.createElement("div");
+        s.className = "tag src";
+        s.textContent = c.source;
+        tags.appendChild(s);
+      }
+      if (c.place){
+        const p = document.createElement("div");
+        p.className = "tag place";
+        p.textContent = c.place;
+        tags.appendChild(p);
+      }
+
+      body.appendChild(t1);
+      body.appendChild(t2);
+      body.appendChild(tags);
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const bGo = document.createElement("button");
+      bGo.className = "smallBtn primary";
+      bGo.textContent = "IR";
+      bGo.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        sendCmd("GOTO", { id });
+      });
+
+      const bStar = document.createElement("button");
+      bStar.className = "smallBtn star" + (favs.has(id) ? " on" : "");
+      bStar.textContent = favs.has(id) ? "★" : "☆";
+      bStar.title = "Favorito";
+      bStar.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        if (favs.has(id)) favs.delete(id);
+        else favs.add(id);
+        saveFavs(favs);
+        renderList();
+      });
+
+      const bOpen = document.createElement("button");
+      bOpen.className = "smallBtn";
+      bOpen.textContent = "ORIG";
+      bOpen.title = "Abrir originUrl";
+      bOpen.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        const url = c.originUrl || "";
+        if (url) window.open(url, "_blank", "noopener");
+      });
+
+      actions.appendChild(bGo);
+      actions.appendChild(bStar);
+      actions.appendChild(bOpen);
+
+      el.appendChild(mini);
+      el.appendChild(body);
+      el.appendChild(actions);
+
+      frag.appendChild(el);
+    }
+
+    listEl.appendChild(frag);
+    markActiveCam();
+  }
+
+  function markActiveCam(){
+    const s = lastState || readState();
+    const activeId = s && s.cam && s.cam.id != null ? String(s.cam.id) : "";
+    const items = listEl.querySelectorAll(".cam");
+    for (const el of items){
+      const isOn = activeId && el.dataset.id === activeId;
+      el.classList.toggle("active", !!isOn);
+    }
+  }
+
+  function scrollToActive(){
+    const s = lastState || readState();
+    const activeId = s && s.cam && s.cam.id != null ? String(s.cam.id) : "";
+    if (!activeId) return;
+    const el = listEl.querySelector(`.cam[data-id="${CSS.escape(activeId)}"]`);
+    if (el) el.scrollIntoView({ block:"center", behavior:"smooth" });
+  }
+
+  // ───────────────────────── Controls ─────────────────────────
+  btnNext.addEventListener("click", ()=>sendCmd("NEXT"));
+  btnPrev.addEventListener("click", ()=>sendCmd("PREV"));
+  btnPlay.addEventListener("click", ()=>{
+    // toggle play seguro: si sabemos el estado, enviamos PLAY/PAUSE; si no, TOGGLE
+    const s = lastState || readState();
+    if (s && typeof s.playing === "boolean") sendCmd(s.playing ? "PAUSE" : "PLAY");
+    else sendCmd("TOGGLE_PLAY");
+  });
+
+  btnReload.addEventListener("click", ()=>loadCams());
+
+  btnOpen.addEventListener("click", ()=>{
+    const base = playerUrlParam || "./index.html";
+    const url = new URL(base, location.href);
+    if (KEY) url.searchParams.set("key", KEY);
+    if (!allowLegacy) url.searchParams.set("allowLegacy", "0");
+    window.open(url.toString(), "_blank", "noopener");
+  });
+
+  btnSync.addEventListener("click", ()=>scrollToActive());
+
+  btnFavs.addEventListener("click", ()=>{
+    favOnly = !favOnly;
+    btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
+    renderList();
+  });
+
+  btnClearFavs.addEventListener("click", ()=>{
+    favs = new Set();
+    saveFavs(favs);
+    renderList();
+  });
+
+  qEl.addEventListener("input", ()=>renderList());
+  kindEl.addEventListener("change", ()=>renderList());
+
+  keyEl.addEventListener("change", ()=>{
+    KEY = (keyEl.value || "").trim();
+    localStorage.setItem(KEY_STORE, KEY);
+
+    BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+    CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
+    STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+
+    favs = loadFavs();
+    openChannels();
+    loadCams();
+  });
+
+  // ───────────────────────── Boot / polls ─────────────────────────
+  function tick(){
+    const s = readState();
+    if (s){
+      lastState = s;
+      lastSeenAt = now();
+      renderTopFromState(s);
+    }
+    // watchdog visual: si hace mucho que no vemos state, marcamos warning
+    const age = now() - (lastSeenAt || 0);
+    if (age > 6000) { setConn(null); statusTxt.textContent = "SIN STATE"; }
+    else setConn(true);
+  }
+
+  openChannels();
+  loadCams();
+
+  // primer state
+  const s0 = readState();
+  if (s0){ lastState = s0; lastSeenAt = now(); renderTopFromState(s0); }
+
+  setInterval(tick, 700);
+})();
+</script>
+</body>
+</html>
