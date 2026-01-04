@@ -1,16 +1,18 @@
-/* catalogView.js — RLC Catalog View v1.2.0 (MULTI-TILES)
+/* catalogView.js — RLC Catalog View v1.2.1 (MULTI-TILES + SINGLETON HARDEN)
    ✅ Catálogo en rejilla configurable (N tiles)
-   ✅ Modo "follow": SOLO 1 tile (followSlot) sigue al state (los demás quedan sticky)
-   ✅ Modo "sync": rotan TODOS los tiles a la vez (estilo antiguo)
-   ✅ Slots "sticky" guardados en localStorage (por KEY) y migran de 4 => N
-   ✅ Click-to-cycle: cambia SOLO ese tile a la siguiente cam (SHIFT => anterior)
+   ✅ Modo "follow": SOLO 1 tile (followSlot) sigue al state (los demás sticky)
+   ✅ Modo "sync": rotan TODOS los tiles a la vez
+   ✅ Slots sticky guardados en localStorage (KEY) y migran 4 => N
+   ✅ Click-to-cycle: cambia SOLO ese tile (SHIFT => anterior)
    ✅ ytCookies: true => youtube.com/embed (permite login/Premium si existe)
-   ✅ Oculta HUD single cuando catálogo ON + avisa a otros módulos ("rlc_catalog_mode")
-   ✅ WX por tile si existe window.RLCWx.getSummaryForCam():
-      - NO placeholders ("…")
-      - Solo visible con datos válidos (temp+time)
-      - Refresh suave cada X segundos, sin flicker
-   ✅ Compat total: recibe CFG vieja (quad 4) y funciona como antes
+   ✅ Oculta HUD single cuando catálogo ON + avisa "rlc_catalog_mode"
+   ✅ WX por tile si existe window.RLCWx.getSummaryForCam()
+      - sin placeholders ("…"), solo visible con datos válidos
+      - refresh suave sin flicker
+   ✅ Compat total: cfg vieja (quad 4) funciona como antes
+   ✅ Harden:
+      - singleton con destroy() (evita timers duplicados)
+      - polling optimizado: solo re-render si cambia cam (id/index)
 */
 
 (() => {
@@ -18,8 +20,14 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_CATALOG_VIEW_LOADED_V120";
-  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+  const VER = "1.2.1";
+  const INST_KEY = "__RLC_CATALOG_VIEW_INSTANCE__";
+
+  try {
+    const prev = g[INST_KEY];
+    if (prev && prev.__ver === VER) return;
+    if (prev && typeof prev.destroy === "function") prev.destroy();
+  } catch (_) {}
 
   // ───────────────────────── Keys / Bus
   const BUS_BASE = "rlc_bus_v1";
@@ -71,18 +79,17 @@
   const DEFAULTS = {
     enabled: false,
 
-    // NUEVO multi-tiles
-    layout: "quad",     // quad|six|nine|twelve|sixteen|custom
-    tiles: 4,           // 1..25
-    cols: 2,            // 1..6
-    rows: 2,            // 1..6
+    layout: "quad",
+    tiles: 4,
+    cols: 2,
+    rows: 2,
 
     gapPx: 8,
     labels: true,
     muted: true,
 
-    mode: "follow",     // "follow" | "sync"
-    followSlot: 0,      // 0..tiles-1
+    mode: "follow",
+    followSlot: 0,
     ytCookies: true,
     clickCycle: true,
 
@@ -106,7 +113,6 @@
     const c = Object.assign({}, DEFAULTS, inCfg || {});
     c.enabled = (c.enabled === true);
 
-    // compat: si te llega cfg vieja sin tiles/cols/rows, queda en quad
     c.gapPx = clamp(parseInt(c.gapPx, 10) || DEFAULTS.gapPx, 0, 24);
     c.labels = (c.labels !== false);
     c.muted = (c.muted !== false);
@@ -116,19 +122,14 @@
 
     let layout = safeStr(c.layout).toLowerCase();
 
-    // layout numérico "10" => custom auto
     if (layout && /^\d+$/.test(layout)) {
       const g0 = autoGridForTiles(parseInt(layout, 10));
       c.layout = "custom";
-      c.tiles = g0.tiles;
-      c.cols = g0.cols;
-      c.rows = g0.rows;
+      c.tiles = g0.tiles; c.cols = g0.cols; c.rows = g0.rows;
     } else if (layout in LAYOUTS) {
       const p = LAYOUTS[layout];
       c.layout = layout;
-      c.tiles = p.tiles;
-      c.cols = p.cols;
-      c.rows = p.rows;
+      c.tiles = p.tiles; c.cols = p.cols; c.rows = p.rows;
     } else {
       c.layout = "custom";
       const g1 = autoGridForTiles(c.tiles);
@@ -141,8 +142,7 @@
         c.rows = clamp(Math.ceil(c.tiles / c.cols), 1, 6);
         if ((c.cols * c.rows) < c.tiles) {
           const g2 = autoGridForTiles(c.tiles);
-          c.cols = g2.cols;
-          c.rows = g2.rows;
+          c.cols = g2.cols; c.rows = g2.rows;
         }
       }
     }
@@ -187,6 +187,43 @@
     } catch (_) { return null; }
   }
 
+  function stateSig(st) {
+    if (!st) return "";
+    const id = String(st?.cam?.id || "");
+    const idx = Number.isFinite(st?.index) ? String(st.index | 0) : "";
+    return `${idx}|${id}`;
+  }
+
+  // ───────────────────────── Instance plumbing
+  const inst = {
+    __ver: VER,
+    _timers: new Set(),
+    _unsub: [],
+    destroy() {
+      try {
+        for (const off of inst._unsub) { try { off(); } catch (_) {} }
+        inst._unsub.length = 0;
+      } catch (_) {}
+
+      try {
+        for (const t of inst._timers) { try { clearInterval(t); clearTimeout(t); } catch (_) {} }
+        inst._timers.clear();
+      } catch (_) {}
+
+      try { bcMain && bcMain.close && bcMain.close(); } catch (_) {}
+      try { bcLegacy && bcLegacy.close && bcLegacy.close(); } catch (_) {}
+
+      try { if (g[INST_KEY] === inst) delete g[INST_KEY]; } catch (_) {}
+    }
+  };
+  g[INST_KEY] = inst;
+
+  function on(el, ev, fn, opts) {
+    if (!el || !el.addEventListener) return;
+    el.addEventListener(ev, fn, opts);
+    inst._unsub.push(() => { try { el.removeEventListener(ev, fn, opts); } catch (_) {} });
+  }
+
   // ───────────────────────── UI (styles + root)
   function injectStylesOnce() {
     if (qs("#rlcCatalogStyle")) return;
@@ -220,7 +257,6 @@
   box-shadow: 0 18px 55px rgba(0,0,0,.55);
 }
 
-/* clave: en catálogo, los medios NO capturan el click (clickCycle funciona siempre) */
 #rlcCatalog.on .slot iframe,
 #rlcCatalog.on .slot video,
 #rlcCatalog.on .slot img{
@@ -327,14 +363,23 @@
       mediaLayer.appendChild(root);
     }
 
+    // Si cae en body/html, mejor fixed para cubrir viewport siempre
+    try {
+      if (mediaLayer === document.body || mediaLayer === document.documentElement) {
+        root.style.position = "fixed";
+        root.style.inset = "0";
+      } else {
+        root.style.position = "absolute";
+        root.style.inset = "0";
+      }
+    } catch (_) {}
+
     const prev = parseInt(root.dataset.rlcSlots || "0", 10) || 0;
     const hasGrid = !!root.querySelector(".grid");
 
-    // si está vacío/roto o cambia el número => reconstruir
     if (!hasGrid || prev !== count) {
       root.innerHTML = gridHtml(count);
       root.dataset.rlcSlots = String(count);
-      // rehook clicks tras rebuild
       root.dataset.rlcClicksHooked = "0";
     }
 
@@ -350,7 +395,7 @@
     if (img) img.style.display = on ? "" : "none";
   }
 
-  // ✅ ocultar HUD single
+  // HUD single hide
   let _hudEl = null;
   let _hudPrevDisplay = null;
   function findHudEl() {
@@ -426,7 +471,6 @@
 
   function ytEmbed(url) {
     const u = String(url || "");
-
     let id = "";
     try {
       if (/\/embed\//i.test(u)) {
@@ -462,8 +506,8 @@
 
   function showOnly(slot, kind) {
     if (slot.iframe) slot.iframe.style.display = (kind === "iframe" || kind === "yt") ? "block" : "none";
-    if (slot.video) slot.video.style.display = (kind === "hls") ? "block" : "none";
-    if (slot.img) slot.img.style.display = (kind === "img") ? "block" : "none";
+    if (slot.video)  slot.video.style.display  = (kind === "hls") ? "block" : "none";
+    if (slot.img)    slot.img.style.display    = (kind === "img") ? "block" : "none";
   }
 
   // ───────────────────────── Labels
@@ -482,7 +526,7 @@
     if (chipT) chipT.textContent = p ? `${t} — ${p}` : t;
   }
 
-  // ───────────────────────── WX (NO placeholders / sin flicker)
+  // ───────────────────────── WX
   function hideWxChip(slotEl) {
     const chip = slotEl.querySelector('[data-chip="wx"]');
     if (!chip) return;
@@ -601,7 +645,6 @@
     setLabel(slotEl, cam, n);
     setWxChipInitial(slot, cam);
 
-    // reset medias
     if (slot.iframe) slot.iframe.src = "about:blank";
     if (slot.img) slot.img.src = "";
     if (slot.video) {
@@ -685,14 +728,13 @@
     return out;
   }
 
-  // ───────────────────────── Sticky slots (multi)
+  // ───────────────────────── Sticky slots
   function loadSlotIds(nWanted) {
     const n = clamp((parseInt(nWanted, 10) || 4), 1, 25);
     const obj = readJson(SLOTS_KEY);
     const arr = Array.isArray(obj?.ids) ? obj.ids.map(x => String(x || "")) : null;
     if (!arr || !arr.length) return null;
 
-    // migración: 4 => N o N => 4
     const out = arr.slice(0, n);
     while (out.length < n) out.push("");
     return out;
@@ -762,7 +804,6 @@
   function applyCfgToUI() {
     const grid = root.querySelector(".grid");
     if (grid) {
-      // set por JS (más compatible que var() en repeat() en algunos navegadores)
       grid.style.gap = `${CFG.gapPx}px`;
       grid.style.gridTemplateColumns = `repeat(${CFG.cols | 0}, 1fr)`;
       grid.style.gridTemplateRows = `repeat(${CFG.rows | 0}, 1fr)`;
@@ -796,6 +837,7 @@
       if (!CFG.labels || !CFG.wxTiles) return;
       for (const s of slots) refreshWxChipSoft(s);
     }, ms);
+    inst._timers.add(wxTimer);
   }
 
   function setCatalogEnabled(on) {
@@ -865,13 +907,11 @@
     const list = getCamList();
     if (!list.length) return;
 
-    // si cambió cfg (incluye tiles), resincroniza DOM
     const sig = cfgSig();
     const cfgChanged = (sig !== lastCfgSig);
     if (cfgChanged) {
       lastCfgSig = sig;
       syncDomToCfg();
-      // reset render cache al cambiar estructura fuerte
       if (lastRenderedIds.length !== slots.length) lastRenderedIds = Array(slots.length).fill("");
     }
 
@@ -880,7 +920,6 @@
     let ids = loadSlotIds(nTiles);
 
     if (CFG.mode === "sync") {
-      // rotan N
       let idx = -1;
       const camId = lastState?.cam?.id;
       if (Number.isFinite(lastState?.index)) idx = lastState.index | 0;
@@ -891,7 +930,6 @@
       ids = fillMissingSlots(list, ensureUnique(ids));
       saveSlotIds(ids);
     } else {
-      // follow: solo un slot sigue el state
       if (!ids) ids = initSlotsFromState(list, nTiles);
       ids = fillMissingSlots(list, ensureUnique(ids));
 
@@ -917,7 +955,6 @@
 
     applyCfgToUI();
 
-    // render solo tiles cambiados (o todos si cfg cambió)
     for (let i = 0; i < slots.length; i++) {
       const id = String(ids?.[i] || "");
       if (!cfgChanged && id === lastRenderedIds[i]) continue;
@@ -939,7 +976,7 @@
     if (cfgChanged) startWxRefresh();
   }
 
-  // click-to-cycle: cambia solo ese tile
+  // click-to-cycle
   function cycleSlot(slotIndex, dir = 1) {
     if (!CFG.enabled || !CFG.clickCycle) return;
 
@@ -976,6 +1013,7 @@
   }
 
   // ───────────────────────── Bus listeners
+  let _lastStateSig = "";
   function onBusMessage(msg, isMain) {
     if (!msg || typeof msg !== "object") return;
 
@@ -989,6 +1027,9 @@
 
     if (msg.type === "state") {
       if (!keyOk(msg, isMain)) return;
+      const sig = stateSig(msg);
+      if (sig && sig === _lastStateSig) return; // evita renders por “tick” del timer
+      _lastStateSig = sig;
       lastState = msg;
       if (CFG.enabled) updateCatalog();
       return;
@@ -998,17 +1039,19 @@
   if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
   if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
 
-  // polling suave
-  setInterval(() => {
+  // polling suave (optimizado)
+  const poll = setInterval(() => {
     const st = readStateFromLS();
-    if (st) {
-      lastState = st;
-      if (CFG.enabled) updateCatalog();
-    }
+    if (!st) return;
+    const sig = stateSig(st);
+    if (sig && sig === _lastStateSig) return;
+    _lastStateSig = sig;
+    lastState = st;
+    if (CFG.enabled) updateCatalog();
   }, 550);
+  inst._timers.add(poll);
 
-  // storage cfg
-  window.addEventListener("storage", (e) => {
+  on(window, "storage", (e) => {
     if (!e) return;
     if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
       CFG = normalizeCfg(loadCfg());
@@ -1017,8 +1060,7 @@
     }
   });
 
-  // al volver a pestaña: refresh WX
-  document.addEventListener("visibilitychange", () => {
+  on(document, "visibilitychange", () => {
     if (!CFG.enabled) return;
     if (document.visibilityState !== "visible") return;
     for (const s of slots) refreshWxChipSoft(s);
@@ -1034,7 +1076,7 @@
       const el = root.querySelector(`.slot[data-slot="${i}"]`);
       if (!el) continue;
 
-      el.addEventListener("click", (ev) => {
+      on(el, "click", (ev) => {
         if (!CFG.enabled || !CFG.clickCycle) return;
         const back = !!ev?.shiftKey;
         cycleSlot(i, back ? -1 : 1);
@@ -1047,7 +1089,11 @@
     syncDomToCfg();
     setCatalogEnabled(CFG.enabled);
 
-    lastState = readStateFromLS() || lastState;
+    const st = readStateFromLS();
+    if (st) {
+      _lastStateSig = stateSig(st);
+      lastState = st;
+    }
 
     if (CFG.enabled) updateCatalog();
   }
