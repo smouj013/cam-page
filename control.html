@@ -8,12 +8,10 @@
   <meta name="theme-color" content="#0b0f14" />
   <meta name="format-detection" content="telephone=no" />
   <meta name="robots" content="noindex,nofollow" />
-  <meta name="referrer" content="strict-origin-when-cross-origin" />
 
   <title>Random Live Cams — Control</title>
   <meta name="description" content="Random Live Cams — Control Room (votación, overlays, ticker, catálogo CCTV, ads notice, bot IRC, auto título Helix)." />
 
-  <!-- ✅ Mantener versión actual del control (NO subir) -->
   <script>window.APP_VERSION = "2.3.8";</script>
 
   <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
@@ -46,8 +44,8 @@
     })();
   </script>
 
-  <!-- ✅ Cache-bust ALINEADO con APP_VERSION (2.3.8) -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.8" />
+  <!-- Cache-bust -->
+  <link rel="stylesheet" href="./styles.css?v=2.3.5" />
 
   <!-- REPAIR MODE: control.html?repair=1 -->
   <script>
@@ -183,8 +181,7 @@
       border-radius:14px!important;
       border:1px solid rgba(255,255,255,.14)!important;
       background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06))!important;
-      box-shadow:0 10px 30px rgba(0,0,0,.30);
-      cursor:pointer;
+      box-shadow:0 10px 30px rgba(0,0,0,.30)
     }
 
     .btn.ghost{background:rgba(0,0,0,.18)!important;border-color:rgba(255,255,255,.12)!important}
@@ -203,7 +200,6 @@
     }
 
     .hint{color:var(--news-muted)}
-    .btn.full{display:block!important;width:100%!important}
 
     #ctlSelect.select{
       padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto
@@ -218,51 +214,7 @@
       padding:10px 12px
     }
 
-    /* ✅ Fallback de layout (baja especificidad, no pisa tu styles.css) */
-    :where(.controlWrap){
-      max-width:1180px;
-      margin:18px auto;
-      padding:14px;
-      box-sizing:border-box;
-    }
-    :where(.controlGrid){
-      display:grid;
-      grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));
-      gap:14px;
-      align-items:start;
-    }
-    :where(.card){
-      padding:14px;
-      box-sizing:border-box;
-    }
-    :where(.row){
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:space-between;
-      margin:10px 0;
-    }
-    :where(.row > span){flex:1; min-width:0}
-    :where(.row .input, .row .select){flex:0 0 160px; min-width:160px}
-    :where(.row2){
-      display:grid;
-      grid-template-columns:1fr 1fr;
-      gap:10px;
-      margin-top:10px;
-    }
-    :where(.controls3){
-      display:grid;
-      grid-template-columns:1fr 1fr 1fr;
-      gap:10px;
-      margin-top:10px;
-    }
-    :where(.mono){
-      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      letter-spacing:.02em;
-    }
-    :where(.dot){opacity:.65; padding:0 6px}
-    :where(.nowTitle){font-weight:900; font-size:18px; margin-top:6px}
-    :where(.nowMeta){opacity:.9; margin-top:6px}
+    .btn.full{display:block!important;width:100%!important}
 
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
       .controlHeader,.pill{
@@ -303,7 +255,7 @@
           <span class="mono" id="ctlNowTimer">--:--</span>
         </div>
         <div class="row2">
-          <a id="ctlOrigin" class="btn ghost" href="#" target="_blank" rel="noopener noreferrer">Abrir origen</a>
+          <a id="ctlOrigin" class="btn ghost" href="#" target="_blank" rel="noopener">Abrir origen</a>
           <button id="ctlCopyStreamUrl" class="btn" type="button">Copiar URL stream</button>
         </div>
       </div>
@@ -322,7 +274,6 @@
       <!-- AJUSTES -->
       <div class="card">
         <div class="cardTitle">Ajustes</div>
-
         <label class="row" for="ctlMins">
           <span>Duración (min)</span>
           <input id="ctlMins" class="input" type="number" min="1" max="120" step="1" value="5" inputmode="numeric" />
@@ -372,14 +323,6 @@
 
         <button id="ctlApplySettings" class="btn full" type="button">Aplicar ajustes</button>
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
-
-        <!-- ✅ Aliases opcionales (por si tu control.js los soporta como compat) -->
-        <div style="display:none">
-          <button id="ctlApply" type="button"></button>
-          <button id="ctlApplyAll" type="button"></button>
-          <button id="ctlHudToggle" type="button"></button>
-          <button id="ctlSettingsApply" type="button"></button>
-        </div>
       </div>
 
       <!-- CATALOG MODE -->
@@ -722,7 +665,7 @@
       </div>
     </section>
 
-    <footer class="controlFooter" aria-label="Ayuda rápida" style="margin-top:14px; opacity:.9">
+    <footer class="controlFooter" aria-label="Ayuda rápida">
       <span class="muted">Teclas: ←/→ navegar · Espacio pausa · R reshuffle · B ban</span>
       <span class="dot">•</span>
       <span class="muted mono" id="ctlBusName">Canal: rlc_bus_v1</span>
@@ -765,16 +708,12 @@
     })();
   </script>
 
-  <!-- Scripts (cache-bust ALINEADO con APP_VERSION 2.3.8) -->
-  <script defer src="./cams.js?v=2.3.8"></script>
-  <script defer src="./music.js?v=2.3.8"></script>
-
-  <!-- ✅ Control principal (ya lo tienes) -->
+  <!-- Scripts (cache-bust v2.3.5) -->
+  <script defer src="./cams.js?v=2.3.5"></script>
+  <script defer src="./music.js?v=2.3.4"></script>
   <script defer src="./control.js?v=2.3.8"></script>
-
-  <!-- Opcionales -->
-  <script defer src="./catalogControl.js?v=2.3.8"></script>
-  <script defer src="./pointsControl.js?v=2.3.8"></script>
-  <script defer src="./rlcTickersControl.js?v=2.3.8"></script>
+  <script defer src="./catalogControl.js?v=2.3.5"></script>
+  <script defer src="./pointsControl.js?v=2.3.5"></script>
+  <script defer src="./rlcTickersControl.js?v=2.3.5"></script>
 </body>
 </html>
