@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#060812" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>RLC — OBS Cam Panel</title>
+  <title>RLC — OBS Cam Panel (Hardened)</title>
 
   <style>
     :root{
@@ -35,7 +35,6 @@
                   linear-gradient(180deg, var(--bg), var(--bg2));
       color:var(--txt);
     }
-    a{color:inherit}
     .wrap{padding:10px 10px 14px; max-width:980px; margin:0 auto;}
     .top{
       display:flex; gap:10px; align-items:center; justify-content:space-between;
@@ -43,9 +42,7 @@
       background:var(--panel); border:1px solid var(--stroke); box-shadow:var(--shadow);
     }
     .left{display:flex; gap:10px; align-items:center; min-width:0}
-    .brand{
-      display:flex; flex-direction:column; gap:2px; min-width:0;
-    }
+    .brand{display:flex; flex-direction:column; gap:2px; min-width:0;}
     .brand .k{font-weight:900; letter-spacing:.3px; font-size:12px; color:var(--mut)}
     .brand .n{font-weight:1000; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
     .pill{
@@ -70,14 +67,8 @@
     }
     button:hover{border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.09)}
     button:active{transform:translateY(1px)}
-    button.primary{
-      border-color:rgba(55,214,255,.35);
-      background:rgba(55,214,255,.10);
-    }
-    button.danger{
-      border-color:rgba(255,90,90,.35);
-      background:rgba(255,90,90,.10);
-    }
+    button.primary{border-color:rgba(55,214,255,.35); background:rgba(55,214,255,.10);}
+    button.danger{border-color:rgba(255,90,90,.35); background:rgba(255,90,90,.10);}
     .row{
       margin-top:10px;
       display:grid;
@@ -99,7 +90,7 @@
       color:var(--mut);
       margin-bottom:6px;
     }
-    input, select{
+    input, select, textarea{
       width:100%;
       border:1px solid var(--stroke2);
       border-radius:12px;
@@ -109,6 +100,7 @@
       outline:none;
       font-weight:800;
     }
+    textarea{min-height:76px; resize:vertical; font-family:var(--mono); font-weight:700;}
     .mono{font-family:var(--mono)}
     .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
     .listTop{
@@ -161,10 +153,7 @@
       color:var(--mut);
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     }
-    .tags{
-      margin-top:6px;
-      display:flex; gap:6px; flex-wrap:wrap;
-    }
+    .tags{margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;}
     .tag{
       font-size:11px; font-weight:1000;
       border:1px solid var(--stroke2);
@@ -178,41 +167,36 @@
     .tag.kind{border-color:rgba(255,255,255,.22); background:rgba(0,0,0,.22)}
     .tag.src{border-color:rgba(55,214,255,.22); background:rgba(55,214,255,.08)}
     .tag.place{border-color:rgba(255,206,87,.22); background:rgba(255,206,87,.08)}
-    .cam .actions{
-      flex:0 0 auto;
-      display:flex;
-      flex-direction:column;
-      gap:8px;
-      align-items:stretch;
-    }
-    .smallBtn{
-      padding:7px 9px;
+    .cam .actions{flex:0 0 auto; display:flex; flex-direction:column; gap:8px; align-items:stretch;}
+    .smallBtn{padding:7px 9px; border-radius:12px; font-size:12px; font-weight:1000;}
+    .star{border-color:rgba(255,206,87,.28); background:rgba(255,206,87,.10);}
+    .star.on{border-color:rgba(255,206,87,.52); background:rgba(255,206,87,.18);}
+    details{margin-top:10px;}
+    summary{cursor:pointer; font-weight:1000; color:rgba(255,255,255,.86)}
+    .diag{margin-top:8px; font-size:12px; color:var(--mut); line-height:1.35}
+    .diag b{color:rgba(255,255,255,.86)}
+    .toast{
+      position:fixed; left:12px; bottom:12px;
+      background:rgba(0,0,0,.60);
+      border:1px solid rgba(255,255,255,.16);
       border-radius:12px;
-      font-size:12px;
-      font-weight:1000;
+      padding:10px 12px;
+      box-shadow:0 10px 34px rgba(0,0,0,.55);
+      font-size:12px; font-weight:900;
+      opacity:0; transform:translateY(8px);
+      transition:opacity .18s ease, transform .18s ease;
+      pointer-events:none;
+      max-width:min(520px, calc(100vw - 24px));
     }
-    .star{
-      border-color:rgba(255,206,87,.28);
-      background:rgba(255,206,87,.10);
-    }
-    .star.on{
-      border-color:rgba(255,206,87,.52);
-      background:rgba(255,206,87,.18);
-    }
-    .foot{
-      margin-top:10px;
-      font-size:12px;
-      color:var(--mut);
-      line-height:1.35;
-    }
+    .toast.on{opacity:1; transform:translateY(0)}
     @media (max-width:860px){
-      .row{grid-template-columns:1fr 1fr; }
+      .row{grid-template-columns:1fr 1fr;}
       .list{grid-template-columns:1fr;}
     }
   </style>
 
-  <!-- Intento directo: cargar cams.js (ideal que exponga window.CAM_LIST o var CAM_LIST) -->
-  <script id="camsScript" src="./cams.js"></script>
+  <!-- Carga cams.js si existe (ideal: window.CAM_LIST = [...]) -->
+  <script src="./cams.js"></script>
 </head>
 
 <body>
@@ -220,7 +204,7 @@
 
     <div class="top">
       <div class="left">
-        <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Conectando…</span></div>
+        <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
         <div class="brand">
           <div class="k">OBS CAM PANEL</div>
           <div class="n" id="nowTxt">—</div>
@@ -238,7 +222,7 @@
       <div class="card field">
         <label>Buscar</label>
         <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube…" />
-        <div class="hint">Tip: la lista resalta la cámara activa (según <span class="mono">rlc_state_v1</span>). Click en “IR” para saltar.</div>
+        <div class="hint">Resalta la cámara activa si detecta <span class="mono">state</span>. Click “IR” manda comando al player.</div>
       </div>
 
       <div class="card field">
@@ -250,13 +234,13 @@
           <option value="image">Image</option>
           <option value="other">Otros</option>
         </select>
-        <div class="hint">Si tienes <span class="mono">?key=</span> en el player, ponlo también aquí.</div>
+        <div class="hint">Si el player usa <span class="mono">?key=</span>, pon la misma aquí.</div>
       </div>
 
       <div class="card field">
         <label>Key (namespacing)</label>
         <input id="key" class="mono" placeholder="vacío = sin key" />
-        <div class="hint"><span class="mono">allowLegacy</span>: <span id="legacyTxt">1</span></div>
+        <div class="hint">allowLegacy: <span id="legacyTxt">1</span></div>
       </div>
 
       <div class="card field">
@@ -265,7 +249,7 @@
           <button class="smallBtn" id="btnOpen">Abrir player</button>
           <button class="smallBtn" id="btnSync">Ir a activa</button>
         </div>
-        <div class="hint">Asegúrate de abrir este panel y el player en el **mismo dominio** (GitHub Pages) para que BC/LS funcionen.</div>
+        <div class="hint">Si NO aparece state, probablemente OBS no comparte storage entre Dock y BrowserSource.</div>
       </div>
     </div>
 
@@ -279,32 +263,62 @@
 
     <div class="list" id="list"></div>
 
-    <div class="foot">
-      Si algo no responde: revisa que <b>player</b> esté en la misma <b>origin</b> que este panel, y que el player use la misma <span class="mono">key</span>.
-      Este panel manda comandos por <span class="mono">BroadcastChannel</span> + <span class="mono">localStorage</span> a <span class="mono">rlc_cmd_v1(:key)</span>.
-    </div>
+    <details>
+      <summary>Diagnóstico (por qué no llega al player)</summary>
+      <div class="card" style="margin-top:10px">
+        <div class="diag" id="diagTxt">—</div>
+        <div style="margin-top:10px; display:grid; gap:10px; grid-template-columns:1fr 1fr;">
+          <div>
+            <div class="diag"><b>Último state (raw)</b></div>
+            <textarea id="diagState" readonly></textarea>
+          </div>
+          <div>
+            <div class="diag"><b>Último cmd enviado (raw)</b></div>
+            <textarea id="diagCmd" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </details>
+
   </div>
+
+  <div class="toast" id="toast">—</div>
 
 <script>
 (() => {
   "use strict";
 
-  // ───────────────────────── Helpers ─────────────────────────
+  // ───────────────────────── Utils ─────────────────────────
   const qs = (s, r=document) => r.querySelector(s);
-  const safeJson = (raw, fb=null) => { try { return JSON.parse(raw); } catch (_) { return fb; } };
-  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  const norm = (s)=>String(s||"").trim().toLowerCase();
-  const esc = (s)=>String(s||"");
   const now = ()=>Date.now();
+  const norm = (s)=>String(s||"").trim().toLowerCase();
+  const safeJson = (raw, fb=null) => { try { return JSON.parse(raw); } catch (_) { return fb; } };
+
+  const cssEscape = (s)=>{
+    try { return CSS.escape(String(s)); } catch(_){}
+    // fallback mínimo
+    return String(s).replace(/["\\]/g, "\\$&");
+  };
 
   function uuidLike(){
     try { return crypto.randomUUID(); } catch(_){}
     return "n"+Math.random().toString(16).slice(2)+String(Date.now());
   }
 
-  // ───────────────────────── Params / settings ─────────────────────────
+  function toast(msg){
+    const el = qs("#toast");
+    el.textContent = String(msg||"");
+    el.classList.add("on");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=>el.classList.remove("on"), 1200);
+  }
+
+  // ───────────────────────── Params ─────────────────────────
   const u = new URL(location.href);
-  const allowLegacy = (u.searchParams.get("allowLegacy") == null) ? true : (u.searchParams.get("allowLegacy")==="1" || u.searchParams.get("allowLegacy")==="true");
+  const allowLegacy = (u.searchParams.get("allowLegacy") == null)
+    ? true
+    : (u.searchParams.get("allowLegacy")==="1" || u.searchParams.get("allowLegacy")==="true");
+
   qs("#legacyTxt").textContent = allowLegacy ? "1" : "0";
 
   const KEY_STORE = "rlc_obs_panel_key_v1";
@@ -313,37 +327,34 @@
   let KEY = KEY_PARAM || KEY_SAVED || "";
 
   const playerUrlParam = (u.searchParams.get("player") || "./index.html").trim();
+  qs("#key").value = KEY;
 
-  // ───────────────────────── Bus keys ─────────────────────────
-  const BUS_BASE = "rlc_bus_v1";
-  const CMD_KEY_BASE = "rlc_cmd_v1";
-  const STATE_KEY_BASE = "rlc_state_v1";
+  // ───────────────────────── Candidate keys/channels ─────────────────────────
+  // Tu ecosistema ha usado: rlc_bus_v1, rlc_cmd_v1, rlc_state_v1 + “schema v5”.
+  // Aquí soportamos v5/v4/v3/v2/v1 + sin versión, con y sin :key.
+  const BUS_CANDIDATES = ["rlc_bus_v5","rlc_bus_v4","rlc_bus_v3","rlc_bus_v2","rlc_bus_v1","rlc_bus"];
+  const CMD_CANDIDATES = ["rlc_cmd_v5","rlc_cmd_v4","rlc_cmd_v3","rlc_cmd_v2","rlc_cmd_v1","rlc_cmd"];
+  const STATE_CANDIDATES = ["rlc_state_v5","rlc_state_v4","rlc_state_v3","rlc_state_v2","rlc_state_v1","rlc_state"];
 
-  let BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-  let CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
-  let STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+  const makeKeyList = (baseList)=>{
+    const out = [];
+    for (const b of baseList){
+      if (KEY) out.push(`${b}:${KEY}`);
+      out.push(b);
+    }
+    // legacy “global” (sin key) extra si KEY está puesto
+    if (allowLegacy && KEY){
+      for (const b of baseList){
+        if (!out.includes(b)) out.push(b);
+      }
+    }
+    // de-dup
+    return Array.from(new Set(out));
+  };
 
-  // legacy (global)
-  const CMD_KEY_LEGACY = CMD_KEY_BASE;
-  const STATE_KEY_LEGACY = STATE_KEY_BASE;
-  const BUS_LEGACY = BUS_BASE;
-
-  let bc = null;
-  let bcLegacy = null;
-
-  function openChannels(){
-    try { bc?.close?.(); } catch(_){}
-    try { bcLegacy?.close?.(); } catch(_){}
-    bc = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-    bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-
-    try {
-      if (bc) bc.onmessage = (ev)=>onBus(ev?.data, true);
-    } catch(_){}
-    try {
-      if (bcLegacy) bcLegacy.onmessage = (ev)=>onBus(ev?.data, false);
-    } catch(_){}
-  }
+  let BUS_KEYS = makeKeyList(BUS_CANDIDATES);
+  let CMD_KEYS = makeKeyList(CMD_CANDIDATES);
+  let STATE_KEYS = makeKeyList(STATE_CANDIDATES);
 
   // ───────────────────────── UI refs ─────────────────────────
   const dot = qs("#dot");
@@ -365,128 +376,224 @@
   const btnFavs = qs("#btnFavs");
   const btnClearFavs = qs("#btnClearFavs");
 
-  keyEl.value = KEY;
+  const diagTxt = qs("#diagTxt");
+  const diagState = qs("#diagState");
+  const diagCmd = qs("#diagCmd");
 
   // ───────────────────────── Storage helpers ─────────────────────────
   function lsGet(k){ try { return localStorage.getItem(k); } catch(_) { return null; } }
   function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(_){} }
 
-  // ───────────────────────── Command send ─────────────────────────
-  let lastSendAt = 0;
-  function sendCmd(cmd, payload={}){
-    const t = now();
-    if (t - lastSendAt < 70) return; // micro rate-limit
-    lastSendAt = t;
+  // ───────────────────────── BroadcastChannels ─────────────────────────
+  let bcs = [];
+  function closeChannels(){
+    for (const c of bcs){ try { c.close(); } catch(_){} }
+    bcs = [];
+  }
+  function openChannels(){
+    closeChannels();
+    if (!("BroadcastChannel" in window)) return;
 
-    const msg = { type:"cmd", ts: t, nonce: uuidLike(), cmd: String(cmd||""), payload: payload||{} };
-    if (KEY) msg.key = KEY;
-
-    const raw = JSON.stringify(msg);
-
-    // main
-    lsSet(CMD_KEY, raw);
-    try { bc && bc.postMessage(msg); } catch(_){}
-
-    // legacy opcional
-    if (allowLegacy){
-      lsSet(CMD_KEY_LEGACY, raw);
-      try { bcLegacy && bcLegacy.postMessage(msg); } catch(_){}
+    for (const busName of BUS_KEYS){
+      try{
+        const bc = new BroadcastChannel(busName);
+        bc.onmessage = (ev)=>onBus(ev?.data, busName);
+        bcs.push(bc);
+      } catch(_){}
     }
   }
 
-  // ───────────────────────── State read / status ─────────────────────────
+  // ───────────────────────── State parse (multi schema) ─────────────────────────
   let lastState = null;
   let lastSeenAt = 0;
+  let lastStateKeyUsed = "";
 
-  function setConn(ok){
+  function setConn(state){
     dot.classList.remove("ok","bad");
-    if (ok === true) dot.classList.add("ok");
-    else if (ok === false) dot.classList.add("bad");
+    if (state === true) dot.classList.add("ok");
+    else if (state === false) dot.classList.add("bad");
+  }
+
+  function pickState(obj){
+    if (!obj || typeof obj !== "object") return null;
+
+    // Key filtering: si viene con key explícita y no coincide, fuera
+    if (KEY){
+      const mk = String(obj.key||"").trim();
+      if (mk && mk !== KEY) return null;
+    }
+    return obj;
   }
 
   function readState(){
-    const a = safeJson(lsGet(STATE_KEY), null);
-    const b = allowLegacy ? safeJson(lsGet(STATE_KEY_LEGACY), null) : null;
-    // si hay KEY, preferimos state con key matching; si no, cualquiera
-    let s = null;
-    if (KEY){
-      if (a && String(a.key||"") === KEY) s = a;
-      else if (b && String(b.key||"") === KEY) s = b;
-      else if (a && !a.key) s = a;
-      else if (b && !b.key) s = b;
-    } else {
-      s = a || b;
+    lastStateKeyUsed = "";
+
+    for (const k of STATE_KEYS){
+      const raw = lsGet(k);
+      if (!raw) continue;
+      const s = pickState(safeJson(raw, null));
+      if (!s) continue;
+      lastStateKeyUsed = k;
+      return s;
     }
-    if (s && typeof s === "object") return s;
+    return null;
+  }
+
+  function extractCam(s){
+    // soporta varias formas: s.cam (obj), s.nowCam, s.currentCam, s.camId, etc.
+    const cam = (s && typeof s.cam === "object" && s.cam) ? s.cam
+      : (s && typeof s.nowCam === "object" && s.nowCam) ? s.nowCam
+      : (s && typeof s.currentCam === "object" && s.currentCam) ? s.currentCam
+      : null;
+
+    const id = (cam && cam.id != null) ? String(cam.id)
+      : (s && s.camId != null) ? String(s.camId)
+      : (s && s.currentCamId != null) ? String(s.currentCamId)
+      : (s && s.activeCamId != null) ? String(s.activeCamId)
+      : "";
+
+    const title = (cam && cam.title) ? String(cam.title)
+      : (s && s.camTitle) ? String(s.camTitle)
+      : "";
+
+    const place = (cam && cam.place) ? String(cam.place)
+      : (s && s.camPlace) ? String(s.camPlace)
+      : "";
+
+    const kind = (cam && cam.kind) ? String(cam.kind)
+      : (s && s.camKind) ? String(s.camKind)
+      : "";
+
+    const source = (cam && cam.source) ? String(cam.source)
+      : "";
+
+    return { id, title, place, kind, source, raw: cam };
+  }
+
+  function extractPlaying(s){
+    if (!s || typeof s !== "object") return null;
+    if (typeof s.playing === "boolean") return s.playing;
+    if (typeof s.isPlaying === "boolean") return s.isPlaying;
+    if (typeof s.paused === "boolean") return !s.paused;
     return null;
   }
 
   function renderTopFromState(s){
-    if (!s) return;
-    const cam = s.cam || {};
-    const title = cam.title || "—";
+    const cam = extractCam(s);
+    const title = cam.title || (cam.id ? `Cam ${cam.id}` : "—");
     const place = cam.place ? ` — ${cam.place}` : "";
     const kind = cam.kind ? ` · ${cam.kind}` : "";
     nowTxt.textContent = `${title}${place}${kind}`;
 
-    const playing = !!s.playing;
-    statusTxt.textContent = playing ? "LIVE" : "PAUSA";
+    const playing = extractPlaying(s);
+    if (playing === true) { statusTxt.textContent = "LIVE"; btnPlay.textContent = "⏸ PAUSE"; }
+    else if (playing === false) { statusTxt.textContent = "PAUSA"; btnPlay.textContent = "▶ PLAY"; }
+    else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = "⏯ PLAY"; }
+
     setConn(true);
-    btnPlay.textContent = playing ? "⏸ PAUSE" : "▶ PLAY";
   }
 
-  function onBus(msg, isMain){
+  function onBus(msg, busName){
     if (!msg || typeof msg !== "object") return;
-    if (msg.type === "state"){
-      if (KEY){
-        const mk = String(msg.key||"").trim();
-        if (mk && mk !== KEY) return;
-        if (!mk && !allowLegacy) return;
-      }
-      lastState = msg;
+
+    // Acepta “state” en varias formas
+    const type = String(msg.type || msg.t || "").toLowerCase();
+    if (type === "state"){
+      const s = pickState(msg);
+      if (!s) return;
+      lastState = s;
       lastSeenAt = now();
-      renderTopFromState(msg);
+      lastStateKeyUsed = busName || lastStateKeyUsed;
+      renderTopFromState(s);
       markActiveCam();
+      updateDiag();
     }
   }
 
   window.addEventListener("storage", (e)=>{
     const k = String(e.key||"");
     if (!k) return;
-    if (k === STATE_KEY || (allowLegacy && k === STATE_KEY_LEGACY)){
-      const s = readState();
-      if (s){
-        lastState = s; lastSeenAt = now();
-        renderTopFromState(s);
-        markActiveCam();
-      }
+    if (!STATE_KEYS.includes(k)) return;
+
+    const s = readState();
+    if (s){
+      lastState = s;
+      lastSeenAt = now();
+      renderTopFromState(s);
+      markActiveCam();
+      updateDiag();
     }
   });
 
-  // ───────────────────────── CAM LIST load ─────────────────────────
+  // ───────────────────────── Command send (multi compat) ─────────────────────────
+  let lastSendAt = 0;
+  let lastCmdRaw = "";
+
+  function buildCmdPacket(cmd, payload){
+    const t = now();
+    const p = payload || {};
+    // Paquete “multi-compat”: el player puede mirar type o t, payload o p, cmd/op/action…
+    const pkt = {
+      type: "cmd",
+      t: "cmd",
+      ts: t,
+      time: t,
+      nonce: uuidLike(),
+      cmd: String(cmd||""),
+      op: String(cmd||""),
+      action: String(cmd||""),
+      name: String(cmd||""),
+      payload: p,
+      p: p,
+      data: p
+    };
+    if (KEY) pkt.key = KEY;
+    return pkt;
+  }
+
+  function sendCmd(cmd, payload={}){
+    const t = now();
+    if (t - lastSendAt < 60) return; // micro rate-limit
+    lastSendAt = t;
+
+    const pkt = buildCmdPacket(cmd, payload);
+    const raw = JSON.stringify(pkt);
+    lastCmdRaw = raw;
+    diagCmd.value = raw;
+
+    // Escribe en TODAS las keys candidatas (v5/v1/legacy)
+    for (const k of CMD_KEYS){
+      lsSet(k, raw);
+    }
+
+    // Broadcast en TODOS los canales candidatos
+    for (const bc of bcs){
+      try { bc.postMessage(pkt); } catch(_){}
+    }
+
+    toast(`CMD → ${cmd}${payload && payload.id!=null ? " ("+payload.id+")" : ""}`);
+    updateDiag();
+  }
+
+  // ───────────────────────── CAM LIST ─────────────────────────
   let cams = [];
   let favOnly = false;
 
   const FAV_KEY_BASE = "rlc_obs_favs_v1";
-  const FAV_KEY = KEY ? `${FAV_KEY_BASE}:${KEY}` : FAV_KEY_BASE;
+  const favStoreKey = ()=> KEY ? `${FAV_KEY_BASE}:${KEY}` : FAV_KEY_BASE;
 
   function loadFavs(){
-    const arr = safeJson(lsGet(FAV_KEY), []);
-    const set = new Set(Array.isArray(arr) ? arr.map(String) : []);
-    return set;
+    const arr = safeJson(lsGet(favStoreKey()), []);
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
   }
   function saveFavs(set){
-    lsSet(FAV_KEY, JSON.stringify(Array.from(set)));
+    lsSet(favStoreKey(), JSON.stringify(Array.from(set)));
   }
   let favs = loadFavs();
 
   function getGlobalCamList(){
-    // intenta window.CAM_LIST primero
     if (Array.isArray(window.CAM_LIST)) return window.CAM_LIST.slice();
-    // si cams.js declaró var CAM_LIST, en no-module suele vivir en global también
-    try {
-      if (typeof CAM_LIST !== "undefined" && Array.isArray(CAM_LIST)) return CAM_LIST.slice();
-    } catch(_){}
+    try { if (typeof CAM_LIST !== "undefined" && Array.isArray(CAM_LIST)) return CAM_LIST.slice(); } catch(_){}
     return null;
   }
 
@@ -494,7 +601,6 @@
     try {
       const res = await fetch(path, { cache:"no-store" });
       const code = await res.text();
-      // Ejecuta en función para poder "return CAM_LIST" aunque sea const/let
       const fn = new Function("window", code + "\n;return (window.CAM_LIST || (typeof CAM_LIST!=='undefined'?CAM_LIST:null));");
       const out = fn(window);
       if (Array.isArray(out)) return out.slice();
@@ -503,19 +609,15 @@
   }
 
   async function loadCams(){
-    // 1) ya está
     let list = getGlobalCamList();
-    // 2) espera un pelín por si script está cargando
     if (!list){
       await new Promise(r=>setTimeout(r, 120));
       list = getGlobalCamList();
     }
-    // 3) fallback fetch+eval (si no expone global)
     if (!list){
       const path = (u.searchParams.get("cams") || "./cams.js").trim();
       list = await fetchEvalCams(path);
     }
-
     cams = Array.isArray(list) ? list.filter(Boolean) : [];
     renderList();
   }
@@ -552,12 +654,15 @@
   }
 
   function renderList(){
-    const filtered = cams.filter(c => c && c.id != null).filter(kindFilterOk).filter(queryOk)
+    const filtered = cams
+      .filter(c => c && c.id != null)
+      .filter(kindFilterOk)
+      .filter(queryOk)
       .filter(c => !favOnly || favs.has(String(c.id)));
 
     countTxt.textContent = `Cams: ${filtered.length}/${cams.length}${favOnly ? " · ★ favs" : ""}`;
-
     listEl.innerHTML = "";
+
     const frag = document.createDocumentFragment();
 
     for (const c of filtered){
@@ -620,7 +725,8 @@
       bGo.textContent = "IR";
       bGo.addEventListener("click", (ev)=>{
         ev.preventDefault();
-        sendCmd("GOTO", { id });
+        // Comando principal
+        sendCmd("GOTO", { id, camId:id, targetId:id });
       });
 
       const bStar = document.createElement("button");
@@ -662,29 +768,32 @@
 
   function markActiveCam(){
     const s = lastState || readState();
-    const activeId = s && s.cam && s.cam.id != null ? String(s.cam.id) : "";
+    const cam = s ? extractCam(s) : {id:""};
+    const activeId = cam && cam.id ? String(cam.id) : "";
     const items = listEl.querySelectorAll(".cam");
     for (const el of items){
-      const isOn = activeId && el.dataset.id === activeId;
-      el.classList.toggle("active", !!isOn);
+      el.classList.toggle("active", !!(activeId && el.dataset.id === activeId));
     }
   }
 
   function scrollToActive(){
     const s = lastState || readState();
-    const activeId = s && s.cam && s.cam.id != null ? String(s.cam.id) : "";
+    const cam = s ? extractCam(s) : {id:""};
+    const activeId = cam && cam.id ? String(cam.id) : "";
     if (!activeId) return;
-    const el = listEl.querySelector(`.cam[data-id="${CSS.escape(activeId)}"]`);
+    const el = listEl.querySelector(`.cam[data-id="${cssEscape(activeId)}"]`);
     if (el) el.scrollIntoView({ block:"center", behavior:"smooth" });
   }
 
   // ───────────────────────── Controls ─────────────────────────
   btnNext.addEventListener("click", ()=>sendCmd("NEXT"));
   btnPrev.addEventListener("click", ()=>sendCmd("PREV"));
+
   btnPlay.addEventListener("click", ()=>{
-    // toggle play seguro: si sabemos el estado, enviamos PLAY/PAUSE; si no, TOGGLE
     const s = lastState || readState();
-    if (s && typeof s.playing === "boolean") sendCmd(s.playing ? "PAUSE" : "PLAY");
+    const playing = extractPlaying(s);
+    if (playing === true) sendCmd("PAUSE");
+    else if (playing === false) sendCmd("PLAY");
     else sendCmd("TOGGLE_PLAY");
   });
 
@@ -719,16 +828,42 @@
     KEY = (keyEl.value || "").trim();
     localStorage.setItem(KEY_STORE, KEY);
 
-    BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-    CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
-    STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
+    // reconstruye listas con key nueva
+    BUS_KEYS = makeKeyList(BUS_CANDIDATES);
+    CMD_KEYS = makeKeyList(CMD_CANDIDATES);
+    STATE_KEYS = makeKeyList(STATE_CANDIDATES);
 
     favs = loadFavs();
     openChannels();
     loadCams();
+    toast(KEY ? `key=${KEY}` : "key vacía");
+    updateDiag();
   });
 
-  // ───────────────────────── Boot / polls ─────────────────────────
+  // ───────────────────────── Diag / watchdog ─────────────────────────
+  function updateDiag(){
+    const age = lastSeenAt ? (now() - lastSeenAt) : null;
+    const ageTxt = (age==null) ? "—" : `${Math.round(age)}ms`;
+
+    const foundState = !!(lastState || readState());
+    const stateKey = lastStateKeyUsed || "(no detectado)";
+    const busInfo = ("BroadcastChannel" in window) ? `${bcs.length} canales` : "sin BroadcastChannel";
+    const origin = location.origin;
+
+    diagTxt.innerHTML =
+      `<b>origin</b>: ${origin}<br>`+
+      `<b>KEY</b>: ${KEY ? `<span class="mono">${KEY}</span>` : "(vacía)"} · allowLegacy=${allowLegacy ? "1":"0"}<br>`+
+      `<b>STATE</b>: ${foundState ? "sí" : "no"} · <b>age</b>: ${ageTxt} · <b>key usada</b>: <span class="mono">${stateKey}</span><br>`+
+      `<b>CMD keys probadas</b>: <span class="mono">${CMD_KEYS.slice(0,6).join(", ")}</span>${CMD_KEYS.length>6?" …":""}<br>`+
+      `<b>STATE keys probadas</b>: <span class="mono">${STATE_KEYS.slice(0,6).join(", ")}</span>${STATE_KEYS.length>6?" …":""}<br>`+
+      `<b>BUS</b>: ${busInfo} (probando v5→v1→legacy)`;
+
+    const s = lastState || readState();
+    diagState.value = s ? JSON.stringify(s, null, 2) : "";
+
+    if (!diagCmd.value) diagCmd.value = lastCmdRaw || "";
+  }
+
   function tick(){
     const s = readState();
     if (s){
@@ -736,20 +871,39 @@
       lastSeenAt = now();
       renderTopFromState(s);
     }
-    // watchdog visual: si hace mucho que no vemos state, marcamos warning
+
     const age = now() - (lastSeenAt || 0);
-    if (age > 6000) { setConn(null); statusTxt.textContent = "SIN STATE"; }
-    else setConn(true);
+
+    if (!lastSeenAt){
+      setConn(null);
+      statusTxt.textContent = "SIN STATE";
+    } else if (age > 8000){
+      setConn(false);
+      statusTxt.textContent = "STATE VIEJO";
+    } else {
+      setConn(true);
+    }
+
+    markActiveCam();
+    updateDiag();
   }
 
+  // ───────────────────────── Boot ─────────────────────────
   openChannels();
   loadCams();
 
   // primer state
   const s0 = readState();
-  if (s0){ lastState = s0; lastSeenAt = now(); renderTopFromState(s0); }
+  if (s0){
+    lastState = s0;
+    lastSeenAt = now();
+    renderTopFromState(s0);
+  } else {
+    statusTxt.textContent = "SIN STATE";
+  }
+  updateDiag();
 
-  setInterval(tick, 700);
+  setInterval(tick, 750);
 })();
 </script>
 </body>
