@@ -1,37 +1,22 @@
-/* app.js — RLC Player v2.3.6 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST + VOTEUI PRE + ADS LEAD->LIVE FIX)
-   ✅ FIX CLAVE (mantenido):
-      - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
-      - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
-      - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead) (+ PRE si voteUi > lead+window)
-      - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
-      - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
-   ✅ Mejora v2.3.4 (mantenido):
-      - parseParams más robusto (bools tipo "true/false/1/0")
-      - setShown añade aria-hidden y refuerzo de display:none
-      - guardas extra en filtros / listas vacías
-      - voteUi ahora soporta fase PRE (solo auto). Por defecto: comportamiento idéntico (PRE=0).
-   ✅ v2.3.5 (mantenido):
-      - VERSION sincronizada con window.APP_VERSION (fallback 2.3.5)
-      - LOAD_GUARD actualizado + state.version usa VERSION
-      - savePlayerState bump schema v:5 (compatible hacia atrás)
-   ✅ v2.3.6:
-      - ADS: transición LEAD→LIVE ahora actualiza UI correctamente y evita “00:00 colgado”
-      - ADS: AD_NOTICE acepta duración opcional (durationSec) como “hint” para LIVE
-      - TAGVOTE: comandos TAGVOTE_START/STOP aseguran IRC y refrescan índice de tags
-   ✅ Compat UI (HUD footer):
-      - Space: play/pause
-      - N: siguiente
-      - P: anterior
-      - H: ocultar/mostrar HUD
-      - I: detalles (collapse/expand)
-      - C: chat on/off
+/* app.js — RLC Player v2.3.7 PRO
+   ✅ ADMIN PANEL RELIABILITY FIX (CLAVE):
+      - Polling de comandos (localStorage) para casos donde "storage" no dispara (iframes/misma pestaña)
+      - Dedup robusto por firma: acepta comandos con mismo ts si el payload cambia
+      - Fallback por postMessage (mismo origin)
+      - Aliases extra típicos de botones de control (HUD/SETTINGS/APPLY)
+   ✅ Mantiene TODO lo de v2.3.6:
+      - Auto voto por remaining + PRE (voteUi)
+      - ADS lead→live fix + hint duration
+      - TAGVOTE_START/STOP + refresh tags
+      - parseParams robusto, safeHide, schema state v5
 */
+
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.6");
-  const VDIG = VERSION.replace(/\D/g, "") || "236";
+  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.7");
+  const VDIG = VERSION.replace(/\D/g, "") || "237";
 
   const LOAD_GUARD = `__RLC_PLAYER_LOADED_V${VDIG}_PRO`;
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
@@ -52,7 +37,6 @@
     try { el.style.display = on ? "" : "none"; } catch (_) {}
     try { el.classList.toggle("hidden", !on); } catch (_) {}
     try { el.setAttribute("aria-hidden", on ? "false" : "true"); } catch (_) {}
-    // Refuerzo: si algo externo “revive” el display, lo volvemos a apagar al instante
     if (!on) {
       try {
         const cs = window.getComputedStyle(el);
@@ -63,6 +47,7 @@
   const safeJson = (raw, fallback = null) => {
     try { return JSON.parse(raw); } catch (_) { return fallback; }
   };
+  const isObj = (x) => !!x && typeof x === "object";
 
   // ───────────────────────── News Ticker bridge (SAFE) ─────────────────────────
   const TICKER_EVT = "RLC_PLAYER_EVENT";
@@ -71,7 +56,6 @@
   function tickerNotify(kind, data) {
     try {
       const api = g.RLCNewsTicker || g.NewsTicker || g.newsTicker || null;
-
       if (api) {
         if (typeof api.onPlayerEvent === "function") api.onPlayerEvent(kind, data);
         if (typeof api.emit === "function") api.emit(kind, data);
@@ -79,7 +63,6 @@
         if (kind === "EVENT" && typeof api.onEvent === "function") api.onEvent(data);
       }
     } catch (_) {}
-
     try {
       window.dispatchEvent(new CustomEvent(TICKER_EVT, { detail: { kind, data } }));
     } catch (_) {}
@@ -156,13 +139,8 @@
       twitchExplicit,
 
       voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
-
-      // ⚠️ voteAt = “a falta” (segundos restantes cuando empieza la votación REAL)
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
-
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
-
-      // voteUi: segundos extra de UI ANTES del lead (solo en auto si > lead+window; si 0 => auto)
       voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
 
       stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
@@ -831,8 +809,6 @@
   let adRoot = null, adTitleEl = null, adTimeEl = null, adBarEl = null;
   let adActive = false, adPhase = "idle";
   let adLeadEndsAt = 0, adEndsAt = 0, adTotalLead = 0, adTotalLive = 0;
-
-  // v2.3.6: “hint” opcional para duración LIVE (si la recibimos en AD_NOTICE)
   let adLiveHintSec = 0;
 
   function injectAdsStylesOnce() {
@@ -879,7 +855,6 @@
     if (adRoot) adRoot.classList.add("on");
   }
 
-  // v2.3.6: acepta hint de duración live
   function adStartLead(secondsLeft, durationHintSec = 0) {
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
@@ -905,10 +880,9 @@
     const now = Date.now();
     let d = (durationSec | 0) || 0;
     if (d <= 0) d = (adLiveHintSec | 0) || 0;
-    if (d <= 0) d = 30; // fallback razonable
+    if (d <= 0) d = 30;
     d = clamp(d, 5, 3600);
 
-    // v2.3.6: si ya estamos en LIVE y llega un AD_BEGIN duplicado, ignóralo si no aporta nada
     if (adActive && adPhase === "live" && adEndsAt) {
       const curLeft = Math.max(0, Math.ceil((adEndsAt - now) / 1000));
       if (Math.abs(curLeft - d) <= 2) return;
@@ -938,11 +912,7 @@
       const denom = Math.max(1, adTotalLead | 0);
       const pct = 100 * (1 - (left / denom));
       if (adBarEl) adBarEl.style.width = `${clamp(pct, 0, 100).toFixed(1)}%`;
-
-      // v2.3.6 FIX: al acabar el lead, si no llegó AD_BEGIN, entramos a LIVE con hint/fallback y UI correcta
-      if (left <= 0) {
-        adStartLive((adLiveHintSec | 0) || 0);
-      }
+      if (left <= 0) adStartLive((adLiveHintSec | 0) || 0);
       return;
     }
 
@@ -968,7 +938,6 @@
 
     window.addEventListener("message", (ev) => {
       const origin = String(ev.origin || "");
-      // un pelín más estricto (sin romper nada)
       const okOrigin = /(^https:\/\/)(www\.)?youtube\.com$/.test(origin) || /(^https:\/\/)(www\.)?youtube-nocookie\.com$/.test(origin);
       if (!okOrigin) return;
 
@@ -1144,18 +1113,18 @@
   let voteOverlay = !!P.voteOverlay;
 
   let voteWindowCfgSec = P.voteWindow | 0;
-  let voteAtCfgSec = P.voteAt | 0;      // remaining cuando empieza el voto real
-  let voteLeadCfgSec = P.voteLead | 0;  // pre-warning (lead)
-  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : 0; // 0 => auto (lead+window)
+  let voteAtCfgSec = P.voteAt | 0;
+  let voteLeadCfgSec = P.voteLead | 0;
+  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : 0;
   let stayMins = P.stayMins | 0;
 
   // Segment schedule (auto)
   let voteWindowSegSec = voteWindowCfgSec;
-  let voteAtSegSec = voteAtCfgSec;         // trigger UI (lead/pre) por remaining
-  let voteAtSegBaseSec = voteAtCfgSec;     // base (vote start)
+  let voteAtSegSec = voteAtCfgSec;
+  let voteAtSegBaseSec = voteAtCfgSec;
   let voteLeadSegSec = voteLeadCfgSec;
-  let voteUiSegSec = 0;                    // ui total (pre+lead+vote) calculado
-  let votePreSegSec = 0;                   // pre extra calculado
+  let voteUiSegSec = 0;
+  let votePreSegSec = 0;
 
   // Active session
   let voteWindowActiveSec = voteWindowCfgSec;
@@ -1204,29 +1173,20 @@
   function recalcVoteScheduleForSegment(segTotalSec) {
     const total = clamp(segTotalSec | 0, 1, 120 * 60);
 
-    // Base voteAt (remaining when vote really starts)
     voteAtSegBaseSec = clamp(voteAtCfgSec | 0, 1, total);
-
-    // Lead fixed clamp
     voteLeadSegSec = clamp(voteLeadCfgSec | 0, 0, 30);
 
-    // Window effective in auto cannot exceed voteAt base (para no “cortar”)
     const wCfg = clamp(voteWindowCfgSec | 0, 5, 180);
     voteWindowSegSec = clamp(Math.min(wCfg, voteAtSegBaseSec), 5, 180);
 
-    // UI total: 0 => auto = lead + windowEffective
     const minUi = (voteLeadSegSec + voteWindowSegSec) | 0;
     const uiCfg = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : 0;
     voteUiSegSec = (uiCfg > 0) ? Math.max(uiCfg, minUi) : minUi;
 
-    // PRE extra = UI - (lead + window)
     votePreSegSec = Math.max(0, (voteUiSegSec - minUi) | 0);
-
-    // Trigger por remaining: baseAt + lead + pre
     voteAtSegSec = clamp((voteAtSegBaseSec + voteLeadSegSec + votePreSegSec) | 0, 1, total);
   }
 
-  // uiSec: si >0 permite fase PRE (solo úsalo en auto). En manual pásalo como 0.
   function voteStartSequence(windowSec, leadSec, uiSec = 0) {
     if (!voteEnabled || !twitchChannel) return;
 
@@ -1236,7 +1196,6 @@
     voteWindowActiveSec = w;
     voteLeadActiveSec = lead;
 
-    // ui final: si uiSec<=0 => sin PRE (ui=lead+window)
     const minUi = (lead + w) | 0;
     let uiFinal = (uiSec | 0);
     if (uiFinal <= 0) uiFinal = minUi;
@@ -1317,7 +1276,6 @@
     const show = voteOverlay && voteEnabled && !!twitchChannel && voteSessionActive;
 
     setShown(voteBox, show);
-
     if (!show) return;
 
     const now = Date.now();
@@ -1386,8 +1344,6 @@
       callVoteCooldownUntil = now + REQUEST_COOLDOWN_MS;
 
       voteTriggeredForSegment = true;
-
-      // Chat-trigger: empieza VOTE ya (sin PRE), por defecto sin lead
       voteStartSequence(voteWindowSegSec, 0, 0);
 
       const yes0 = [...cmdYes][0] || "!next";
@@ -1504,7 +1460,6 @@
     const show = tagVoteActive && tagVoteTags.length === 3;
 
     setShown(tagVoteBox, show);
-
     if (!show) return;
 
     const now = Date.now();
@@ -2194,19 +2149,25 @@
     tickerState(state, !!force);
   }
 
-  // ───────────────────────── Commands ─────────────────────────
+  // ───────────────────────── Commands (ADMIN HARDENED) ─────────────────────────
   let lastCmdTs = 0;
+  let lastCmdSig = "";
+
+  function cmdSigFrom(msg) {
+    try { return JSON.stringify(msg); } catch (_) { return String(msg?.cmd || "") + "|" + String(msg?.ts || 0); }
+  }
 
   function cmdKeyOk(msg, isMainChannel) {
     if (!KEY) return true;
     if (msg && msg.key === KEY) return true;
-    if (ALLOW_LEGACY && !isMainChannel && msg && !msg.key) return true;
-    if (ALLOW_LEGACY && isMainChannel && msg && !msg.key) return true;
+    if (ALLOW_LEGACY && msg && !msg.key) return true;
     return false;
   }
 
   function applyCommand(cmd, payload) {
-    switch (cmd) {
+    const C = String(cmd || "").trim().toUpperCase();
+
+    switch (C) {
       case "NEXT": nextCam("cmd"); break;
       case "PREV": prevCam(); break;
       case "TOGGLE_PLAY": togglePlay(); break;
@@ -2245,6 +2206,41 @@
         postState({ reason: "ban" });
       } break;
 
+      case "HUD_HIDE":
+      case "HIDE_HUD":
+        setHudHidden(true);
+        postState({ reason: "hud_hide" });
+        break;
+
+      case "HUD_SHOW":
+      case "SHOW_HUD":
+        setHudHidden(false);
+        postState({ reason: "hud_show" });
+        break;
+
+      case "HUD_TOGGLE":
+      case "TOGGLE_HUD":
+        setHudHidden(!hud?.classList?.contains?.("hidden"));
+        postState({ reason: "hud_toggle" });
+        break;
+
+      case "HUD_COLLAPSE":
+        setHudCollapsed(true);
+        postState({ reason: "hud_collapse" });
+        break;
+
+      case "HUD_EXPAND":
+        setHudCollapsed(false);
+        postState({ reason: "hud_expand" });
+        break;
+
+      case "HUD_TOGGLE_DETAILS":
+      case "HUD_TOGGLE_COLLAPSE": {
+        const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
+        setHudCollapsed(!collapsed);
+        postState({ reason: "hud_toggle_details" });
+      } break;
+
       case "SET_AUTOSKIP":
       case "AUTOSKIP":
         autoskip = !!(payload?.enabled ?? payload?.value ?? payload);
@@ -2280,7 +2276,7 @@
 
       case "SET_VOTE":
       case "VOTE": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) voteEnabled = !!payload.enabled;
           if (payload.overlay != null) voteOverlay = !!payload.overlay;
           if (payload.windowSec != null) voteWindowCfgSec = clamp(payload.windowSec | 0, 5, 180);
@@ -2300,7 +2296,6 @@
 
       case "START_VOTE":
       case "VOTE_START": {
-        // Manual start: sin PRE por defecto (uiSec=0)
         voteTriggeredForSegment = true;
         const w = clamp((payload?.windowSec ?? voteWindowSegSec) | 0, 5, 180);
         const lead = clamp((payload?.leadSec ?? voteLeadSegSec) | 0, 0, 30);
@@ -2317,7 +2312,7 @@
 
       case "SET_CHAT":
       case "CHAT": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) chatSetEnabled(!!payload.enabled);
           if (payload.hideCommands != null) chatHideCommands = !!payload.hideCommands;
           if (payload.max != null) chatMax = clamp(payload.max | 0, 3, 12);
@@ -2332,7 +2327,7 @@
 
       case "SET_ALERTS":
       case "ALERTS": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) alertsEnabled = !!payload.enabled;
           if (payload.max != null) alertsMax = clamp(payload.max | 0, 1, 6);
           if (payload.ttl != null) alertsTtlSec = clamp(payload.ttl | 0, 3, 20);
@@ -2346,7 +2341,7 @@
 
       case "SET_ADS":
       case "ADS": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) adsEnabled = !!payload.enabled;
           if (payload.adLead != null) adLeadDefaultSec = clamp(payload.adLead | 0, 0, 300);
           if (payload.showDuring != null) adShowDuring = !!payload.showDuring;
@@ -2359,14 +2354,12 @@
       } break;
 
       case "AD_NOTICE": {
-        // v2.3.6: acepta durationSec opcional como hint
         const leadSec = payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec;
         const durHint = payload?.durationSec ?? payload?.duration ?? payload?.durSec ?? 0;
         adStartLead(leadSec, durHint);
       } break;
 
       case "AD_BEGIN":
-        // si llega el begin real, actualiza duración si aporta algo
         adStartLive(payload?.durationSec ?? payload?.duration ?? 0);
         if (adChatText) botSay(adChatText);
         break;
@@ -2377,7 +2370,6 @@
         break;
 
       case "TAGVOTE_START":
-        // v2.3.6: refresca índice por si CAM_LIST cambió
         try { buildTagIndex(); } catch (_) {}
         tagVoteStart();
         ensureIrc();
@@ -2426,7 +2418,7 @@
 
       case "SET_HEALTH":
       case "HEALTH":
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.startTimeoutMs != null) startTimeoutMs = clamp(payload.startTimeoutMs | 0, 3000, 120000);
           if (payload.stallTimeoutMs != null) stallTimeoutMs = clamp(payload.stallTimeoutMs | 0, 4000, 120000);
           if (payload.maxStalls != null) maxStalls = clamp(payload.maxStalls | 0, 1, 8);
@@ -2445,6 +2437,45 @@
         postState({ reason: "yt_cookies" });
       } break;
 
+      // ✅ Botón “Aplicar ajustes” típico del panel admin
+      case "APPLY":
+      case "APPLY_SETTINGS":
+      case "SETTINGS": {
+        if (isObj(payload)) {
+          if (payload.mins != null) setRoundMins(payload.mins);
+          if (payload.fit != null) setFit(String(payload.fit));
+          if (payload.autoskip != null) autoskip = !!payload.autoskip;
+          if (payload.adfree != null) {
+            const want = !!payload.adfree;
+            const prev = modeAdfree;
+            modeAdfree = want;
+            if (modeAdfree !== prev) {
+              const curId = String((cams[idx] || {}).id || "");
+              applyFilters();
+              const n = curId ? cams.findIndex(c => c && String(c.id) === curId) : -1;
+              idx = (n >= 0) ? n : (idx % Math.max(1, cams.length || 1));
+              playCam(cams[idx]);
+            }
+          }
+          if (payload.hudHidden != null) setHudHidden(!!payload.hudHidden);
+          if (payload.hudCollapsed != null) setHudCollapsed(!!payload.hudCollapsed);
+
+          if (payload.twitch != null || payload.channel != null) {
+            twitchChannel = String(payload.twitch ?? payload.channel ?? "").trim().replace(/^@/, "");
+          }
+
+          if (payload.vote != null) applyCommand("VOTE", payload.vote);
+          if (payload.chat != null) applyCommand("CHAT", payload.chat);
+          if (payload.alerts != null) applyCommand("ALERTS", payload.alerts);
+          if (payload.ads != null) applyCommand("ADS", payload.ads);
+          if (payload.bgm != null) applyCommand("BGM", payload.bgm);
+          if (payload.ytCookies != null) applyCommand("YT_COOKIES", payload.ytCookies);
+          if (payload.health != null) applyCommand("HEALTH", payload.health);
+        }
+        ensureIrc();
+        postState({ reason: "apply" }, true);
+      } break;
+
       case "RESET":
         resetState();
         break;
@@ -2454,19 +2485,29 @@
         break;
 
       default:
-        if (P.debug) console.log("[player] unknown cmd:", cmd, payload);
+        if (P.debug) console.log("[player] unknown cmd:", C, payload);
         break;
     }
   }
 
-  function handleCmdMsg(msg, isMainChannel) {
+  function handleCmdMsg(msg, isMainChannel, sig = "") {
     if (!msg || typeof msg !== "object") return;
     if (msg.type !== "cmd") return;
     if (!cmdKeyOk(msg, !!isMainChannel)) return;
 
     const ts = (msg.ts | 0) || 0;
-    if (ts && ts <= lastCmdTs) return;
-    if (ts) lastCmdTs = ts;
+    const s = sig || cmdSigFrom(msg);
+
+    // ✅ FIX admin botones: no descartes si ts igual pero firma distinta
+    if (ts) {
+      if (ts < lastCmdTs) return;
+      if (ts === lastCmdTs && s && s === lastCmdSig) return;
+      lastCmdTs = ts;
+      lastCmdSig = s || lastCmdSig;
+    } else {
+      if (s && s === lastCmdSig) return;
+      lastCmdSig = s || lastCmdSig;
+    }
 
     const cmd = String(msg.cmd || "");
     const payload = msg.payload || {};
@@ -2478,11 +2519,23 @@
     if (!raw) return;
     const msg = safeJson(raw, null);
     if (!msg) return;
-    handleCmdMsg(msg, isMainChannel);
+    handleCmdMsg(msg, isMainChannel, "ls:" + raw);
   }
 
-  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true); } catch (_) {}
-  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false); } catch (_) {}
+  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true, "bc:" + cmdSigFrom(ev?.data)); } catch (_) {}
+  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false, "bcL:" + cmdSigFrom(ev?.data)); } catch (_) {}
+
+  // ✅ Fallback extra por postMessage (mismo origin)
+  window.addEventListener("message", (ev) => {
+    try {
+      const originOk = String(ev.origin || "") === String(location.origin || "");
+      if (!originOk) return;
+      const d = ev.data;
+      const msg = (typeof d === "string") ? safeJson(d, null) : d;
+      if (!msg) return;
+      if (msg.type === "cmd") handleCmdMsg(msg, true, "pm:" + cmdSigFrom(msg));
+    } catch (_) {}
+  }, false);
 
   window.addEventListener("storage", (e) => {
     const k = String(e.key || "");
@@ -2501,12 +2554,23 @@
     }
   });
 
+  // ✅ Polling de comandos: hace que los botones funcionen incluso si storage-event no dispara
+  const CMD_POLL_MS = 300;
+  let cmdPollTimer = null;
+  function startCmdPolling() {
+    try { if (cmdPollTimer) clearInterval(cmdPollTimer); } catch (_) {}
+    cmdPollTimer = setInterval(() => {
+      readCmdFromStorage(CMD_KEY, true);
+      readCmdFromStorage(CMD_KEY_LEGACY, false);
+    }, CMD_POLL_MS);
+  }
+
   // ───────────────────────── Persist player state ─────────────────────────
   function savePlayerState() {
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 5, // schema v5 (se mantiene)
+        v: 5,
         ts: Date.now(),
         key: KEY || "",
         version: VERSION,
@@ -2600,7 +2664,6 @@
 
     if (k === " " || e.code === "Space") { e.preventDefault(); togglePlay(); return; }
 
-    // HUD: H hide/show, I details (collapse)
     if (low === "h") { e.preventDefault(); setHudHidden(!hud?.classList?.contains?.("hidden")); return; }
     if (low === "i") {
       e.preventDefault();
@@ -2609,11 +2672,9 @@
       return;
     }
 
-    // N/P
     if (low === "n") { e.preventDefault(); nextCam("key_n"); return; }
     if (low === "p") { e.preventDefault(); prevCam(); return; }
 
-    // C chat toggle
     if (low === "c") { e.preventDefault(); chatSetEnabled(!chatEnabled); return; }
   });
 
@@ -2650,7 +2711,6 @@
       }
     } catch (_) {}
 
-    // ✅ Auto-trigger vote por remaining (a falta) + PRE (voteUi)
     if (playing && !voteSessionActive && !tagVoteActive && voteEnabled && twitchChannel) {
       const rem = remainingSeconds();
       if (!voteTriggeredForSegment && rem > 0 && rem <= (voteAtSegSec | 0)) {
@@ -2790,6 +2850,9 @@
 
     try { if (saveTimer) clearInterval(saveTimer); } catch (_) {}
     saveTimer = setInterval(savePlayerState, 3500);
+
+    // ✅ Arranca polling de comandos para admin buttons
+    startCmdPolling();
 
     postState({ reason: "boot" }, true);
 
