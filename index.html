@@ -1,9 +1,10 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.8 (CONTROL PANEL COMPAT HARDENED)
-  ✅ Compat total con control.js v2.3.8:
-     - KEY auto (URL ?key=) + expone window.RLC_KEY / window.RLC_BUS
-     - Bridge BC: rlc_bus_v1 <-> rlc_bus_v1:{key} (sin loops)
-     - Mirror LS: cmd/state/evt keyed <-> legacy (para que ningún lado “se quede sordo”)
-     - Acepta postMessage(cmd/state/event) desde preview/control (same-origin)
+<!-- index.html — Random Live Cams (PLAYER) v2.3.8 (ADMIN CONTROL LISTEN HARDENED)
+  ✅ Escucha a control panel de forma robusta:
+     - Legacy bus SIEMPRE: rlc_bus_v1
+     - Keyed bus dinámico: rlc_bus_v1:{key} (URL ?key= | localStorage rlc_last_key_v1 | msg.key detectado)
+     - Mirror LS: cmd/state/evt keyed <-> legacy
+     - Polling LS (cmd/state/evt) y reinyección a BC (por si BC/storage fallan)
+     - Acepta postMessage(cmd/state/event) same-origin
   ✅ Cache-bust alineado a 2.3.8 en TODOS los assets
 -->
 <!doctype html>
@@ -15,6 +16,7 @@
   <meta name="theme-color" content="#0b0f14" />
   <meta name="format-detection" content="telephone=no" />
   <meta name="robots" content="noindex,nofollow" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
 
   <title>Random Live Cams</title>
   <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts, ads notice, ticker y modo catálogo." />
@@ -95,148 +97,277 @@
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <!-- ✅ CONTROL COMPAT BRIDGE (PLAYER) — NO pisa app.js; usa addEventListener -->
+  <!-- ✅ ADMIN CONTROL COMPAT BRIDGE (PLAYER) — hardened -->
   <script>
     (() => {
       "use strict";
 
       const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-      const BUS_BASE = "rlc_bus_v1";
-      const CMD_BASE = "rlc_cmd_v1";
+      const BUS_BASE   = "rlc_bus_v1";
+      const CMD_BASE   = "rlc_cmd_v1";
       const STATE_BASE = "rlc_state_v1";
-      const EVT_BASE = "rlc_evt_v1";
+      const EVT_BASE   = "rlc_evt_v1";
+
+      const LAST_KEY_STORE = "rlc_last_key_v1";
+
+      const BRIDGE_TAG = "__rlcBridgeHop_v1";
+      const SRC_TAG    = "__rlcBridgeSrc_v1";
+      const MAX_HOPS   = 1;
 
       const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
-      const now = () => Date.now();
+      const isObj = (x) => !!x && typeof x === "object";
 
-      function parseKey() {
+      const now = () => Date.now();
+      const canBC = ("BroadcastChannel" in window);
+
+      function getUrlKey() {
         try {
           const u = new URL(location.href);
           return safeStr(u.searchParams.get("key") || "");
         } catch (_) { return ""; }
       }
 
-      const KEY = parseKey();
-      const BUS_MAIN = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-      const BUS_LEGACY = BUS_BASE;
-
-      const CMD_KEY = KEY ? `${CMD_BASE}:${KEY}` : CMD_BASE;
-      const STATE_KEY = KEY ? `${STATE_BASE}:${KEY}` : STATE_BASE;
-      const EVT_KEY = KEY ? `${EVT_BASE}:${KEY}` : EVT_BASE;
-
-      const CMD_LEGACY = CMD_BASE;
-      const STATE_LEGACY = STATE_BASE;
-      const EVT_LEGACY = EVT_BASE;
-
-      // Exponer para debug / tooling (no rompe nada)
-      try {
-        g.RLC_KEY = KEY;
-        g.RLC_BUS = BUS_MAIN;
-        g.RLC_BUS_LEGACY = BUS_LEGACY;
-      } catch (_) {}
-
-      // Guardar “last key” para que el control pueda inferirla si abres control sin ?key=
-      try { if (KEY) localStorage.setItem("rlc_last_key_v1", KEY); } catch (_) {}
-
-      const canBC = ("BroadcastChannel" in window);
-      const bcMain = canBC ? new BroadcastChannel(BUS_MAIN) : null;
-      const bcLegacy = (canBC && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
-
-      const BRIDGE_TAG = "__rlcBridgeHop_v1";
-      const MAX_HOPS = 1;
-
-      const isObj = (x) => !!x && typeof x === "object";
-      const cloneMsg = (msg) => {
-        try { return structuredClone(msg); } catch (_) { return Object.assign({}, msg); }
-      };
-
-      function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
-      function lsSetBoth(keyed, legacy, raw) {
-        lsSet(keyed, raw);
-        lsSet(legacy, raw);
+      function getLastKey() {
+        try { return safeStr(localStorage.getItem(LAST_KEY_STORE) || ""); } catch (_) { return ""; }
       }
 
-      // Mirror a localStorage para que el receptor vea SIEMPRE cmd/state/event
+      // ✅ KEY: URL > lastKey (para que player "enganche" aunque lo abras sin ?key=)
+      let KEY = getUrlKey() || getLastKey();
+
+      const BUS_LEGACY = BUS_BASE;
+      let   BUS_MAIN   = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+
+      let bcLegacy = canBC ? new BroadcastChannel(BUS_LEGACY) : null;
+      let bcMain   = (canBC && KEY) ? new BroadcastChannel(BUS_MAIN) : null;
+
+      function computeKeys(key) {
+        const k = safeStr(key || "");
+        return {
+          key: k,
+          cmdKey:   k ? `${CMD_BASE}:${k}`   : CMD_BASE,
+          stateKey: k ? `${STATE_BASE}:${k}` : STATE_BASE,
+          evtKey:   k ? `${EVT_BASE}:${k}`   : EVT_BASE,
+          cmdLegacy: CMD_BASE,
+          stateLegacy: STATE_BASE,
+          evtLegacy: EVT_BASE
+        };
+      }
+
+      let K = computeKeys(KEY);
+
+      function exposeDebug() {
+        try {
+          g.RLC_KEY = KEY || "";
+          g.RLC_BUS = BUS_MAIN || BUS_LEGACY;
+          g.RLC_BUS_LEGACY = BUS_LEGACY;
+        } catch (_) {}
+      }
+      exposeDebug();
+
+      function ensureKey(maybeKey) {
+        const k = safeStr(maybeKey || "");
+        if (!k) return false;
+        if (KEY === k && bcMain) return true;
+
+        KEY = k;
+        BUS_MAIN = `${BUS_BASE}:${KEY}`;
+        K = computeKeys(KEY);
+
+        try { localStorage.setItem(LAST_KEY_STORE, KEY); } catch (_) {}
+
+        if (canBC) {
+          try { if (bcMain) bcMain.close(); } catch(_) {}
+          try { bcMain = new BroadcastChannel(BUS_MAIN); } catch(_) { bcMain = null; }
+          if (bcMain) {
+            try { bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch(_) {}
+          }
+        }
+        exposeDebug();
+        return true;
+      }
+
+      function cloneMsg(msg) {
+        try { return structuredClone(msg); } catch (_) { return Object.assign({}, msg); }
+      }
+
+      function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+
       function mirrorToStorage(msg) {
         if (!isObj(msg)) return;
         const type = String(msg.type || "").toLowerCase();
+
+        // ✅ si viene key dentro del msg y aún no teníamos KEY, adoptarla
+        if (!KEY) {
+          const mk = safeStr(msg.key || "");
+          if (mk) ensureKey(mk);
+        }
+
+        let raw = "";
+        try { raw = JSON.stringify(msg); } catch(_) { return; }
+
         if (type === "cmd") {
-          lsSetBoth(CMD_KEY, CMD_LEGACY, JSON.stringify(msg));
+          lsSet(K.cmdKey, raw);
+          lsSet(K.cmdLegacy, raw);
         } else if (type === "state") {
-          lsSetBoth(STATE_KEY, STATE_LEGACY, JSON.stringify(msg));
+          lsSet(K.stateKey, raw);
+          lsSet(K.stateLegacy, raw);
         } else if (type === "event") {
-          lsSetBoth(EVT_KEY, EVT_LEGACY, JSON.stringify(msg));
+          lsSet(K.evtKey, raw);
+          lsSet(K.evtLegacy, raw);
         }
       }
 
-      // Bridge BC: reenvía entre legacy y keyed sin bucles
-      function forward(targetBc, msg) {
+      function forward(targetBc, msg, fromTag) {
         if (!targetBc || !isObj(msg)) return;
         const hop = (msg[BRIDGE_TAG] | 0) || 0;
         if (hop >= MAX_HOPS) return;
+
         const out = cloneMsg(msg);
         out[BRIDGE_TAG] = hop + 1;
-        // asegúrate de incluir key al reenviar a legacy si aplica (ayuda a filtros)
+        out[SRC_TAG] = fromTag || out[SRC_TAG] || "bridge";
+
+        // ✅ añade key si existe
         if (KEY && !out.key) out.key = KEY;
+
         try { targetBc.postMessage(out); } catch (_) {}
+      }
+
+      function acceptLegacyByKey(msg) {
+        // Si estamos en KEY mode, del legacy aceptamos:
+        // - msg.key vacío (control viejo)
+        // - o msg.key === KEY
+        if (!KEY) return true;
+        const mk = safeStr(msg && msg.key || "");
+        if (!mk) return true;
+        return mk === KEY;
       }
 
       function onAnyBusMessage(ev, fromMain) {
         const msg = ev && ev.data;
         if (!isObj(msg)) return;
 
-        // Si hay KEY, acepta:
-        // - main channel: siempre
-        // - legacy: solo si msg.key coincide o msg.key vacío (control antiguo)
-        if (KEY && !fromMain) {
+        // Si llega por legacy y no cuadra la key, ignora.
+        if (!fromMain && !acceptLegacyByKey(msg)) return;
+
+        // Si llega por legacy con key y no tenemos KEY, adoptarla
+        if (!KEY) {
           const mk = safeStr(msg.key || "");
-          if (mk && mk !== KEY) return;
+          if (mk) ensureKey(mk);
         }
 
         mirrorToStorage(msg);
 
         // forward al otro bus
-        if (fromMain) forward(bcLegacy, msg);
-        else forward(bcMain, msg);
+        if (fromMain) forward(bcLegacy, msg, "main->legacy");
+        else forward(bcMain, msg, "legacy->main");
       }
 
-      try {
-        if (bcMain) bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true));
-        if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onAnyBusMessage(ev, false));
-      } catch (_) {}
+      try { if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onAnyBusMessage(ev, false)); } catch(_) {}
+      try { if (bcMain)   bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch(_) {}
 
-      // Acepta postMessage desde preview/control (same-origin), y lo mete en el bus + storage
+      // ✅ Acepta postMessage desde preview/control (same-origin), y lo mete en el bus + storage
       window.addEventListener("message", (ev) => {
         try {
-          if (ev.origin && ev.origin !== location.origin) return; // seguridad
+          if (ev.origin && ev.origin !== location.origin) return;
         } catch (_) {}
+
         const msg = ev && ev.data;
         if (!isObj(msg)) return;
 
-        // Solo tipos esperados
         const t = String(msg.type || "").toLowerCase();
         if (t !== "cmd" && t !== "state" && t !== "event") return;
 
-        // si hay KEY, filtra
+        // si llega key y aún no tenemos, adoptarla
+        const mk = safeStr(msg.key || "");
+        if (mk) ensureKey(mk);
+
+        // si tenemos KEY y msg trae una key distinta, ignora
         if (KEY) {
-          const mk = safeStr(msg.key || "");
-          if (mk && mk !== KEY) return;
+          const k2 = safeStr(msg.key || "");
+          if (k2 && k2 !== KEY) return;
         }
 
         mirrorToStorage(msg);
-        try { if (bcMain) bcMain.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
+
+        // post a BCs
+        try { if (bcMain)   bcMain.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
         try { if (bcLegacy) bcLegacy.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
       }, { passive: true });
 
-      // “Kick” suave: publica ping para que control detecte actividad si lo usa
+      // ✅ Polling LS: reinyección a BC para que app.js vea el cmd aunque BC/storage no disparen.
+      // (Esto NO ejecuta nada por sí mismo: solo republíca al canal que ya escucha tu app.js)
+      const POLL_MS = 250;
+      let lastCmdRaw = "";
+      let lastStateRaw = "";
+      let lastEvtRaw = "";
+
+      function readLS(k){ try { return localStorage.getItem(k) || ""; } catch(_) { return ""; } }
+
+      function injectFromLS(raw) {
+        if (!raw) return;
+        let msg = null;
+        try { msg = JSON.parse(raw); } catch(_) { return; }
+        if (!isObj(msg)) return;
+
+        // Si trae key y no hay KEY, adoptarla
+        const mk = safeStr(msg.key || "");
+        if (mk && !KEY) ensureKey(mk);
+
+        // Si KEY y msg trae otra key, ignora
+        if (KEY && mk && mk !== KEY) return;
+
+        // Evita loops: marca fuente LS
+        if (msg[SRC_TAG] === "ls-poll") return;
+
+        const out = Object.assign({}, msg);
+        out[SRC_TAG] = "ls-poll";
+        if (KEY && !out.key) out.key = KEY;
+
+        try { if (bcMain)   bcMain.postMessage(out); } catch(_) {}
+        try { if (bcLegacy) bcLegacy.postMessage(out); } catch(_) {}
+      }
+
+      function pollOnce() {
+        // ✅ Prioriza KEYED si existe, si no, legacy
+        const cmdRaw   = readLS(K.cmdKey)   || readLS(K.cmdLegacy);
+        const stateRaw = readLS(K.stateKey) || readLS(K.stateLegacy);
+        const evtRaw   = readLS(K.evtKey)   || readLS(K.evtLegacy);
+
+        if (cmdRaw && cmdRaw !== lastCmdRaw)   { lastCmdRaw = cmdRaw; injectFromLS(cmdRaw); }
+        if (stateRaw && stateRaw !== lastStateRaw) { lastStateRaw = stateRaw; injectFromLS(stateRaw); }
+        if (evtRaw && evtRaw !== lastEvtRaw)   { lastEvtRaw = evtRaw; injectFromLS(evtRaw); }
+      }
+
+      // storage event (útil entre pestañas)
+      window.addEventListener("storage", (e) => {
+        if (!e || !e.key) return;
+        // si cambia last key, podemos adoptar
+        if (e.key === LAST_KEY_STORE && !KEY) {
+          const k = safeStr(e.newValue || "");
+          if (k) ensureKey(k);
+          return;
+        }
+        // si cambian cmd/state/evt, fuerza inject
+        if (e.key === K.cmdKey || e.key === K.cmdLegacy) injectFromLS(e.newValue || "");
+        if (e.key === K.stateKey || e.key === K.stateLegacy) injectFromLS(e.newValue || "");
+        if (e.key === K.evtKey || e.key === K.evtLegacy) injectFromLS(e.newValue || "");
+      });
+
+      // Kick suave: publica boot event (para que control sepa que hay player)
       try {
         const ping = { type: "event", name: "PLAYER_BOOT", ts: now() };
         if (KEY) ping.key = KEY;
+        mirrorToStorage(ping);
         if (bcMain) bcMain.postMessage(ping);
         if (bcLegacy) bcLegacy.postMessage(ping);
-        mirrorToStorage(ping);
       } catch (_) {}
+
+      // Arranca polling
+      try { setInterval(pollOnce, POLL_MS); } catch(_) {}
+
+      // Guarda last key si venía por URL (para ayudar al control)
+      try { if (getUrlKey()) localStorage.setItem(LAST_KEY_STORE, getUrlKey()); } catch(_) {}
     })();
   </script>
 
@@ -245,7 +376,6 @@
     html,body{height:100%}
     body{margin:0}
 
-    /* 🔒 Alturas robustas (Opera GX / móviles) */
     body{min-height:100vh; min-height:100svh; min-height:100dvh; overflow:hidden; overscroll-behavior:none;}
 
     #stage{
@@ -261,7 +391,6 @@
     #fallback{z-index:5; pointer-events:auto}
     #stage .layer-ui{z-index:10}
 
-    /* ✅ NEWS ticker fixed fuera de stacking/overflow */
     #rlcNewsTicker{
       position:fixed!important;
       left:10px!important;right:10px!important;
@@ -269,8 +398,6 @@
       z-index:2147483647!important;
       pointer-events:none!important;
     }
-
-    /* ✅ ECON ticker fixed justo debajo del news ticker (SIN usar --rlcTickerH) */
     #rlcEconTicker{
       position:fixed!important;
       left:10px!important;right:10px!important;
@@ -285,11 +412,9 @@
       pointer-events:none!important;
     }
 
-    /* placeholder catálogo */
     #rlcCatalog{position:absolute;inset:0;z-index:2;display:none;pointer-events:none}
     #rlcCatalog.on{display:block;pointer-events:auto}
 
-    /* countdown mínimo (con fallbacks de vars para no romper si styles.css cambia) */
     #rlcCountdown{
       position:absolute;z-index:50;
       top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset, 0px));
@@ -328,7 +453,6 @@
     #rlcCountdown.br{bottom:max(14px, env(safe-area-inset-bottom));right:max(14px, env(safe-area-inset-right));top:auto;left:auto}
     #rlcCountdown.bl{bottom:max(14px, env(safe-area-inset-bottom));left:max(14px, env(safe-area-inset-left));top:auto;right:auto}
 
-    /* ✅ Diagnóstico overlay (si un JS peta) */
     #rlcDiag{
       position:fixed; inset:14px;
       z-index:2147483645;
@@ -479,7 +603,7 @@
     </noscript>
   </main>
 
-  <!-- ✅ Ticker roots (evita stacking contexts raros) -->
+  <!-- ✅ Ticker roots -->
   <div id="rlcNewsTicker" aria-label="News ticker" aria-live="polite"></div>
   <div id="rlcEconTicker" aria-label="Econ ticker" aria-live="polite"></div>
 
@@ -549,10 +673,10 @@
       function parseParams(){
         const u=new URL(location.href);
         const countdown=safeStr(u.searchParams.get("countdown")||"");
-        const key=safeStr(u.searchParams.get("key")||"");
+        const key=safeStr(u.searchParams.get("key")||"") || (()=>{try{return safeStr(localStorage.getItem("rlc_last_key_v1")||"")}catch(_){return ""}})();
         const toA=safeStr(u.searchParams.get("countdownTo")||"");
         const toB=safeStr(u.searchParams.get("countTo")||"");
-        const toC=safeStr(u.searchParams.get("countdownTarget")||""); /* compat con control v2.3.8 */
+        const toC=safeStr(u.searchParams.get("countdownTarget")||"");
         const labelA=safeStr(u.searchParams.get("countdownLabel")||"");
         const labelB=safeStr(u.searchParams.get("countLabel")||"");
         const posA=safeStr(u.searchParams.get("countdownPos")||"");
