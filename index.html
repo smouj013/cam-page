@@ -1,4 +1,11 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.5 -->
+<!-- index.html — Random Live Cams (PLAYER) v2.3.8 (CONTROL PANEL COMPAT HARDENED)
+  ✅ Compat total con control.js v2.3.8:
+     - KEY auto (URL ?key=) + expone window.RLC_KEY / window.RLC_BUS
+     - Bridge BC: rlc_bus_v1 <-> rlc_bus_v1:{key} (sin loops)
+     - Mirror LS: cmd/state/evt keyed <-> legacy (para que ningún lado “se quede sordo”)
+     - Acepta postMessage(cmd/state/event) desde preview/control (same-origin)
+  ✅ Cache-bust alineado a 2.3.8 en TODOS los assets
+-->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -44,8 +51,8 @@
     })();
   </script>
 
-  <!-- Cache-bust -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.5" />
+  <!-- Cache-bust (alineado con APP_VERSION) -->
+  <link rel="stylesheet" href="./styles.css?v=2.3.8" />
 
   <!-- REPAIR MODE: index.html?repair=1 -->
   <script>
@@ -87,6 +94,151 @@
 
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+
+  <!-- ✅ CONTROL COMPAT BRIDGE (PLAYER) — NO pisa app.js; usa addEventListener -->
+  <script>
+    (() => {
+      "use strict";
+
+      const g = (typeof globalThis !== "undefined") ? globalThis : window;
+
+      const BUS_BASE = "rlc_bus_v1";
+      const CMD_BASE = "rlc_cmd_v1";
+      const STATE_BASE = "rlc_state_v1";
+      const EVT_BASE = "rlc_evt_v1";
+
+      const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
+      const now = () => Date.now();
+
+      function parseKey() {
+        try {
+          const u = new URL(location.href);
+          return safeStr(u.searchParams.get("key") || "");
+        } catch (_) { return ""; }
+      }
+
+      const KEY = parseKey();
+      const BUS_MAIN = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+      const BUS_LEGACY = BUS_BASE;
+
+      const CMD_KEY = KEY ? `${CMD_BASE}:${KEY}` : CMD_BASE;
+      const STATE_KEY = KEY ? `${STATE_BASE}:${KEY}` : STATE_BASE;
+      const EVT_KEY = KEY ? `${EVT_BASE}:${KEY}` : EVT_BASE;
+
+      const CMD_LEGACY = CMD_BASE;
+      const STATE_LEGACY = STATE_BASE;
+      const EVT_LEGACY = EVT_BASE;
+
+      // Exponer para debug / tooling (no rompe nada)
+      try {
+        g.RLC_KEY = KEY;
+        g.RLC_BUS = BUS_MAIN;
+        g.RLC_BUS_LEGACY = BUS_LEGACY;
+      } catch (_) {}
+
+      // Guardar “last key” para que el control pueda inferirla si abres control sin ?key=
+      try { if (KEY) localStorage.setItem("rlc_last_key_v1", KEY); } catch (_) {}
+
+      const canBC = ("BroadcastChannel" in window);
+      const bcMain = canBC ? new BroadcastChannel(BUS_MAIN) : null;
+      const bcLegacy = (canBC && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+      const BRIDGE_TAG = "__rlcBridgeHop_v1";
+      const MAX_HOPS = 1;
+
+      const isObj = (x) => !!x && typeof x === "object";
+      const cloneMsg = (msg) => {
+        try { return structuredClone(msg); } catch (_) { return Object.assign({}, msg); }
+      };
+
+      function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+      function lsSetBoth(keyed, legacy, raw) {
+        lsSet(keyed, raw);
+        lsSet(legacy, raw);
+      }
+
+      // Mirror a localStorage para que el receptor vea SIEMPRE cmd/state/event
+      function mirrorToStorage(msg) {
+        if (!isObj(msg)) return;
+        const type = String(msg.type || "").toLowerCase();
+        if (type === "cmd") {
+          lsSetBoth(CMD_KEY, CMD_LEGACY, JSON.stringify(msg));
+        } else if (type === "state") {
+          lsSetBoth(STATE_KEY, STATE_LEGACY, JSON.stringify(msg));
+        } else if (type === "event") {
+          lsSetBoth(EVT_KEY, EVT_LEGACY, JSON.stringify(msg));
+        }
+      }
+
+      // Bridge BC: reenvía entre legacy y keyed sin bucles
+      function forward(targetBc, msg) {
+        if (!targetBc || !isObj(msg)) return;
+        const hop = (msg[BRIDGE_TAG] | 0) || 0;
+        if (hop >= MAX_HOPS) return;
+        const out = cloneMsg(msg);
+        out[BRIDGE_TAG] = hop + 1;
+        // asegúrate de incluir key al reenviar a legacy si aplica (ayuda a filtros)
+        if (KEY && !out.key) out.key = KEY;
+        try { targetBc.postMessage(out); } catch (_) {}
+      }
+
+      function onAnyBusMessage(ev, fromMain) {
+        const msg = ev && ev.data;
+        if (!isObj(msg)) return;
+
+        // Si hay KEY, acepta:
+        // - main channel: siempre
+        // - legacy: solo si msg.key coincide o msg.key vacío (control antiguo)
+        if (KEY && !fromMain) {
+          const mk = safeStr(msg.key || "");
+          if (mk && mk !== KEY) return;
+        }
+
+        mirrorToStorage(msg);
+
+        // forward al otro bus
+        if (fromMain) forward(bcLegacy, msg);
+        else forward(bcMain, msg);
+      }
+
+      try {
+        if (bcMain) bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true));
+        if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onAnyBusMessage(ev, false));
+      } catch (_) {}
+
+      // Acepta postMessage desde preview/control (same-origin), y lo mete en el bus + storage
+      window.addEventListener("message", (ev) => {
+        try {
+          if (ev.origin && ev.origin !== location.origin) return; // seguridad
+        } catch (_) {}
+        const msg = ev && ev.data;
+        if (!isObj(msg)) return;
+
+        // Solo tipos esperados
+        const t = String(msg.type || "").toLowerCase();
+        if (t !== "cmd" && t !== "state" && t !== "event") return;
+
+        // si hay KEY, filtra
+        if (KEY) {
+          const mk = safeStr(msg.key || "");
+          if (mk && mk !== KEY) return;
+        }
+
+        mirrorToStorage(msg);
+        try { if (bcMain) bcMain.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
+        try { if (bcLegacy) bcLegacy.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
+      }, { passive: true });
+
+      // “Kick” suave: publica ping para que control detecte actividad si lo usa
+      try {
+        const ping = { type: "event", name: "PLAYER_BOOT", ts: now() };
+        if (KEY) ping.key = KEY;
+        if (bcMain) bcMain.postMessage(ping);
+        if (bcLegacy) bcLegacy.postMessage(ping);
+        mirrorToStorage(ping);
+      } catch (_) {}
+    })();
+  </script>
 
   <!-- HARDEN: layers + ticker SIEMPRE por encima -->
   <style>
@@ -368,22 +520,22 @@
   </script>
 
   <!-- Data -->
-  <script defer src="./cams.js?v=2.3.5"></script>
-  <script defer src="./music.js?v=2.3.5"></script>
+  <script defer src="./cams.js?v=2.3.8"></script>
+  <script defer src="./music.js?v=2.3.8"></script>
 
   <!-- Weather + hora -->
-  <script defer src="./weatherClock.js?v=2.3.5"></script>
+  <script defer src="./weatherClock.js?v=2.3.8"></script>
 
   <!-- tickers -->
-  <script defer src="./rlcTickers.js?v=2.3.5"></script>
+  <script defer src="./rlcTickers.js?v=2.3.8"></script>
 
   <!-- Catálogo CCTV -->
-  <script defer src="./catalogView.js?v=2.3.5"></script>
+  <script defer src="./catalogView.js?v=2.3.8"></script>
 
   <!-- Main player -->
   <script defer src="./app.js?v=2.3.8"></script>
 
-  <!-- Countdown bootstrap -->
+  <!-- Countdown bootstrap (permite cfg desde control via BC/LS) -->
   <script>
     (() => {
       "use strict";
@@ -400,11 +552,12 @@
         const key=safeStr(u.searchParams.get("key")||"");
         const toA=safeStr(u.searchParams.get("countdownTo")||"");
         const toB=safeStr(u.searchParams.get("countTo")||"");
+        const toC=safeStr(u.searchParams.get("countdownTarget")||""); /* compat con control v2.3.8 */
         const labelA=safeStr(u.searchParams.get("countdownLabel")||"");
         const labelB=safeStr(u.searchParams.get("countLabel")||"");
         const posA=safeStr(u.searchParams.get("countdownPos")||"");
         const posB=safeStr(u.searchParams.get("countPos")||"");
-        return {key,countdown,countdownTo:toA||toB,countdownLabel:labelA||labelB,countdownPos:posA||posB};
+        return {key,countdown,countdownTo:toC||toA||toB,countdownLabel:labelA||labelB,countdownPos:posA||posB};
       }
       const P=parseParams();
       const KEY=P.key;
@@ -551,14 +704,14 @@
           if(!keyOk(msg,isMain)) return;
           applyCfg(msg.cfg);return;
         }
-        if(msg.type==="cmd" && msg.cmd==="COUNTDOWN_SET" && msg.payload && typeof msg.payload==="object"){
+        if(msg.type==="cmd" && (msg.cmd==="COUNTDOWN_SET"||msg.name==="COUNTDOWN_SET") && msg.payload && typeof msg.payload==="object"){
           if(!keyOk(msg,isMain)) return;
           applyCfg(msg.payload);return;
         }
       }
 
-      if(bcMain) bcMain.onmessage=(ev)=>onBusMessage(ev?.data,true);
-      if(bcLegacy) bcLegacy.onmessage=(ev)=>onBusMessage(ev?.data,false);
+      if(bcMain) bcMain.addEventListener("message",(ev)=>onBusMessage(ev?.data,true));
+      if(bcLegacy) bcLegacy.addEventListener("message",(ev)=>onBusMessage(ev?.data,false));
 
       window.addEventListener("storage",(e)=>{
         if(!e||!e.key) return;
