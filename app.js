@@ -2181,7 +2181,6 @@
     return !!ALLOW_LEGACY;
   }
 
-
   function applyCommand(cmd, payload) {
     const C = String(cmd || "").trim().toUpperCase();
 
