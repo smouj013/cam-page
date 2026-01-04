@@ -10,6 +10,10 @@
       - Doble click / Enter en select = GOTO
       - Selecciona cam actual al recibir state (sin pisar interacción)
       - Auto-detect KEY (si falta) desde storage y la refleja en URL sin recargar
+   ✅ FIXES IMPORTANTES (2026-01):
+      - FIX: sendCmdAliases() ya NO envía el mismo CMD dos veces (evita dobles acciones en players antiguos)
+      - postMessage al iframe preview SIEMPRE (además de BC + LS) — fiabilidad máxima
+      - Polling LS (state/evt/cmd) para casos donde storage/BC no disparan (misma pestaña/iframes)
 */
 
 (() => {
@@ -182,7 +186,6 @@
         const raw = lsGet(k);
         const st = safeJson(raw, null);
 
-        // soporta: state puro o wrapper {type:"state", state:{...}}
         const real = (st && typeof st === "object" && st.type === "state")
           ? (st.state || st)
           : st;
@@ -239,17 +242,29 @@
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
 
   // BroadcastChannels
-  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+  let bcMain = null;
+  let bcLegacy = null;
+  try { bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null; } catch (_) { bcMain = null; }
+  try { bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null; } catch (_) { bcLegacy = null; }
 
   function busPost(msg) {
     try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
     try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
   }
 
+  function postToPreview(msg) {
+    // postMessage al iframe preview (si existe) — aumenta fiabilidad en iframes/mismo tab
+    try {
+      const ifr = qs("#ctlPreview");
+      const cw = ifr?.contentWindow;
+      if (cw && typeof cw.postMessage === "function") cw.postMessage(msg, "*");
+    } catch (_) {}
+  }
+
   // ───────────────────────── Cmd compat payload normalizer
   function normalizeCmdPayload(p) {
     const payload = (p && typeof p === "object") ? Object.assign({}, p) : {};
+
     // enabled => on (y viceversa)
     if (typeof payload.enabled === "boolean" && payload.on == null) payload.on = payload.enabled;
     if (typeof payload.on === "boolean" && payload.enabled == null) payload.enabled = payload.on;
@@ -268,10 +283,6 @@
     }
     return payload;
   }
-
-  // anti-dupe receive
-  let lastSeenCmdSig = "";
-  let lastSeenCmdAt = 0;
 
   function sendCmd(cmd, payload = {}) {
     const c = String(cmd || "").trim();
@@ -292,6 +303,7 @@
       data: pl,
 
       from: "control",
+      ver: APP_VERSION
     };
     if (KEY) msg.key = KEY;
 
@@ -304,63 +316,29 @@
     // BroadcastChannel (keyed + legacy)
     busPost(msg);
 
-    // Fallback: si NO hay BC, intenta postMessage al preview (si existe)
-    // (solo si no hay BC para evitar dobles acciones)
-    try {
-      if (!bcMain && !bcLegacy) {
-        const ifr = qs("#ctlPreview");
-        const cw = ifr?.contentWindow;
-        if (cw && typeof cw.postMessage === "function") {
-          cw.postMessage(msg, "*");
-        }
-      }
-    } catch (_) {}
+    // postMessage al preview (SIEMPRE; app.js v2.3.8 dedupe cross-canal)
+    postToPreview(msg);
   }
 
-  // ✅ ALIASES (compat con distintos players)
+  // ✅ ALIASES (compat con distintos players) — FIXED: NO duplica el cmd base
   function sendCmdAliases(cmd, payload = {}, aliases = []) {
     const sent = new Set();
-    const push = (c, p) => {
+    const pl = normalizeCmdPayload(payload);
+
+    const push = (c) => {
       const cc = String(c || "").trim();
       if (!cc || sent.has(cc)) return;
       sent.add(cc);
-      sendCmd(cc, p);
+      sendCmd(cc, pl);
     };
 
-    push(cmd, payload);
-
-    // payloads alternativos típicos (id/camId)
-    const pl = (payload && typeof payload === "object") ? payload : {};
-    const id = pl.id ?? pl.camId ?? pl.cameraId ?? pl.value ?? null;
-    if (id != null) {
-      // manda una sola vez el mismo cmd con campos redundantes (player antiguo)
-      push(cmd, Object.assign({}, pl, { id, camId: id, cameraId: id, value: id }));
-    }
-
-    for (const a of (aliases || [])) push(a, payload);
+    push(cmd);
+    for (const a of (aliases || [])) push(a);
   }
 
   // API global segura
   const API_KEY = "__RLC_CONTROL_API_V1__";
   let lastState = null;
-
-  function refreshGlobalLists(force = false) { /* definida más abajo */ }
-  function buildStreamUrlFromUI() { /* definida más abajo */ }
-
-  try {
-    g[API_KEY] = {
-      kind: "RLC_CONTROL_API",
-      version: APP_VERSION,
-      key: KEY,
-      bus: BUS,
-      sendCmd,
-      sendCmdAliases,
-      busPost,
-      getState: () => lastState,
-      refreshLists: (force = false) => refreshGlobalLists(!!force),
-      buildStreamUrlFromUI: () => buildStreamUrlFromUI(),
-    };
-  } catch (_) {}
 
   // ───────────────────────── DOM cache
   let
@@ -607,7 +585,6 @@
   }
 
   function stateCamListFallback(st) {
-    // si el player manda lista en el state, úsala (compat)
     try {
       const cand =
         (Array.isArray(st?.camList) && st.camList) ||
@@ -616,7 +593,6 @@
         null;
 
       if (!cand) return null;
-      // normaliza campos mínimos
       return cand.map((c, i) => ({
         id: (c && (c.id ?? c.camId ?? c.cameraId)) ?? String(i),
         title: c?.title || c?.name || "Live Cam",
@@ -629,13 +605,10 @@
 
   function refreshGlobalLists(force = false) {
     try {
-      // prioridad: listas del propio control (si carga cams.js/music.js)
       const camRef = Array.isArray(g.CAM_LIST) ? g.CAM_LIST : null;
       const bgmRef = Array.isArray(g.BGM_LIST) ? g.BGM_LIST : null;
 
-      // fallback: si no hay CAM_LIST local, intentar desde lastState
       const camFromState = (!camRef && lastState) ? stateCamListFallback(lastState) : null;
-
       const effectiveCam = camRef || camFromState;
 
       let camChanged = false;
@@ -669,11 +642,15 @@
     } catch (_) {}
   }
 
-  // ───────────────────────── State/Event cache
+  // ───────────────────────── State/Event cache + polling
   let lastSeenAt = 0;
   let lastEventTs = 0;
 
-  // Legacy compat window
+  // dedupe state por ts+firma
+  let lastStateTs = 0;
+  let lastStateSig = "";
+
+  // legacy accept window
   let allowLegacyNoKey = true;
   const allowLegacyNoKeyUntil = Date.now() + 6500;
 
@@ -691,6 +668,21 @@
     if (!allowLegacyNoKey) return false;
     if (Date.now() > allowLegacyNoKeyUntil) return false;
     return true;
+  }
+
+  function getStateTs(st) {
+    const v = Number(st?.ts ?? st?.lastTs ?? st?.lastSeen ?? st?.lastUpdate ?? 0) || 0;
+    return v;
+  }
+  function stateSignature(st) {
+    try {
+      const cam = st?.cam || st?.currentCam || {};
+      const rem = Number(st?.remaining ?? st?.remain ?? st?.left ?? st?.timeLeft ?? 0) || 0;
+      const mins = Number(st?.mins ?? 0) || 0;
+      const ver = String(st?.version || "");
+      const id = String(cam?.id || "");
+      return sigOf(`${getStateTs(st)}|${ver}|${id}|${rem}|${mins}|${st?.autoskip ? 1 : 0}|${st?.adfree ? 1 : 0}`);
+    } catch (_) { return ""; }
   }
 
   // ───────────────────────── Vote timing (voteAt = “a falta”)
@@ -768,6 +760,7 @@
     const msg = { type: "TICKER_CFG", ts: Date.now(), cfg: c };
     if (KEY) msg.key = KEY;
     busPost(msg);
+    postToPreview(msg);
 
     // compat por cmd también
     sendCmdAliases("TICKER_SET", c, ["SET_TICKER", "TICKER"]);
@@ -853,6 +846,7 @@
     const msg = { type: "COUNTDOWN_CFG", ts: Date.now(), cfg: c };
     if (KEY) msg.key = KEY;
     busPost(msg);
+    postToPreview(msg);
 
     // compat por cmd
     sendCmdAliases("COUNTDOWN_SET", c, ["SET_COUNTDOWN", "COUNTDOWN"]);
@@ -897,7 +891,7 @@
     return normalizeCountdownCfg({ enabled, label, targetMs });
   }
 
-  // ───────────────────────── Helix Auto Title cfg (igual)
+  // ───────────────────────── Helix Auto Title cfg
   const HELIX_DEFAULTS = {
     enabled: false,
     clientId: "",
@@ -1502,6 +1496,23 @@
     return u.toString();
   }
 
+  // exponer API (después de declarar funciones reales)
+  try {
+    g[API_KEY] = {
+      kind: "RLC_CONTROL_API",
+      version: APP_VERSION,
+      key: KEY,
+      bus: BUS,
+      sendCmd,
+      sendCmdAliases,
+      busPost,
+      postToPreview,
+      getState: () => lastState,
+      refreshLists: (force = false) => refreshGlobalLists(!!force),
+      buildStreamUrlFromUI: () => buildStreamUrlFromUI(),
+    };
+  } catch (_) {}
+
   // ───────────────────────── Incoming state/events/cmd (BOT_SAY)
   let lastAnnouncedCamId = "";
   let lastAnnounceAt = 0;
@@ -1550,13 +1561,19 @@
   function applyState(stAny) {
     if (!stAny || typeof stAny !== "object") return;
 
-    // soporta wrapper: {type:"state", state:{...}}
     const st = (stAny.type === "state" && stAny.state && typeof stAny.state === "object") ? stAny.state : stAny;
+
+    // dedupe por ts+firma (pero permite mismo ts si cambia firma)
+    const ts = getStateTs(st);
+    const sig = stateSignature(st);
+    if (ts && ts < lastStateTs) return;
+    if (ts && ts === lastStateTs && sig && sig === lastStateSig) return;
+    if (ts) lastStateTs = ts;
+    if (sig) lastStateSig = sig;
 
     lastState = st;
     lastSeenAt = Date.now();
 
-    // si el state trae lista y aquí no tenemos CAM_LIST, úsala
     try {
       if (!Array.isArray(g.CAM_LIST)) {
         const fallback = stateCamListFallback(st);
@@ -1582,13 +1599,11 @@
       try { ctlOrigin.style.opacity = url ? "1" : ".6"; } catch (_) {}
     }
 
-    // Seleccionar cam actual en lista
     try {
       const curId = String(cam.id || "");
       if (curId && ctlSelect && !isEditing(ctlSelect)) ctlSelect.value = curId;
     } catch (_) {}
 
-    // Mismatch Control/Player
     const pv = String(st.version || "");
     if (pv && compareVer(pv, APP_VERSION) > 0) {
       markUpdateAvailable(`Player v${pv} > Control v${APP_VERSION}`);
@@ -1650,7 +1665,6 @@
       if (ctlCatalogOn && catEnabled !== null && !isEditing(ctlCatalogOn)) ctlCatalogOn.value = catEnabled ? "on" : "off";
       if (ctlCatalogStatus && catEnabled !== null) setPill(ctlCatalogStatus, catEnabled ? "Catálogo: ON" : "Catálogo: OFF", !!catEnabled);
 
-      // si hay detalles, rellena sin pisar edición
       if (cat) {
         if (ctlCatalogLayout && !isEditing(ctlCatalogLayout) && cat.layout) ctlCatalogLayout.value = String(cat.layout);
         if (ctlCatalogGap && !isEditing(ctlCatalogGap) && (cat.gap != null)) ctlCatalogGap.value = String(cat.gap);
@@ -1671,7 +1685,6 @@
   function applyEvent(evAny) {
     if (!evAny || typeof evAny !== "object") return;
 
-    // soporta wrapper: {type:"event", event:{...}}
     const ev = (evAny.type === "event" && evAny.event && typeof evAny.event === "object") ? evAny.event : evAny;
 
     const ts = (ev.ts | 0) || 0;
@@ -1691,17 +1704,19 @@
     }
   }
 
+  // dedupe cmd receive
+  let lastSeenCmdSig = "";
+  let lastSeenCmdAt = 0;
+
   function applyIncomingCmd(msgAny) {
     if (!msgAny || typeof msgAny !== "object") return;
 
-    // soporta wrapper raro: {type:"cmd", cmd:{...}}
     const msg = (String(msgAny.type || "").toLowerCase() === "cmd" && msgAny.cmd && typeof msgAny.cmd === "object")
       ? msgAny.cmd
       : msgAny;
 
     if (String(msg.type || "").toLowerCase() !== "cmd") return;
 
-    // dedupe básico (BC + storage)
     const sig = sigOf(`${msg.mid || ""}|${msg.ts || ""}|${msg.cmd || msg.name || ""}|${JSON.stringify(msg.payload || msg.data || {})}`);
     const now = Date.now();
     if (sig && sig === lastSeenCmdSig && (now - lastSeenCmdAt) < 1200) return;
@@ -1734,6 +1749,25 @@
     const raw = lsGet(CMD_KEY) || lsGet(CMD_KEY_LEGACY);
     const msg = safeJson(raw, null);
     if (msg && typeof msg === "object") applyIncomingCmd(msg);
+  }
+
+  // Polling LS (fallback cuando storage/BC no disparan)
+  let _pollLastStateRaw = "";
+  let _pollLastEvtRaw = "";
+  let _pollLastCmdRaw = "";
+  function pollLS() {
+    try {
+      const sraw = lsGet(STATE_KEY) || lsGet(STATE_KEY_LEGACY) || "";
+      if (sraw && sraw !== _pollLastStateRaw) { _pollLastStateRaw = sraw; readStateFromLS(); }
+    } catch (_) {}
+    try {
+      const eraw = lsGet(EVT_KEY) || lsGet(EVT_KEY_LEGACY) || "";
+      if (eraw && eraw !== _pollLastEvtRaw) { _pollLastEvtRaw = eraw; readEventFromLS(); }
+    } catch (_) {}
+    try {
+      const craw = lsGet(CMD_KEY) || lsGet(CMD_KEY_LEGACY) || "";
+      if (craw && craw !== _pollLastCmdRaw) { _pollLastCmdRaw = craw; readCmdFromLS(); }
+    } catch (_) {}
   }
 
   // ───────────────────────── UI actions
@@ -1772,7 +1806,6 @@
     if (ctlAdfree) sendCmdAliases("SET_MODE", { mode: (ctlAdfree.value !== "off") ? "adfree" : "" }, ["MODE"]);
     if (ctlYtCookies) sendCmdAliases("YT_COOKIES", { enabled: (ctlYtCookies.value !== "off") }, ["SET_YT_COOKIES"]);
 
-    // por si el player usa “SET_PARAMS” en bloque
     sendCmdAliases("SET_PARAMS", {
       mins,
       fit,
@@ -1816,11 +1849,9 @@
     const hideCommands = ctlChatHideCmd ? (ctlChatHideCmd.value !== "off") : true;
     const alertsEnabled = ctlAlertsOn ? (ctlAlertsOn.value !== "off") : true;
 
-    // manda una sola vez (evita “pisadas” en players que reemplazan estado completo)
     sendCmdAliases("SET_CHAT", { enabled: chatEnabled, hideCommands }, ["CHAT", "CHAT_SET", "CHATCFG"]);
     sendCmdAliases("SET_ALERTS", { enabled: alertsEnabled }, ["ALERTS", "ALERTS_SET"]);
 
-    // compat en bloque
     sendCmdAliases("SET_UI", {
       chat: chatEnabled,
       chatHideCommands: hideCommands,
@@ -1866,7 +1897,7 @@
     sendCmdAliases("AD_CLEAR", {}, ["ADS_CLEAR"]);
   }
 
-  // ✅ Transporte con ALIASES
+  // Transporte con ALIASES
   function doPrev() { sendCmdAliases("PREV", {}, ["CAM_PREV", "PREV_CAM", "NAV_PREV"]); }
   function doNext() { sendCmdAliases("NEXT", {}, ["CAM_NEXT", "NEXT_CAM", "NAV_NEXT"]); }
   function doTogglePlay() { sendCmdAliases("TOGGLE_PLAY", {}, ["PLAYPAUSE", "PLAY_PAUSE", "PAUSE_TOGGLE"]); }
@@ -1875,9 +1906,7 @@
   function doGoSelected() {
     const id = ctlSelect?.value;
     if (!id) return;
-
     sendCmdAliases("GOTO", { id }, ["CAM_GOTO", "SET_CAM", "GOTO_CAM", "NAV_GOTO"]);
-    sendCmdAliases("GOTO", { camId: id }, []);
     syncPreviewUrl();
   }
 
@@ -1940,15 +1969,12 @@
     const cfg = readCatalogUI();
     setCatalogStatusFromCfg(cfg);
 
-    // manda al player (varios nombres por compat)
     sendCmdAliases("SET_CATALOG", cfg, ["CATALOG_SET", "CATALOG", "SET_CATALOG_CFG"]);
-    // y en bloque por si usa SET_PARAMS
     sendCmdAliases("SET_PARAMS", { catalog: cfg }, ["APPLY_SETTINGS"]);
     syncPreviewUrl();
   }
 
   function resetCatalogNow() {
-    // reset UI a defaults si existen
     try {
       if (ctlCatalogOn) ctlCatalogOn.value = CATALOG_DEFAULTS.enabled ? "on" : "off";
       if (ctlCatalogLayout) ctlCatalogLayout.value = CATALOG_DEFAULTS.layout;
@@ -2130,7 +2156,10 @@
 
     // BGM + aliases
     safeOn(ctlBgmOn, "change", () => sendCmdAliases("SET_BGM", { enabled: (ctlBgmOn.value !== "off") }, ["BGM_SET"]));
-    safeOn(ctlBgmVol, "input", debounce(() => sendCmdAliases("SET_BGM_VOL", { vol: parseFloat(ctlBgmVol.value || "0.22") || 0.22 }, ["BGM_VOL"]), 120));
+    safeOn(ctlBgmVol, "input", debounce(() => {
+      const v = clamp(parseFloat(ctlBgmVol.value || "0.22") || 0.22, 0, 1);
+      sendCmdAliases("SET_BGM_VOL", { vol: v }, ["BGM_VOL"]);
+    }, 120));
     safeOn(ctlBgmPrev, "click", () => sendCmdAliases("BGM_PREV", {}, ["PREV_BGM"]));
     safeOn(ctlBgmPlay, "click", () => sendCmdAliases("BGM_PLAYPAUSE", {}, ["BGM_TOGGLE", "BGM_PLAY_PAUSE"]));
     safeOn(ctlBgmNext, "click", () => sendCmdAliases("BGM_NEXT", {}, ["NEXT_BGM"]));
@@ -2140,7 +2169,7 @@
       sendCmdAliases("BGM_TRACK", { idx }, ["SET_BGM_TRACK"]);
     });
 
-    // Auto preview sync (change + input donde aplique)
+    // Auto preview sync
     const autoSync = debounce(syncPreviewUrl, 160);
     const autoSyncInput = debounce(syncPreviewUrl, 120);
 
@@ -2156,7 +2185,6 @@
       ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget
     ].forEach(el => safeOn(el, "change", autoSync));
 
-    // sliders/ranges típicos
     [ctlCatalogGap, ctlBgmVol].forEach(el => safeOn(el, "input", autoSyncInput));
 
     // Click pill para recargar
@@ -2174,12 +2202,10 @@
         const msg = ev?.data;
         if (!keyOk(msg, true)) return;
 
-        // soporta: msg.type === "state" con state dentro, o msg ya siendo state
         if (msg?.type === "state") applyState(msg.state || msg);
         else if (msg?.type === "event") applyEvent(msg.event || msg);
         else if (String(msg?.type || "").toLowerCase() === "cmd") applyIncomingCmd(msg);
         else if (msg && typeof msg === "object") {
-          // compat: algunos players emiten el estado directamente sin wrapper
           if (msg.cam || msg.currentCam || msg.mins != null) applyState(msg);
         }
       };
@@ -2248,15 +2274,25 @@
 
   // ───────────────────────── Heartbeat
   let heartbeatId = 0;
+  let lastReqStateAt = 0;
 
   function heartbeat() {
     const now = Date.now();
     const age = now - (lastSeenAt || 0);
 
+    // Poll LS fallback (caso storage/BC no disparan)
+    pollLS();
+
     if (!updateAvailable) {
       if (age > 3500) {
         const extra = KEY ? ` (key=${KEY.slice(0, 10)}…)` : " (sin key)";
         setStatus(`Sin señal… abre el player en el mismo navegador${extra}`, false);
+
+        // re-pide state cada cierto tiempo si estamos “ciegos”
+        if ((now - lastReqStateAt) > 3500) {
+          lastReqStateAt = now;
+          sendCmdAliases("REQ_STATE", {}, ["STATE_REQ", "GET_STATE", "PING_STATE"]);
+        }
       }
     }
 
@@ -2302,8 +2338,10 @@
     readStateFromLS();
     readEventFromLS();
     readCmdFromLS();
+    pollLS();
 
-    // 🔥 PIDE STATE al player (si lo soporta, te “engancha” al instante)
+    // 🔥 PIDE STATE al player (enganche rápido)
+    lastReqStateAt = Date.now();
     sendCmdAliases("REQ_STATE", {}, ["STATE_REQ", "GET_STATE", "PING_STATE"]);
 
     installSwUpdateWatcher();
@@ -2319,10 +2357,12 @@
     try { if (heartbeatId) clearInterval(heartbeatId); } catch (_) {}
     heartbeatId = 0;
 
-    try { bcMain && (bcMain.onmessage = null); } catch (_) {}
-    try { bcLegacy && (bcLegacy.onmessage = null); } catch (_) {}
+    try { if (bcMain) bcMain.onmessage = null; } catch (_) {}
+    try { if (bcLegacy) bcLegacy.onmessage = null; } catch (_) {}
     try { bcMain && bcMain.close?.(); } catch (_) {}
     try { bcLegacy && bcLegacy.close?.(); } catch (_) {}
+    bcMain = null;
+    bcLegacy = null;
 
     try { bot?.close?.(); } catch (_) {}
     bot = null;
