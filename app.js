@@ -1,20 +1,25 @@
-/* app.js — RLC Player v2.2.5 PRO (VOTE UI TIMING FIX + AUTO VOTE BY REMAINING + SAFE HIDE + PARAMS ROBUST)
-   ✅ FIX CLAVE (mantenido):
-      - Auto voto usa "segundos que FALTAN" (remaining), NO "segundos transcurridos" (elapsed)
-      - voteAt = “Auto (a falta)” (segundos restantes cuando EMPIEZA la votación REAL)
-      - El pre-aviso (lead) se muestra ANTES: auto-trigger ocurre a (voteAt + lead)
-      - La UI de voto se fuerza a display:none cuando no toca (aunque falte .hidden en CSS)
-      - En auto, la ventana efectiva nunca excede voteAt (para que no “corte” al final)
-   ✅ Mejora v2.2.5:
-      - parseParams más robusto (bools tipo "true/false/1/0")
-      - setShown añade aria-hidden y refuerzo de display:none
-      - guardas extra en filtros / listas vacías
+/* app.js — RLC Player v2.3.8 PRO
+   ✅ ADMIN PANEL RELIABILITY FIX (CLAVE):
+      - Polling de comandos (localStorage) para casos donde "storage" no dispara (iframes/misma pestaña)
+      - Dedup ROBUSTO cross-canal (BC/LS/postMessage) sin duplicar ejecuciones
+      - Dedup por “firma” estable: permite mismo ts si payload cambia
+      - Fallback por postMessage (mismo origin)
+      - Aliases extra típicos de botones de control (HUD/SETTINGS/APPLY)
+   ✅ Mantiene TODO lo de v2.3.6/2.3.7:
+      - Auto voto por remaining + PRE (voteUi)
+      - ADS lead→live fix + hint duration
+      - TAGVOTE_START/STOP + refresh tags
+      - parseParams robusto, safeHide, schema state v5
 */
+
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_PLAYER_LOADED_V225_PRO";
+  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.8");
+  const VDIG = VERSION.replace(/\D/g, "") || "238";
+
+  const LOAD_GUARD = `__RLC_PLAYER_LOADED_V${VDIG}_PRO`;
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
@@ -33,7 +38,6 @@
     try { el.style.display = on ? "" : "none"; } catch (_) {}
     try { el.classList.toggle("hidden", !on); } catch (_) {}
     try { el.setAttribute("aria-hidden", on ? "false" : "true"); } catch (_) {}
-    // Refuerzo: si algo externo “revive” el display, lo volvemos a apagar al instante
     if (!on) {
       try {
         const cs = window.getComputedStyle(el);
@@ -44,6 +48,7 @@
   const safeJson = (raw, fallback = null) => {
     try { return JSON.parse(raw); } catch (_) { return fallback; }
   };
+  const isObj = (x) => !!x && typeof x === "object";
 
   // ───────────────────────── News Ticker bridge (SAFE) ─────────────────────────
   const TICKER_EVT = "RLC_PLAYER_EVENT";
@@ -52,7 +57,6 @@
   function tickerNotify(kind, data) {
     try {
       const api = g.RLCNewsTicker || g.NewsTicker || g.newsTicker || null;
-
       if (api) {
         if (typeof api.onPlayerEvent === "function") api.onPlayerEvent(kind, data);
         if (typeof api.emit === "function") api.emit(kind, data);
@@ -60,7 +64,6 @@
         if (kind === "EVENT" && typeof api.onEvent === "function") api.onEvent(data);
       }
     } catch (_) {}
-
     try {
       window.dispatchEvent(new CustomEvent(TICKER_EVT, { detail: { kind, data } }));
     } catch (_) {}
@@ -121,7 +124,7 @@
       seed: u.searchParams.get("seed") || "",
       autoskip: parseBoolParam(u.searchParams.get("autoskip") ?? "1", true),
       mode: (u.searchParams.get("mode") || "").toLowerCase(),
-      debug: (u.searchParams.get("debug") === "1"),
+      debug: parseBoolParam(u.searchParams.get("debug"), false) || (u.searchParams.get("debug") === "1"),
       key,
       allowLegacy,
 
@@ -137,12 +140,10 @@
       twitchExplicit,
 
       voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
-
-      // ⚠️ voteAt = “a falta” (segundos restantes cuando empieza la votación REAL)
       voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
-
       voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
       voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
+
       stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
 
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
@@ -809,6 +810,7 @@
   let adRoot = null, adTitleEl = null, adTimeEl = null, adBarEl = null;
   let adActive = false, adPhase = "idle";
   let adLeadEndsAt = 0, adEndsAt = 0, adTotalLead = 0, adTotalLive = 0;
+  let adLiveHintSec = 0;
 
   function injectAdsStylesOnce() {
     if (document.getElementById("rlcAdsStyles")) return;
@@ -843,6 +845,7 @@
     const wasActive = adActive;
     adActive = false; adPhase = "idle";
     adLeadEndsAt = 0; adEndsAt = 0; adTotalLead = 0; adTotalLive = 0;
+    adLiveHintSec = 0;
     if (adRoot) adRoot.classList.remove("on");
     if (wasActive && !noEvent) emitEvent("AD_AUTO_CLEAR", {});
   }
@@ -853,28 +856,49 @@
     if (adRoot) adRoot.classList.add("on");
   }
 
-  function adStartLead(secondsLeft) {
+  function adStartLead(secondsLeft, durationHintSec = 0) {
     if (!adsEnabled) return;
     const left = clamp(secondsLeft | 0, 0, 3600);
+    const hint = clamp(durationHintSec | 0, 0, 3600);
+    if (hint > 0) adLiveHintSec = hint;
+
     adActive = true; adPhase = "lead"; adShow();
     adTotalLead = Math.max(1, left);
     adLeadEndsAt = Date.now() + left * 1000;
+
     if (adTitleEl) adTitleEl.textContent = "Anuncio en…";
     if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
     if (adBarEl) adBarEl.style.width = "0%";
+
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
-    emitEvent("AD_AUTO_NOTICE", { leadSec: left });
+    emitEvent("AD_AUTO_NOTICE", { leadSec: left, durationHintSec: (adLiveHintSec | 0) || 0 });
   }
 
   function adStartLive(durationSec) {
     if (!adsEnabled) return;
-    const d = clamp(durationSec | 0, 5, 3600);
+    ensureAdsUI();
+
+    const now = Date.now();
+    let d = (durationSec | 0) || 0;
+    if (d <= 0) d = (adLiveHintSec | 0) || 0;
+    if (d <= 0) d = 30;
+    d = clamp(d, 5, 3600);
+
+    if (adActive && adPhase === "live" && adEndsAt) {
+      const curLeft = Math.max(0, Math.ceil((adEndsAt - now) / 1000));
+      if (Math.abs(curLeft - d) <= 2) return;
+    }
+
+    adLiveHintSec = d;
+
     adActive = true; adPhase = "live"; adShow();
     adTotalLive = d;
-    adEndsAt = Date.now() + d * 1000;
+    adEndsAt = now + d * 1000;
+
     if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
     if (adTimeEl) adTimeEl.textContent = `Quedan ${fmtMMSS(d)}`;
     if (adBarEl) adBarEl.style.width = "0%";
+
     if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
     emitEvent("AD_AUTO_BEGIN", { durationSec: d });
   }
@@ -889,12 +913,7 @@
       const denom = Math.max(1, adTotalLead | 0);
       const pct = 100 * (1 - (left / denom));
       if (adBarEl) adBarEl.style.width = `${clamp(pct, 0, 100).toFixed(1)}%`;
-      if (left <= 0) {
-        adPhase = "live";
-        adTotalLive = Math.max(6, adTotalLive | 0);
-        adEndsAt = now + (adTotalLive || 6) * 1000;
-        if (adTitleEl) adTitleEl.textContent = "Anuncio en curso…";
-      }
+      if (left <= 0) adStartLive((adLiveHintSec | 0) || 0);
       return;
     }
 
@@ -920,7 +939,8 @@
 
     window.addEventListener("message", (ev) => {
       const origin = String(ev.origin || "");
-      if (!origin.includes("youtube.com") && !origin.includes("youtube-nocookie.com")) return;
+      const okOrigin = /(^https:\/\/)(www\.)?youtube\.com$/.test(origin) || /(^https:\/\/)(www\.)?youtube-nocookie\.com$/.test(origin);
+      if (!okOrigin) return;
 
       let data = ev.data;
       try { if (typeof data === "string") data = JSON.parse(data); } catch (_) {}
@@ -1094,27 +1114,34 @@
   let voteOverlay = !!P.voteOverlay;
 
   let voteWindowCfgSec = P.voteWindow | 0;
-  let voteAtCfgSec = P.voteAt | 0;      // remaining cuando empieza el voto real
-  let voteLeadCfgSec = P.voteLead | 0;  // pre-warning
-  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : (voteLeadCfgSec + voteWindowCfgSec);
+  let voteAtCfgSec = P.voteAt | 0;
+  let voteLeadCfgSec = P.voteLead | 0;
+  let voteUiCfgSec = (P.voteUi > 0) ? (P.voteUi | 0) : 0;
   let stayMins = P.stayMins | 0;
 
+  // Segment schedule (auto)
   let voteWindowSegSec = voteWindowCfgSec;
-  let voteAtSegSec = voteAtCfgSec;         // trigger (lead start) = voteAt + lead
-  let voteAtSegBaseSec = voteAtCfgSec;     // base (vote start)
+  let voteAtSegSec = voteAtCfgSec;
+  let voteAtSegBaseSec = voteAtCfgSec;
   let voteLeadSegSec = voteLeadCfgSec;
-  let voteUiSegSec = voteUiCfgSec;
+  let voteUiSegSec = 0;
+  let votePreSegSec = 0;
 
+  // Active session
   let voteWindowActiveSec = voteWindowCfgSec;
   let voteLeadActiveSec = voteLeadCfgSec;
+  let voteUiActiveSec = 0;
+  let votePreActiveSec = 0;
 
   let voteCmdStr = String(P.voteCmd || "!next,!cam|!stay,!keep").trim();
-  let cmdYes = new Set(["!next","!cam"]);
-  let cmdNo = new Set(["!stay","!keep"]);
+  let cmdYes = new Set(["!next", "!cam"]);
+  let cmdNo = new Set(["!stay", "!keep"]);
 
   let voteSessionActive = false;
-  let votePhase = "idle";
+  let votePhase = "idle"; // idle | pre | lead | vote
+  let preEndsAt = 0;
   let leadEndsAt = 0;
+  let voteStartsAt = 0;
   let voteEndsAt = 0;
 
   let votesYes = 0, votesNo = 0;
@@ -1127,15 +1154,17 @@
     const parts = voteCmdStr.split("|");
     const a = (parts[0] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
     const b = (parts[1] || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-    cmdYes = new Set(a.length ? a : ["!next","!cam"]);
-    cmdNo = new Set(b.length ? b : ["!stay","!keep"]);
+    cmdYes = new Set(a.length ? a : ["!next", "!cam"]);
+    cmdNo = new Set(b.length ? b : ["!stay", "!keep"]);
   }
   parseVoteCmds(voteCmdStr);
 
   function voteReset() {
     voteSessionActive = false;
     votePhase = "idle";
+    preEndsAt = 0;
     leadEndsAt = 0;
+    voteStartsAt = 0;
     voteEndsAt = 0;
     votesYes = 0; votesNo = 0;
     voters = new Set();
@@ -1145,16 +1174,21 @@
   function recalcVoteScheduleForSegment(segTotalSec) {
     const total = clamp(segTotalSec | 0, 1, 120 * 60);
 
-    voteWindowSegSec = clamp(voteWindowCfgSec | 0, 5, 180);
+    voteAtSegBaseSec = clamp(voteAtCfgSec | 0, 1, total);
     voteLeadSegSec = clamp(voteLeadCfgSec | 0, 0, 30);
 
-    voteAtSegBaseSec = clamp(voteAtCfgSec | 0, 1, total);
-    voteAtSegSec = clamp((voteAtSegBaseSec + voteLeadSegSec) | 0, 1, total);
+    const wCfg = clamp(voteWindowCfgSec | 0, 5, 180);
+    voteWindowSegSec = clamp(Math.min(wCfg, voteAtSegBaseSec), 5, 180);
 
-    voteUiSegSec = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : (voteLeadSegSec + voteWindowSegSec);
+    const minUi = (voteLeadSegSec + voteWindowSegSec) | 0;
+    const uiCfg = (voteUiCfgSec > 0) ? clamp(voteUiCfgSec | 0, 0, 300) : 0;
+    voteUiSegSec = (uiCfg > 0) ? Math.max(uiCfg, minUi) : minUi;
+
+    votePreSegSec = Math.max(0, (voteUiSegSec - minUi) | 0);
+    voteAtSegSec = clamp((voteAtSegBaseSec + voteLeadSegSec + votePreSegSec) | 0, 1, total);
   }
 
-  function voteStartSequence(windowSec, leadSec) {
+  function voteStartSequence(windowSec, leadSec, uiSec = 0) {
     if (!voteEnabled || !twitchChannel) return;
 
     const w = clamp(windowSec | 0, 5, 180);
@@ -1163,21 +1197,57 @@
     voteWindowActiveSec = w;
     voteLeadActiveSec = lead;
 
+    const minUi = (lead + w) | 0;
+    let uiFinal = (uiSec | 0);
+    if (uiFinal <= 0) uiFinal = minUi;
+    uiFinal = clamp(uiFinal, 0, 300);
+    if (uiFinal < minUi) uiFinal = minUi;
+
+    const pre = Math.max(0, (uiFinal - minUi) | 0);
+
+    voteUiActiveSec = uiFinal;
+    votePreActiveSec = pre;
+
     votesYes = 0; votesNo = 0;
     voters = new Set();
-
     voteSessionActive = true;
+
+    const now = Date.now();
+
+    preEndsAt = 0;
+    leadEndsAt = 0;
+    voteStartsAt = 0;
+    voteEndsAt = 0;
+
+    if (pre > 0) {
+      votePhase = "pre";
+      preEndsAt = now + pre * 1000;
+
+      if (lead > 0) {
+        leadEndsAt = preEndsAt + lead * 1000;
+        voteStartsAt = leadEndsAt;
+      } else {
+        leadEndsAt = 0;
+        voteStartsAt = preEndsAt;
+      }
+
+      voteEndsAt = voteStartsAt + w * 1000;
+      renderVote();
+      return;
+    }
 
     if (lead > 0) {
       votePhase = "lead";
-      leadEndsAt = Date.now() + lead * 1000;
-      voteEndsAt = leadEndsAt + w * 1000;
-    } else {
-      votePhase = "vote";
-      leadEndsAt = 0;
-      voteEndsAt = Date.now() + w * 1000;
+      leadEndsAt = now + lead * 1000;
+      voteStartsAt = leadEndsAt;
+      voteEndsAt = voteStartsAt + w * 1000;
+      renderVote();
+      return;
     }
 
+    votePhase = "vote";
+    voteStartsAt = now;
+    voteEndsAt = now + w * 1000;
     renderVote();
   }
 
@@ -1207,15 +1277,25 @@
     const show = voteOverlay && voteEnabled && !!twitchChannel && voteSessionActive;
 
     setShown(voteBox, show);
-
     if (!show) return;
 
     const now = Date.now();
     const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
+    const no0 = [...cmdNo][0] || "!stay";
+
+    if (votePhase === "pre") {
+      const remToStart = Math.max(0, Math.ceil(((voteStartsAt || now) - now) / 1000));
+      if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remToStart);
+      if (voteHintEl) voteHintEl.textContent = `Votación pronto… (${yes0} / ${no0})`;
+      if (voteYesN) voteYesN.textContent = "0";
+      if (voteNoN) voteNoN.textContent = "0";
+      if (voteYesFill) voteYesFill.style.width = "0%";
+      if (voteNoFill) voteNoFill.style.width = "0%";
+      return;
+    }
 
     if (votePhase === "lead") {
-      const remLead = Math.max(0, Math.ceil((leadEndsAt - now) / 1000));
+      const remLead = Math.max(0, Math.ceil(((leadEndsAt || now) - now) / 1000));
       if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remLead);
       if (voteHintEl) voteHintEl.textContent = `Votación en… (${yes0} / ${no0})`;
       if (voteYesN) voteYesN.textContent = "0";
@@ -1225,7 +1305,7 @@
       return;
     }
 
-    const remVote = Math.max(0, Math.ceil((voteEndsAt - now) / 1000));
+    const remVote = Math.max(0, Math.ceil(((voteEndsAt || now) - now) / 1000));
     if (voteTimeEl) voteTimeEl.textContent = fmtMMSS(remVote);
     if (voteHintEl) voteHintEl.textContent = `Vota: ${yes0} o ${no0}`;
 
@@ -1265,10 +1345,10 @@
       callVoteCooldownUntil = now + REQUEST_COOLDOWN_MS;
 
       voteTriggeredForSegment = true;
-      voteStartSequence(voteWindowSegSec, 0);
+      voteStartSequence(voteWindowSegSec, 0, 0);
 
       const yes0 = [...cmdYes][0] || "!next";
-      const no0  = [...cmdNo][0]  || "!stay";
+      const no0 = [...cmdNo][0] || "!stay";
       botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSegSec}s`);
     }
   }
@@ -1335,7 +1415,7 @@
     const st = document.createElement("style");
     st.id = "rlcTagVoteStyles";
     st.textContent =
-      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none}" +
+      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none;display:none}" +
       ".rlcTagVoteCard{background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.12);border-radius:18px;box-shadow:0 16px 46px rgba(0,0,0,.40);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 14px}" +
       ".rlcTagVoteTop{display:flex;justify-content:space-between;align-items:center;gap:12px}.rlcTagVoteTitle{font-weight:900;font-size:13px;color:rgba(255,255,255,.95)}" +
       ".rlcTagVoteTime{font-weight:900;font-size:12px;color:rgba(255,255,255,.85)}.rlcTagVoteHint{margin-top:4px;font-size:12px;color:rgba(255,255,255,.78)}" +
@@ -1381,7 +1461,6 @@
     const show = tagVoteActive && tagVoteTags.length === 3;
 
     setShown(tagVoteBox, show);
-
     if (!show) return;
 
     const now = Date.now();
@@ -1612,16 +1691,16 @@
     lastHelpAt = now;
 
     const yes0 = [...cmdYes][0] || "!next";
-    const no0  = [...cmdNo][0]  || "!stay";
+    const no0 = [...cmdNo][0] || "!stay";
     botSay(`🛰️ Comandos: !now · !help · Vota: ${yes0} / ${no0} · Pedir voto: !callvote (5) · TagVote: !tagvote (5) y luego !1 !2 !3`);
   }
 
   function sendNow() {
     const cam = cams[idx] || {};
-    const t = String(cam.title || "Live Cam");
+    const t = String(cam.title || "🌍");
     const p = String(cam.place || "");
     const src = String(cam.source || "");
-    botSay(`🌍 Ahora: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}`);
+    botSay(`📍: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}`);
   }
 
   function handleTwitchEvent(ev) {
@@ -1711,13 +1790,13 @@
     const start = el.volume;
     const end = clamp(+targetVol || 0, 0, 1);
     const dur = clamp(ms | 0, 0, 2000);
-    if (dur <= 0) { try { el.volume = end; } catch(_) {} return; }
+    if (dur <= 0) { try { el.volume = end; } catch (_) {} return; }
     const t0 = Date.now();
     const timer = setInterval(() => {
       const k = clamp((Date.now() - t0) / dur, 0, 1);
       const v = start + (end - start) * k;
-      try { el.volume = clamp(v, 0, 1); } catch(_) {}
-      if (k >= 1) { try { clearInterval(timer); } catch(_) {} }
+      try { el.volume = clamp(v, 0, 1); } catch (_) {}
+      if (k >= 1) { try { clearInterval(timer); } catch (_) {} }
     }, 40);
   }
 
@@ -1739,7 +1818,7 @@
     if (!bgmEnabled || !bgmList.length || !bgmEl) return;
     try {
       if (!bgmEl.src) bgmLoadTrack(bgmIdx);
-      try { bgmEl.volume = 0; } catch(_) {}
+      try { bgmEl.volume = 0; } catch (_) {}
       const p = bgmEl.play();
       if (p && typeof p.then === "function") await p;
       fadeAudioTo(bgmEl, bgmVol, 320);
@@ -1752,7 +1831,7 @@
     try {
       if (bgmEl) {
         fadeAudioTo(bgmEl, 0, 220);
-        setTimeout(() => { try { bgmEl.pause(); } catch(_) {} }, 240);
+        setTimeout(() => { try { bgmEl.pause(); } catch (_) {} }, 240);
       }
     } catch (_) {}
     bgmPlaying = false;
@@ -1813,10 +1892,18 @@
       const ytId = cam.youtubeId || "";
       if (!ytId) { healthFail(tok, cam, "youtube_missing_id"); return; }
 
+      const origin = (() => {
+        try {
+          const o = String(location.origin || "");
+          return (o && o !== "null") ? o : "";
+        } catch (_) { return ""; }
+      })();
+
       const src =
         `${base}/embed/${encodeURIComponent(ytId)}` +
         `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=0&disablekb=1` +
-        `&enablejsapi=1&origin=${encodeURIComponent(location.origin)}` +
+        `&enablejsapi=1` +
+        (origin ? `&origin=${encodeURIComponent(origin)}` : "") +
         `&widgetid=1`;
 
       ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
@@ -1994,7 +2081,7 @@
       type: "state",
       ts: now,
       key: KEY || undefined,
-      version: "2.2.5",
+      version: VERSION,
       playing,
       idx,
       total: cams.length,
@@ -2027,10 +2114,14 @@
         uiSec: voteUiCfgSec,
         stayMins,
         cmd: voteCmdStr,
+
         segWindowSec: voteWindowSegSec,
         segVoteAtSec: voteAtSegSec,
         segVoteAtBaseSec: voteAtSegBaseSec,
         segLeadSec: voteLeadSegSec,
+        segUiSec: voteUiSegSec,
+        segPreSec: votePreSegSec,
+
         sessionActive: voteSessionActive,
         phase: votePhase,
         yes: votesYes,
@@ -2059,19 +2150,41 @@
     tickerState(state, !!force);
   }
 
-  // ───────────────────────── Commands ─────────────────────────
+  // ───────────────────────── Commands (ADMIN HARDENED) ─────────────────────────
+  // ✅ FIX: dedupe cross-canal SIN prefijos "ls:/bc:/pm:" (evita dobles ejecuciones)
+  // ✅ FIX: ventana de dedupe rápida para casos donde BC y LS generen ts distintos
   let lastCmdTs = 0;
+  let lastCmdSig = "";
+  let lastCmdSeenAt = 0;
+  const CMD_DEDUPE_WINDOW_MS = 250;
+
+  function safeStr(x) { try { return String(x ?? ""); } catch (_) { return ""; } }
+
+  function cmdSigFrom(msg) {
+    // Firma estable: cmd|key|payload (sin ts) -> dedupe cross-canal
+    const cmd = safeStr(msg?.cmd).trim().toUpperCase();
+    const key = safeStr(msg?.key).trim();
+    let payloadRaw = "";
+    try { payloadRaw = JSON.stringify(msg?.payload ?? null); } catch (_) { payloadRaw = safeStr(msg?.payload); }
+    return `${cmd}|${key}|${payloadRaw}`;
+  }
 
   function cmdKeyOk(msg, isMainChannel) {
+    // Si el player NO está namespaced (sin KEY), acepta todo.
     if (!KEY) return true;
-    if (msg && msg.key === KEY) return true;
-    if (ALLOW_LEGACY && !isMainChannel && msg && !msg.key) return true;
-    if (ALLOW_LEGACY && isMainChannel && msg && !msg.key) return true;
-    return false;
+
+    // Si el mensaje trae key, debe coincidir SIEMPRE.
+    const mk = safeStr(msg?.key).trim();
+    if (mk) return mk === KEY;
+
+    // Si no trae key, solo lo aceptamos si allowLegacy.
+    return !!ALLOW_LEGACY;
   }
 
   function applyCommand(cmd, payload) {
-    switch (cmd) {
+    const C = String(cmd || "").trim().toUpperCase();
+
+    switch (C) {
       case "NEXT": nextCam("cmd"); break;
       case "PREV": prevCam(); break;
       case "TOGGLE_PLAY": togglePlay(); break;
@@ -2110,6 +2223,41 @@
         postState({ reason: "ban" });
       } break;
 
+      case "HUD_HIDE":
+      case "HIDE_HUD":
+        setHudHidden(true);
+        postState({ reason: "hud_hide" });
+        break;
+
+      case "HUD_SHOW":
+      case "SHOW_HUD":
+        setHudHidden(false);
+        postState({ reason: "hud_show" });
+        break;
+
+      case "HUD_TOGGLE":
+      case "TOGGLE_HUD":
+        setHudHidden(!hud?.classList?.contains?.("hidden"));
+        postState({ reason: "hud_toggle" });
+        break;
+
+      case "HUD_COLLAPSE":
+        setHudCollapsed(true);
+        postState({ reason: "hud_collapse" });
+        break;
+
+      case "HUD_EXPAND":
+        setHudCollapsed(false);
+        postState({ reason: "hud_expand" });
+        break;
+
+      case "HUD_TOGGLE_DETAILS":
+      case "HUD_TOGGLE_COLLAPSE": {
+        const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
+        setHudCollapsed(!collapsed);
+        postState({ reason: "hud_toggle_details" });
+      } break;
+
       case "SET_AUTOSKIP":
       case "AUTOSKIP":
         autoskip = !!(payload?.enabled ?? payload?.value ?? payload);
@@ -2145,13 +2293,13 @@
 
       case "SET_VOTE":
       case "VOTE": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) voteEnabled = !!payload.enabled;
           if (payload.overlay != null) voteOverlay = !!payload.overlay;
           if (payload.windowSec != null) voteWindowCfgSec = clamp(payload.windowSec | 0, 5, 180);
           if (payload.voteAtSec != null) voteAtCfgSec = clamp(payload.voteAtSec | 0, 5, 600);
           if (payload.leadSec != null) voteLeadCfgSec = clamp(payload.leadSec | 0, 0, 30);
-          if (payload.uiSec != null) voteUiCfgSec = clamp(payload.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
+          if (payload.uiSec != null) voteUiCfgSec = clamp(payload.uiSec | 0, 0, 300) || 0;
           if (payload.stayMins != null) stayMins = clamp(payload.stayMins | 0, 1, 120);
           if (payload.cmd != null) parseVoteCmds(String(payload.cmd || ""));
         } else {
@@ -2168,7 +2316,8 @@
         voteTriggeredForSegment = true;
         const w = clamp((payload?.windowSec ?? voteWindowSegSec) | 0, 5, 180);
         const lead = clamp((payload?.leadSec ?? voteLeadSegSec) | 0, 0, 30);
-        voteStartSequence(w, lead);
+        const ui = (payload?.uiSec != null) ? clamp(payload.uiSec | 0, 0, 300) : 0;
+        voteStartSequence(w, lead, ui);
         postState({ reason: "vote_start" });
       } break;
 
@@ -2180,7 +2329,7 @@
 
       case "SET_CHAT":
       case "CHAT": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) chatSetEnabled(!!payload.enabled);
           if (payload.hideCommands != null) chatHideCommands = !!payload.hideCommands;
           if (payload.max != null) chatMax = clamp(payload.max | 0, 3, 12);
@@ -2195,7 +2344,7 @@
 
       case "SET_ALERTS":
       case "ALERTS": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) alertsEnabled = !!payload.enabled;
           if (payload.max != null) alertsMax = clamp(payload.max | 0, 1, 6);
           if (payload.ttl != null) alertsTtlSec = clamp(payload.ttl | 0, 3, 20);
@@ -2209,7 +2358,7 @@
 
       case "SET_ADS":
       case "ADS": {
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.enabled != null) adsEnabled = !!payload.enabled;
           if (payload.adLead != null) adLeadDefaultSec = clamp(payload.adLead | 0, 0, 300);
           if (payload.showDuring != null) adShowDuring = !!payload.showDuring;
@@ -2221,12 +2370,14 @@
         postState({ reason: "ads" });
       } break;
 
-      case "AD_NOTICE":
-        adStartLead(payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec);
-        break;
+      case "AD_NOTICE": {
+        const leadSec = payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec;
+        const durHint = payload?.durationSec ?? payload?.duration ?? payload?.durSec ?? 0;
+        adStartLead(leadSec, durHint);
+      } break;
 
       case "AD_BEGIN":
-        adStartLive(payload?.durationSec ?? payload?.duration ?? 30);
+        adStartLive(payload?.durationSec ?? payload?.duration ?? 0);
         if (adChatText) botSay(adChatText);
         break;
 
@@ -2236,7 +2387,9 @@
         break;
 
       case "TAGVOTE_START":
+        try { buildTagIndex(); } catch (_) {}
         tagVoteStart();
+        ensureIrc();
         postState({ reason: "tagvote_start" });
         break;
 
@@ -2247,6 +2400,7 @@
         tagVoteVoters = new Set();
         tagVoteEndsAt = 0;
         tagVoteRender();
+        ensureIrc();
         postState({ reason: "tagvote_stop" });
         break;
 
@@ -2281,7 +2435,7 @@
 
       case "SET_HEALTH":
       case "HEALTH":
-        if (payload && typeof payload === "object") {
+        if (isObj(payload)) {
           if (payload.startTimeoutMs != null) startTimeoutMs = clamp(payload.startTimeoutMs | 0, 3000, 120000);
           if (payload.stallTimeoutMs != null) stallTimeoutMs = clamp(payload.stallTimeoutMs | 0, 4000, 120000);
           if (payload.maxStalls != null) maxStalls = clamp(payload.maxStalls | 0, 1, 8);
@@ -2300,6 +2454,45 @@
         postState({ reason: "yt_cookies" });
       } break;
 
+      // ✅ Botón “Aplicar ajustes” típico del panel admin
+      case "APPLY":
+      case "APPLY_SETTINGS":
+      case "SETTINGS": {
+        if (isObj(payload)) {
+          if (payload.mins != null) setRoundMins(payload.mins);
+          if (payload.fit != null) setFit(String(payload.fit));
+          if (payload.autoskip != null) autoskip = !!payload.autoskip;
+          if (payload.adfree != null) {
+            const want = !!payload.adfree;
+            const prev = modeAdfree;
+            modeAdfree = want;
+            if (modeAdfree !== prev) {
+              const curId = String((cams[idx] || {}).id || "");
+              applyFilters();
+              const n = curId ? cams.findIndex(c => c && String(c.id) === curId) : -1;
+              idx = (n >= 0) ? n : (idx % Math.max(1, cams.length || 1));
+              playCam(cams[idx]);
+            }
+          }
+          if (payload.hudHidden != null) setHudHidden(!!payload.hudHidden);
+          if (payload.hudCollapsed != null) setHudCollapsed(!!payload.hudCollapsed);
+
+          if (payload.twitch != null || payload.channel != null) {
+            twitchChannel = String(payload.twitch ?? payload.channel ?? "").trim().replace(/^@/, "");
+          }
+
+          if (payload.vote != null) applyCommand("VOTE", payload.vote);
+          if (payload.chat != null) applyCommand("CHAT", payload.chat);
+          if (payload.alerts != null) applyCommand("ALERTS", payload.alerts);
+          if (payload.ads != null) applyCommand("ADS", payload.ads);
+          if (payload.bgm != null) applyCommand("BGM", payload.bgm);
+          if (payload.ytCookies != null) applyCommand("YT_COOKIES", payload.ytCookies);
+          if (payload.health != null) applyCommand("HEALTH", payload.health);
+        }
+        ensureIrc();
+        postState({ reason: "apply" }, true);
+      } break;
+
       case "RESET":
         resetState();
         break;
@@ -2309,19 +2502,34 @@
         break;
 
       default:
-        if (P.debug) console.log("[player] unknown cmd:", cmd, payload);
+        if (P.debug) console.log("[player] unknown cmd:", C, payload);
         break;
     }
   }
 
-  function handleCmdMsg(msg, isMainChannel) {
+  function handleCmdMsg(msg, isMainChannel, sig = "") {
     if (!msg || typeof msg !== "object") return;
     if (msg.type !== "cmd") return;
     if (!cmdKeyOk(msg, !!isMainChannel)) return;
 
     const ts = (msg.ts | 0) || 0;
-    if (ts && ts <= lastCmdTs) return;
-    if (ts) lastCmdTs = ts;
+    const s = sig || cmdSigFrom(msg);
+    const nowSeen = Date.now();
+
+    // ✅ Dedup rápida cross-canal (por si BC/LS llegan con ts distinto)
+    if (s && s === lastCmdSig && (nowSeen - (lastCmdSeenAt || 0)) < CMD_DEDUPE_WINDOW_MS) return;
+
+    // ✅ Orden por ts (no re-ejecutar viejos) + permite mismo ts si firma distinta
+    if (ts) {
+      if (ts < lastCmdTs) return;
+      if (ts === lastCmdTs && s && s === lastCmdSig) return;
+      lastCmdTs = ts;
+    } else {
+      if (s && s === lastCmdSig) return;
+    }
+
+    lastCmdSig = s || lastCmdSig;
+    lastCmdSeenAt = nowSeen;
 
     const cmd = String(msg.cmd || "");
     const payload = msg.payload || {};
@@ -2333,11 +2541,23 @@
     if (!raw) return;
     const msg = safeJson(raw, null);
     if (!msg) return;
-    handleCmdMsg(msg, isMainChannel);
+    handleCmdMsg(msg, isMainChannel, cmdSigFrom(msg));
   }
 
-  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true); } catch (_) {}
-  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false); } catch (_) {}
+  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true, cmdSigFrom(ev?.data)); } catch (_) {}
+  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false, cmdSigFrom(ev?.data)); } catch (_) {}
+
+  // ✅ Fallback extra por postMessage (mismo origin)
+  window.addEventListener("message", (ev) => {
+    try {
+      const originOk = String(ev.origin || "") === String(location.origin || "");
+      if (!originOk) return;
+      const d = ev.data;
+      const msg = (typeof d === "string") ? safeJson(d, null) : d;
+      if (!msg) return;
+      if (msg.type === "cmd") handleCmdMsg(msg, true, cmdSigFrom(msg));
+    } catch (_) {}
+  }, false);
 
   window.addEventListener("storage", (e) => {
     const k = String(e.key || "");
@@ -2356,14 +2576,26 @@
     }
   });
 
+  // ✅ Polling de comandos: hace que los botones funcionen incluso si storage-event no dispara
+  const CMD_POLL_MS = 300;
+  let cmdPollTimer = null;
+  function startCmdPolling() {
+    try { if (cmdPollTimer) clearInterval(cmdPollTimer); } catch (_) {}
+    cmdPollTimer = setInterval(() => {
+      readCmdFromStorage(CMD_KEY, true);
+      readCmdFromStorage(CMD_KEY_LEGACY, false);
+    }, CMD_POLL_MS);
+  }
+
   // ───────────────────────── Persist player state ─────────────────────────
   function savePlayerState() {
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 3,
+        v: 5,
         ts: Date.now(),
         key: KEY || "",
+        version: VERSION,
         curId: cam.id || "",
         playing: !!playing,
         mins: Math.max(1, (roundSeconds / 60) | 0),
@@ -2446,10 +2678,26 @@
     const t = (e.target && e.target.tagName) ? String(e.target.tagName).toLowerCase() : "";
     if (t === "input" || t === "textarea" || (e.target && e.target.isContentEditable)) return;
 
-    if (e.key === "ArrowRight") { e.preventDefault(); nextCam("key"); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); prevCam(); }
-    else if (e.key === " " || e.code === "Space") { e.preventDefault(); togglePlay(); }
-    else if (e.key.toLowerCase() === "h") { setHudHidden(!hud?.classList?.contains?.("hidden")); }
+    const k = String(e.key || "");
+    const low = k.toLowerCase();
+
+    if (k === "ArrowRight") { e.preventDefault(); nextCam("key"); return; }
+    if (k === "ArrowLeft") { e.preventDefault(); prevCam(); return; }
+
+    if (k === " " || e.code === "Space") { e.preventDefault(); togglePlay(); return; }
+
+    if (low === "h") { e.preventDefault(); setHudHidden(!hud?.classList?.contains?.("hidden")); return; }
+    if (low === "i") {
+      e.preventDefault();
+      const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
+      setHudCollapsed(!collapsed);
+      return;
+    }
+
+    if (low === "n") { e.preventDefault(); nextCam("key_n"); return; }
+    if (low === "p") { e.preventDefault(); prevCam(); return; }
+
+    if (low === "c") { e.preventDefault(); chatSetEnabled(!chatEnabled); return; }
   });
 
   // ───────────────────────── Main tick loop ─────────────────────────
@@ -2458,7 +2706,18 @@
 
     if (voteSessionActive) {
       const now = Date.now();
-      if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) { votePhase = "vote"; renderVote(); }
+
+      if (votePhase === "pre" && preEndsAt && now >= preEndsAt) {
+        if (voteLeadActiveSec > 0) votePhase = "lead";
+        else votePhase = "vote";
+        renderVote();
+      }
+
+      if (votePhase === "lead" && leadEndsAt && now >= leadEndsAt) {
+        votePhase = "vote";
+        renderVote();
+      }
+
       if (voteEndsAt && now >= voteEndsAt) voteFinish();
     }
 
@@ -2474,16 +2733,15 @@
       }
     } catch (_) {}
 
-    // ✅ Auto-trigger vote por remaining (a falta)
     if (playing && !voteSessionActive && !tagVoteActive && voteEnabled && twitchChannel) {
       const rem = remainingSeconds();
       if (!voteTriggeredForSegment && rem > 0 && rem <= (voteAtSegSec | 0)) {
         voteTriggeredForSegment = true;
 
-        const wAuto = clamp(Math.min(voteWindowSegSec | 0, voteAtSegBaseSec | 0), 5, 180);
+        const wAuto = clamp(voteWindowSegSec | 0, 5, 180);
         const leadAuto = clamp(voteLeadSegSec | 0, 0, 30);
-
-        voteStartSequence(wAuto, leadAuto);
+        const uiAuto = clamp(voteUiSegSec | 0, 0, 300);
+        voteStartSequence(wAuto, leadAuto, uiAuto);
       }
     }
 
@@ -2537,7 +2795,7 @@
         if (saved.vote.windowSec != null) voteWindowCfgSec = clamp(saved.vote.windowSec | 0, 5, 180);
         if (saved.vote.voteAtSec != null) voteAtCfgSec = clamp(saved.vote.voteAtSec | 0, 5, 600);
         if (saved.vote.leadSec != null) voteLeadCfgSec = clamp(saved.vote.leadSec | 0, 0, 30);
-        if (saved.vote.uiSec != null) voteUiCfgSec = clamp(saved.vote.uiSec | 0, 0, 300) || (voteLeadCfgSec + voteWindowCfgSec);
+        if (saved.vote.uiSec != null) voteUiCfgSec = clamp(saved.vote.uiSec | 0, 0, 300) || 0;
         if (saved.vote.stayMins != null) stayMins = clamp(saved.vote.stayMins | 0, 1, 120);
         if (saved.vote.cmd != null) parseVoteCmds(String(saved.vote.cmd || ""));
       }
@@ -2614,6 +2872,9 @@
 
     try { if (saveTimer) clearInterval(saveTimer); } catch (_) {}
     saveTimer = setInterval(savePlayerState, 3500);
+
+    // ✅ Arranca polling de comandos para admin buttons
+    startCmdPolling();
 
     postState({ reason: "boot" }, true);
 
