@@ -181,8 +181,14 @@
 
         const raw = lsGet(k);
         const st = safeJson(raw, null);
-        const ts = (st && typeof st === "object")
-          ? (Number(st.ts || st.lastTs || 0) || 0)
+
+        // soporta: state puro o wrapper {type:"state", state:{...}}
+        const real = (st && typeof st === "object" && st.type === "state")
+          ? (st.state || st)
+          : st;
+
+        const ts = (real && typeof real === "object")
+          ? (Number(real.ts || real.lastTs || real.lastSeen || 0) || 0)
           : 0;
 
         const score = ts || 1;
@@ -339,6 +345,7 @@
   let lastState = null;
 
   function refreshGlobalLists(force = false) { /* definida más abajo */ }
+  function buildStreamUrlFromUI() { /* definida más abajo */ }
 
   try {
     g[API_KEY] = {
@@ -1173,7 +1180,7 @@
   }
 
   // ───────────────────────── Bot IRC
-  const BOT_DEFAULTS = { enabled: false, user: "", token: "", channel: "" };
+  const BOT_DEFAULTS = { enabled: false, user: "", token: "", channel: "", sayOnAd: true };
 
   function normalizeBotCfg(inCfg) {
     const c = Object.assign({}, BOT_DEFAULTS, (inCfg || {}));
@@ -1436,7 +1443,6 @@
 
     const tcfg = readTickerUI();
     const ccfg = readCountdownUI();
-
     const cat = readCatalogUIForUrl();
 
     u.searchParams.set("mins", String(mins));
@@ -1541,8 +1547,12 @@
     }
   }
 
-  function applyState(st) {
-    if (!st || typeof st !== "object") return;
+  function applyState(stAny) {
+    if (!stAny || typeof stAny !== "object") return;
+
+    // soporta wrapper: {type:"state", state:{...}}
+    const st = (stAny.type === "state" && stAny.state && typeof stAny.state === "object") ? stAny.state : stAny;
+
     lastState = st;
     lastSeenAt = Date.now();
 
@@ -1560,7 +1570,10 @@
     const cam = st.cam || st.currentCam || {};
     try { if (ctlNowTitle) ctlNowTitle.textContent = String(cam.title || "—"); } catch (_) {}
     try { if (ctlNowPlace) ctlNowPlace.textContent = String(cam.place || "—"); } catch (_) {}
-    try { if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS((st.remaining ?? st.remain ?? 0) | 0); } catch (_) {}
+    try {
+      const rem = (st.remaining ?? st.remain ?? st.left ?? st.timeLeft ?? 0);
+      ctlNowTimer && (ctlNowTimer.textContent = fmtMMSS((rem | 0)));
+    } catch (_) {}
 
     if (ctlOrigin) {
       const url = String(cam.originUrl || cam.url || "");
@@ -1580,7 +1593,7 @@
     if (pv && compareVer(pv, APP_VERSION) > 0) {
       markUpdateAvailable(`Player v${pv} > Control v${APP_VERSION}`);
     } else if (!updateAvailable) {
-      setStatus(`Conectado · Control v${APP_VERSION} · Player v${pv || "?"} · ${String(st.owner ? "OWNER" : "VIEW")}`, true);
+      setStatus(`Conectado · Control v${APP_VERSION} · Player v${pv || "?"}`, true);
     }
 
     tryAutoAnnounceCam(st);
@@ -1599,7 +1612,10 @@
       if (ctlHudDetails && details !== null && !isEditing(ctlHudDetails)) ctlHudDetails.value = details ? "on" : "off";
     } catch (_) {}
 
-    if (ctlYtCookies && !isEditing(ctlYtCookies)) ctlYtCookies.value = st.ytCookies ? "on" : "off";
+    if (ctlYtCookies && !isEditing(ctlYtCookies)) {
+      const ytc = (typeof st.ytCookies === "boolean") ? st.ytCookies : (typeof st.youtubeCookies === "boolean" ? st.youtubeCookies : null);
+      if (ytc !== null) ctlYtCookies.value = ytc ? "on" : "off";
+    }
 
     // Vote subset
     if (st.vote && typeof st.vote === "object") {
@@ -1622,23 +1638,42 @@
       }
     } catch (_) {}
 
-    // Catalog status
+    // Catalog status + campos (si los manda el player)
     try {
-      let catEnabled = null;
       const cat = (st.catalog && typeof st.catalog === "object") ? st.catalog : null;
-      if (cat && typeof cat.enabled === "boolean") catEnabled = cat.enabled;
-      else if (typeof st.catalogEnabled === "boolean") catEnabled = st.catalogEnabled;
-      else if (typeof st.catalogOn === "boolean") catEnabled = st.catalogOn;
+      const catEnabled =
+        (cat && typeof cat.enabled === "boolean") ? cat.enabled :
+        (typeof st.catalogEnabled === "boolean") ? st.catalogEnabled :
+        (typeof st.catalogOn === "boolean") ? st.catalogOn :
+        null;
 
       if (ctlCatalogOn && catEnabled !== null && !isEditing(ctlCatalogOn)) ctlCatalogOn.value = catEnabled ? "on" : "off";
       if (ctlCatalogStatus && catEnabled !== null) setPill(ctlCatalogStatus, catEnabled ? "Catálogo: ON" : "Catálogo: OFF", !!catEnabled);
+
+      // si hay detalles, rellena sin pisar edición
+      if (cat) {
+        if (ctlCatalogLayout && !isEditing(ctlCatalogLayout) && cat.layout) ctlCatalogLayout.value = String(cat.layout);
+        if (ctlCatalogGap && !isEditing(ctlCatalogGap) && (cat.gap != null)) ctlCatalogGap.value = String(cat.gap);
+        if (ctlCatalogLabels && !isEditing(ctlCatalogLabels) && (typeof cat.labels === "boolean")) ctlCatalogLabels.value = cat.labels ? "on" : "off";
+        if (ctlCatalogMode && !isEditing(ctlCatalogMode) && cat.mode) ctlCatalogMode.value = String(cat.mode);
+        if (ctlCatalogFollowSlot && !isEditing(ctlCatalogFollowSlot) && (cat.followSlot != null)) ctlCatalogFollowSlot.value = String(cat.followSlot);
+        if (ctlCatalogClickCycle && !isEditing(ctlCatalogClickCycle) && (typeof cat.clickCycle === "boolean")) ctlCatalogClickCycle.value = cat.clickCycle ? "on" : "off";
+        if (ctlCatalogYtCookies && !isEditing(ctlCatalogYtCookies) && (typeof cat.ytCookies === "boolean")) ctlCatalogYtCookies.value = cat.ytCookies ? "on" : "off";
+        if (ctlCatalogWxTiles && !isEditing(ctlCatalogWxTiles) && (typeof cat.wxTiles === "boolean")) ctlCatalogWxTiles.value = cat.wxTiles ? "on" : "off";
+        if (ctlCatalogWxRefreshSec && !isEditing(ctlCatalogWxRefreshSec) && (cat.wxRefreshSec != null)) ctlCatalogWxRefreshSec.value = String(cat.wxRefreshSec);
+        if (ctlCatalogMuted && !isEditing(ctlCatalogMuted) && (typeof cat.muted === "boolean")) ctlCatalogMuted.value = cat.muted ? "on" : "off";
+      }
     } catch (_) {}
 
     syncPreviewUrl();
   }
 
-  function applyEvent(ev) {
-    if (!ev || typeof ev !== "object") return;
+  function applyEvent(evAny) {
+    if (!evAny || typeof evAny !== "object") return;
+
+    // soporta wrapper: {type:"event", event:{...}}
+    const ev = (evAny.type === "event" && evAny.event && typeof evAny.event === "object") ? evAny.event : evAny;
+
     const ts = (ev.ts | 0) || 0;
     if (ts && ts <= lastEventTs) return;
     if (ts) lastEventTs = ts;
@@ -1656,8 +1691,14 @@
     }
   }
 
-  function applyIncomingCmd(msg) {
-    if (!msg || typeof msg !== "object") return;
+  function applyIncomingCmd(msgAny) {
+    if (!msgAny || typeof msgAny !== "object") return;
+
+    // soporta wrapper raro: {type:"cmd", cmd:{...}}
+    const msg = (String(msgAny.type || "").toLowerCase() === "cmd" && msgAny.cmd && typeof msgAny.cmd === "object")
+      ? msgAny.cmd
+      : msgAny;
+
     if (String(msg.type || "").toLowerCase() !== "cmd") return;
 
     // dedupe básico (BC + storage)
@@ -1771,16 +1812,20 @@
   }
 
   function applyChatAlertsSettings() {
-    if (ctlChatOn) sendCmdAliases("SET_CHAT", { enabled: (ctlChatOn.value !== "off") }, ["CHAT"]);
-    if (ctlChatHideCmd) sendCmdAliases("SET_CHAT", { hideCommands: (ctlChatHideCmd.value !== "off") }, ["CHAT_HIDE_CMDS"]);
-    if (ctlAlertsOn) sendCmdAliases("SET_ALERTS", { enabled: (ctlAlertsOn.value !== "off") }, ["ALERTS"]);
+    const chatEnabled = ctlChatOn ? (ctlChatOn.value !== "off") : true;
+    const hideCommands = ctlChatHideCmd ? (ctlChatHideCmd.value !== "off") : true;
+    const alertsEnabled = ctlAlertsOn ? (ctlAlertsOn.value !== "off") : true;
+
+    // manda una sola vez (evita “pisadas” en players que reemplazan estado completo)
+    sendCmdAliases("SET_CHAT", { enabled: chatEnabled, hideCommands }, ["CHAT", "CHAT_SET", "CHATCFG"]);
+    sendCmdAliases("SET_ALERTS", { enabled: alertsEnabled }, ["ALERTS", "ALERTS_SET"]);
 
     // compat en bloque
     sendCmdAliases("SET_UI", {
-      chat: (ctlChatOn ? (ctlChatOn.value !== "off") : true),
-      chatHideCommands: (ctlChatHideCmd ? (ctlChatHideCmd.value !== "off") : true),
-      alerts: (ctlAlertsOn ? (ctlAlertsOn.value !== "off") : true)
-    }, ["UI_SET"]);
+      chat: chatEnabled,
+      chatHideCommands: hideCommands,
+      alerts: alertsEnabled
+    }, ["UI_SET", "SET_PARAMS"]);
   }
 
   function loadAdDurStore() {
@@ -1846,11 +1891,85 @@
     sendCmdAliases("RESET", {}, ["RESET_STATE", "HARD_RESET"]);
   }
 
+  // ───────────────────────── Catalog control (FULL)
+  const CATALOG_DEFAULTS = {
+    enabled: false,
+    layout: "quad",
+    gap: 8,
+    labels: true,
+    mode: "follow",
+    followSlot: 0,
+    clickCycle: true,
+    ytCookies: true,
+    wxTiles: true,
+    wxRefreshSec: 30,
+    muted: true
+  };
+
+  function normalizeCatalogCfg(inCfg) {
+    const c = Object.assign({}, CATALOG_DEFAULTS, (inCfg || {}));
+    c.enabled = (c.enabled === true);
+    c.layout = String(c.layout || "quad").trim();
+    if (!/^(solo|duo|quad|grid|list)$/i.test(c.layout)) c.layout = "quad";
+    c.gap = clamp(parseInt(String(c.gap ?? 8), 10) || 8, 0, 24);
+    c.labels = (c.labels !== false);
+    c.mode = String(c.mode || "follow").trim();
+    if (!/^(follow|fixed)$/i.test(c.mode)) c.mode = "follow";
+    c.followSlot = clamp(parseInt(String(c.followSlot ?? 0), 10) || 0, 0, 3);
+    c.clickCycle = (c.clickCycle !== false);
+    c.ytCookies = (c.ytCookies !== false);
+    c.wxTiles = (c.wxTiles !== false);
+    c.wxRefreshSec = clamp(parseInt(String(c.wxRefreshSec ?? 30), 10) || 30, 10, 180);
+    c.muted = (c.muted !== false);
+    return c;
+  }
+
+  function readCatalogUI() {
+    if (!ctlCatalogOn && !ctlCatalogLayout) return normalizeCatalogCfg(CATALOG_DEFAULTS);
+    const u = readCatalogUIForUrl();
+    return normalizeCatalogCfg(u);
+  }
+
+  function setCatalogStatusFromCfg(cfg) {
+    if (!ctlCatalogStatus) return;
+    const on = !!cfg?.enabled;
+    setPill(ctlCatalogStatus, on ? "Catálogo: ON" : "Catálogo: OFF", on);
+  }
+
+  function applyCatalogNow() {
+    const cfg = readCatalogUI();
+    setCatalogStatusFromCfg(cfg);
+
+    // manda al player (varios nombres por compat)
+    sendCmdAliases("SET_CATALOG", cfg, ["CATALOG_SET", "CATALOG", "SET_CATALOG_CFG"]);
+    // y en bloque por si usa SET_PARAMS
+    sendCmdAliases("SET_PARAMS", { catalog: cfg }, ["APPLY_SETTINGS"]);
+    syncPreviewUrl();
+  }
+
+  function resetCatalogNow() {
+    // reset UI a defaults si existen
+    try {
+      if (ctlCatalogOn) ctlCatalogOn.value = CATALOG_DEFAULTS.enabled ? "on" : "off";
+      if (ctlCatalogLayout) ctlCatalogLayout.value = CATALOG_DEFAULTS.layout;
+      if (ctlCatalogGap) ctlCatalogGap.value = String(CATALOG_DEFAULTS.gap);
+      if (ctlCatalogLabels) ctlCatalogLabels.value = CATALOG_DEFAULTS.labels ? "on" : "off";
+      if (ctlCatalogMode) ctlCatalogMode.value = CATALOG_DEFAULTS.mode;
+      if (ctlCatalogFollowSlot) ctlCatalogFollowSlot.value = String(CATALOG_DEFAULTS.followSlot);
+      if (ctlCatalogClickCycle) ctlCatalogClickCycle.value = CATALOG_DEFAULTS.clickCycle ? "on" : "off";
+      if (ctlCatalogYtCookies) ctlCatalogYtCookies.value = CATALOG_DEFAULTS.ytCookies ? "on" : "off";
+      if (ctlCatalogWxTiles) ctlCatalogWxTiles.value = CATALOG_DEFAULTS.wxTiles ? "on" : "off";
+      if (ctlCatalogWxRefreshSec) ctlCatalogWxRefreshSec.value = String(CATALOG_DEFAULTS.wxRefreshSec);
+      if (ctlCatalogMuted) ctlCatalogMuted.value = CATALOG_DEFAULTS.muted ? "on" : "off";
+    } catch (_) {}
+    applyCatalogNow();
+  }
+
+  // ───────────────────────── Bot UI glue
   function syncBotUIFromStore() {
     botCfg = loadBotCfg();
     if (ctlBotOn) ctlBotOn.value = botCfg.enabled ? "on" : "off";
     if (ctlBotUser) safeSetValue(ctlBotUser, botCfg.user || "");
-
     if (ctlBotToken && !isEditing(ctlBotToken)) ctlBotToken.value = botCfg.token ? "********" : "";
     if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
     setBotStatus(botCfg.enabled ? "Bot: listo" : "Bot: OFF", !!botCfg.enabled);
@@ -1978,6 +2097,10 @@
     safeOn(ctlAdBeginBtn, "click", adBeginNow);
     safeOn(ctlAdClearBtn, "click", adClearNow);
 
+    // catalog
+    safeOn(ctlCatalogApply, "click", applyCatalogNow);
+    safeOn(ctlCatalogReset, "click", resetCatalogNow);
+
     // ticker
     safeOn(ctlTickerApply, "click", applyTickerNow);
     safeOn(ctlTickerReset, "click", readTickerReset);
@@ -2017,8 +2140,10 @@
       sendCmdAliases("BGM_TRACK", { idx }, ["SET_BGM_TRACK"]);
     });
 
-    // Auto preview sync
+    // Auto preview sync (change + input donde aplique)
     const autoSync = debounce(syncPreviewUrl, 160);
+    const autoSyncInput = debounce(syncPreviewUrl, 120);
+
     [
       ctlMins, ctlFit, ctlHud, ctlHudDetails, ctlAutoskip, ctlAdfree, ctlTwitchChannel,
       ctlCatalogOn, ctlCatalogLayout, ctlCatalogGap, ctlCatalogLabels, ctlCatalogMode,
@@ -2030,6 +2155,9 @@
       ctlTickerOn, ctlTickerLang, ctlTickerSpeed, ctlTickerRefresh, ctlTickerTop, ctlTickerHideOnVote, ctlTickerSpan,
       ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget
     ].forEach(el => safeOn(el, "change", autoSync));
+
+    // sliders/ranges típicos
+    [ctlCatalogGap, ctlBgmVol].forEach(el => safeOn(el, "input", autoSyncInput));
 
     // Click pill para recargar
     safeOn(ctlStatus, "click", () => {
@@ -2045,9 +2173,15 @@
       if (bcMain) bcMain.onmessage = (ev) => {
         const msg = ev?.data;
         if (!keyOk(msg, true)) return;
-        if (msg?.type === "state") applyState(msg);
-        else if (msg?.type === "event") applyEvent(msg);
+
+        // soporta: msg.type === "state" con state dentro, o msg ya siendo state
+        if (msg?.type === "state") applyState(msg.state || msg);
+        else if (msg?.type === "event") applyEvent(msg.event || msg);
         else if (String(msg?.type || "").toLowerCase() === "cmd") applyIncomingCmd(msg);
+        else if (msg && typeof msg === "object") {
+          // compat: algunos players emiten el estado directamente sin wrapper
+          if (msg.cam || msg.currentCam || msg.mins != null) applyState(msg);
+        }
       };
     } catch (_) {}
 
@@ -2055,9 +2189,13 @@
       if (bcLegacy) bcLegacy.onmessage = (ev) => {
         const msg = ev?.data;
         if (!keyOk(msg, false)) return;
-        if (msg?.type === "state") applyState(msg);
-        else if (msg?.type === "event") applyEvent(msg);
+
+        if (msg?.type === "state") applyState(msg.state || msg);
+        else if (msg?.type === "event") applyEvent(msg.event || msg);
         else if (String(msg?.type || "").toLowerCase() === "cmd") applyIncomingCmd(msg);
+        else if (msg && typeof msg === "object") {
+          if (msg.cam || msg.currentCam || msg.mins != null) applyState(msg);
+        }
       };
     } catch (_) {}
 
