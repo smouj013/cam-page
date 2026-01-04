@@ -896,7 +896,7 @@
     clientId: "",
     token: "",
     broadcasterId: "",
-    template: "🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV",
+    template: "📍: {title}{placeSep}{place} | GlobalEye TV",
     cooldownSec: 20
   };
 
