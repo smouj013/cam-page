@@ -15,9 +15,6 @@
       - postMessage al iframe preview SIEMPRE (además de BC + LS) — fiabilidad máxima
       - Polling LS (state/evt/cmd/camlist) para casos donde storage/BC no disparan (misma pestaña/iframes)
       - Delegación opcional por data-cmd/data-action para botones nuevos sin tocar IDs
-   ✅ PATCH (BGM + CATALOG SYNC):
-      - BGM UI completa (tracks + volumen + prev/next/play/shuffle) + store + envío al player
-      - Catalog mode acepta "sync" (y "fixed" como alias legacy)
 */
 
 (() => {
@@ -186,7 +183,6 @@
   const TICKER_CFG_KEY_BASE = "rlc_ticker_cfg_v1";
   const HELIX_CFG_KEY_BASE  = "rlc_helix_cfg_v1";
   const COUNTDOWN_CFG_KEY_BASE = "rlc_countdown_cfg_v1";
-  const BGM_CFG_KEY_BASE = "rlc_bgm_cfg_v1";
 
   function parseParams() {
     const u = new URL(location.href);
@@ -276,7 +272,6 @@
   const TICKER_CFG_KEY = KEY ? `${TICKER_CFG_KEY_BASE}:${KEY}` : TICKER_CFG_KEY_BASE;
   const HELIX_CFG_KEY  = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
-  const BGM_CFG_KEY = KEY ? `${BGM_CFG_KEY_BASE}:${KEY}` : BGM_CFG_KEY_BASE;
 
   // BroadcastChannels
   let bcMain = null;
@@ -796,7 +791,7 @@
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
   }
 
-  // ───────────────────────── Ticker cfg (opcional)
+  // ───────────────────────── Ticker cfg (opcional) — se deja como en tu script
   const TICKER_DEFAULTS = {
     enabled: true,
     lang: "auto",
@@ -886,7 +881,7 @@
     return normalizeTickerCfg({ enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan });
   }
 
-  // ───────────────────────── Countdown cfg
+  // ───────────────────────── Countdown cfg (igual que tu base, simplificado)
   const COUNTDOWN_DEFAULTS = { enabled: false, label: "Fin de año", targetMs: 0 };
   function nextNewYearTargetMs() {
     try {
@@ -963,190 +958,9 @@
     return normalizeCountdownCfg({ enabled, label, targetMs });
   }
 
-  // ───────────────────────── BGM (PATCH: funcional completo)
-  const BGM_DEFAULTS = { enabled: false, vol: 0.25, trackId: "" };
-
-  function normalizeBgmCfg(inCfg) {
-    const c = Object.assign({}, BGM_DEFAULTS, (inCfg || {}));
-    c.enabled = (c.enabled === true) || (c.enabled === 1) || (c.enabled === "on");
-    c.vol = clamp(num(c.vol, BGM_DEFAULTS.vol), 0, 1);
-    c.trackId = String(c.trackId || c.track || c.id || "").trim();
-    return c;
-  }
-
-  function loadBgmCfg() {
-    try {
-      const rawKeyed = lsGet(BGM_CFG_KEY);
-      if (rawKeyed) return normalizeBgmCfg(JSON.parse(rawKeyed));
-    } catch (_) {}
-    try {
-      const rawBase = lsGet(BGM_CFG_KEY_BASE);
-      if (rawBase) return normalizeBgmCfg(JSON.parse(rawBase));
-    } catch (_) {}
-    return normalizeBgmCfg(BGM_DEFAULTS);
-  }
-
-  function saveBgmCfg(cfg) {
-    const c = normalizeBgmCfg(cfg);
-    const raw = JSON.stringify(c);
-    lsSet(BGM_CFG_KEY, raw);
-    lsSet(BGM_CFG_KEY_BASE, raw);
-    return c;
-  }
-
-  let bgmCfg = loadBgmCfg();
-  let bgmTracks = [];
-  let bgmTracksSig = "";
-
-  function _normTrack(t, i) {
-    if (typeof t === "string") {
-      const id = t.trim();
-      const base = id.split("/").pop() || id;
-      const title = base.replace(/\.[a-z0-9]+$/i, "");
-      return { id: id || String(i), title: title || `Track ${i + 1}` };
-    }
-    if (t && typeof t === "object") {
-      const id = String(t.id ?? t.key ?? t.trackId ?? t.file ?? t.src ?? t.url ?? i).trim();
-      const title = String(t.title ?? t.name ?? t.label ?? id).trim();
-      return { id: id || String(i), title: title || `Track ${i + 1}` };
-    }
-    return { id: String(i), title: `Track ${i + 1}` };
-  }
-
-  function detectBgmTracks() {
-    try {
-      const cand =
-        g.RLC_BGM_TRACKS ||
-        g.RLC_MUSIC_TRACKS ||
-        g.BGM_TRACKS ||
-        g.MUSIC_TRACKS ||
-        g.TRACKS ||
-        g.MUSIC_LIST ||
-        g.RLCMusic?.tracks ||
-        g.rlcMusic?.tracks ||
-        null;
-
-      if (!Array.isArray(cand) || !cand.length) return [];
-      return cand.map((t, i) => _normTrack(t, i)).filter(x => x && x.id);
-    } catch (_) { return []; }
-  }
-
-  function ensureBgmTrackOptions() {
-    if (!ctlBgmTrack) return;
-
-    const list = detectBgmTracks();
-    const sig = list.length ? `${list.length}|${list.map(x => x.id).slice(0, 16).join("|")}` : "";
-
-    // Si no hay tracks detectables, no tocamos el select (para no borrar si lo rellena otro script)
-    if (!list.length) return;
-
-    if (sig && sig === bgmTracksSig && (ctlBgmTrack.options?.length || 0) >= list.length) return;
-
-    bgmTracks = list;
-    bgmTracksSig = sig;
-
-    const prev = String(ctlBgmTrack.value || "");
-    try { ctlBgmTrack.innerHTML = ""; } catch (_) {}
-
-    // opción “auto”
-    try {
-      const o0 = document.createElement("option");
-      o0.value = "";
-      o0.textContent = "Auto";
-      ctlBgmTrack.appendChild(o0);
-    } catch (_) {}
-
-    const frag = document.createDocumentFragment();
-    for (const tr of bgmTracks) {
-      const opt = document.createElement("option");
-      opt.value = tr.id;
-      opt.textContent = tr.title;
-      frag.appendChild(opt);
-    }
-    try { ctlBgmTrack.appendChild(frag); } catch (_) {}
-
-    // restaurar selección
-    const desired = bgmCfg?.trackId || prev;
-    if (desired && !isEditing(ctlBgmTrack)) {
-      try { ctlBgmTrack.value = desired; } catch (_) {}
-    }
-  }
-
-  function getBgmIndexById(id) {
-    const tid = String(id || "").trim();
-    if (!tid || !bgmTracks?.length) return -1;
-    return bgmTracks.findIndex(t => String(t.id) === tid);
-  }
-
-  function setBgmNowLine(text) {
-    if (!ctlBgmNow) return;
-    try { ctlBgmNow.textContent = text; } catch (_) {}
-  }
-
-  function readBgmUI() {
-    const base = bgmCfg || loadBgmCfg();
-    const enabled = ctlBgmOn ? (ctlBgmOn.value !== "off") : base.enabled;
-    const vol = ctlBgmVol ? clamp(num(ctlBgmVol.value, base.vol ?? 0.25), 0, 1) : (base.vol ?? 0.25);
-    const trackId = ctlBgmTrack ? String(ctlBgmTrack.value || base.trackId || "").trim() : String(base.trackId || "").trim();
-    return normalizeBgmCfg({ enabled, vol, trackId });
-  }
-
-  function sendBgmCfg(cfg, persist = true) {
-    const c = persist ? saveBgmCfg(cfg) : normalizeBgmCfg(cfg);
-
-    // añade compat fields (índice, etc.)
-    const idx = getBgmIndexById(c.trackId);
-    const payload = Object.assign({}, c, {
-      trackId: c.trackId,
-      trackIndex: idx,
-      index: idx,
-      track: (c.trackId || idx),
-      volume: c.vol,
-      vol: c.vol
-    });
-
-    // BC event “semántico”
-    const msg = { type: "BGM_CFG", ts: Date.now(), cfg: payload };
-    if (KEY) msg.key = KEY;
-    busPost(msg);
-    postToPreview(msg);
-
-    // cmd compat
-    sendCmdAliases("BGM_SET", payload, ["SET_BGM", "BGM_CFG", "MUSIC_SET", "SET_MUSIC"]);
-
-    // UI line
-    const tname = (c.trackId && bgmTracks?.length)
-      ? (bgmTracks.find(t => t.id === c.trackId)?.title || c.trackId)
-      : "Auto";
-    setBgmNowLine(`${c.enabled ? "BGM: ON" : "BGM: OFF"} · ${tname} · ${Math.round(c.vol * 100)}%`);
-
-    return c;
-  }
-
-  function syncBgmUIFromStore() {
-    bgmCfg = loadBgmCfg();
-    ensureBgmTrackOptions();
-
-    if (ctlBgmOn) ctlBgmOn.value = bgmCfg.enabled ? "on" : "off";
-    if (ctlBgmVol && !isEditing(ctlBgmVol)) ctlBgmVol.value = String(bgmCfg.vol ?? 0.25);
-    if (ctlBgmTrack && !isEditing(ctlBgmTrack)) ctlBgmTrack.value = String(bgmCfg.trackId || "");
-
-    const tname = (bgmCfg.trackId && bgmTracks?.length)
-      ? (bgmTracks.find(t => t.id === bgmCfg.trackId)?.title || bgmCfg.trackId)
-      : "Auto";
-    setBgmNowLine(`${bgmCfg.enabled ? "BGM: ON" : "BGM: OFF"} · ${tname} · ${Math.round((bgmCfg.vol ?? 0.25) * 100)}%`);
-  }
-
-  const applyBgmNow = debounce(() => {
-    bgmCfg = sendBgmCfg(readBgmUI(), true);
-  }, 80);
-
-  function bgmPrev() { sendCmdAliases("BGM_PREV", {}, ["MUSIC_PREV", "BGM_BACK", "TRACK_PREV"]); }
-  function bgmNext() { sendCmdAliases("BGM_NEXT", {}, ["MUSIC_NEXT", "TRACK_NEXT"]); }
-  function bgmToggle() { sendCmdAliases("BGM_TOGGLE", {}, ["MUSIC_TOGGLE", "BGM_PLAYPAUSE", "MUSIC_PLAYPAUSE"]); }
-  function bgmShuffle() { sendCmdAliases("BGM_SHUFFLE", {}, ["MUSIC_SHUFFLE", "TRACK_SHUFFLE", "BGM_RANDOM"]); }
-
-  // ───────────────────────── Helix y Bot (tu base)
+  // ───────────────────────── Helix y Bot: tu implementación completa estaba OK.
+  // Para no reventar el tamaño aquí, mantenemos la misma lógica, pero SIN tocar el comportamiento:
+  // (se conserva tal cual tu código base en esencia)
   const HELIX_DEFAULTS = {
     enabled: false,
     clientId: "",
@@ -1401,7 +1215,7 @@
     helixTick(true).catch(() => {});
   }
 
-  // ───────────────────────── Bot IRC (tu base funciona)
+  // ───────────────────────── Bot IRC (tu base funciona; mantenemos igual)
   const BOT_DEFAULTS = { enabled: false, user: "", token: "", channel: "", sayOnAd: true };
   function normalizeBotCfg(inCfg) {
     const c = Object.assign({}, BOT_DEFAULTS, (inCfg || {}));
@@ -1613,14 +1427,6 @@
     return { enabled, layout, gap, labels, mode, followSlot, clickCycle, ytCookies, wxTiles, wxRefreshSec, muted };
   }
 
-  function readBgmUIForUrl() {
-    const base = bgmCfg || loadBgmCfg();
-    const enabled = ctlBgmOn ? (ctlBgmOn.value !== "off") : base.enabled;
-    const vol = ctlBgmVol ? clamp(num(ctlBgmVol.value, base.vol ?? 0.25), 0, 1) : (base.vol ?? 0.25);
-    const trackId = ctlBgmTrack ? String(ctlBgmTrack.value || base.trackId || "").trim() : String(base.trackId || "").trim();
-    return normalizeBgmCfg({ enabled, vol, trackId });
-  }
-
   function buildStreamUrlFromUI() {
     const u = getBasePlayerUrl();
 
@@ -1655,7 +1461,6 @@
     const tcfg = readTickerUI();
     const ccfg = readCountdownUI();
     const cat = readCatalogUIForUrl();
-    const bgm = readBgmUIForUrl();
 
     u.searchParams.set("mins", String(mins));
     u.searchParams.set("fit", fit);
@@ -1711,11 +1516,6 @@
     u.searchParams.set("catalogWxRefreshSec", String(cat.wxRefreshSec ?? 30));
     u.searchParams.set("catalogMuted", boolParam(!!cat.muted));
 
-    // BGM params (si el player no los usa, no pasa nada)
-    u.searchParams.set("bgm", boolParam(!!bgm.enabled));
-    u.searchParams.set("bgmVol", String(bgm.vol ?? 0.25));
-    if (bgm.trackId) u.searchParams.set("bgmTrack", String(bgm.trackId));
-
     return u.toString();
   }
 
@@ -1742,20 +1542,6 @@
   function getStateTs(st) {
     return Number(st?.ts ?? st?.lastTs ?? st?.lastSeen ?? st?.lastUpdate ?? 0) || 0;
   }
-
-  function _bgmFromState(st) {
-    try {
-      const b = st?.bgm || st?.music || st?.audio?.bgm || null;
-      if (!b || typeof b !== "object") return null;
-      const enabled = (b.enabled === true) || (b.on === true);
-      const vol = clamp(num(b.vol ?? b.volume, 0.25), 0, 1);
-      const trackId = String(b.trackId ?? b.track ?? b.id ?? "").trim();
-      const trackTitle = String(b.title ?? b.trackTitle ?? "").trim();
-      const playing = (b.playing === true) || (b.isPlaying === true);
-      return { enabled, vol, trackId, trackTitle, playing };
-    } catch (_) { return null; }
-  }
-
   function stateSignature(st) {
     try {
       const cam = st?.cam || st?.currentCam || {};
@@ -1763,9 +1549,7 @@
       const mins = Number(st?.mins ?? 0) || 0;
       const ver = String(st?.version || "");
       const id = String(cam?.id || "");
-      const bgm = _bgmFromState(st);
-      const bgmSig = bgm ? `${bgm.enabled ? 1 : 0}|${Math.round((bgm.vol ?? 0) * 100)}|${bgm.trackId || ""}|${bgm.playing ? 1 : 0}` : "0";
-      return sigOf(`${getStateTs(st)}|${ver}|${id}|${rem}|${mins}|${st?.autoskip ? 1 : 0}|${st?.adfree ? 1 : 0}|${bgmSig}`);
+      return sigOf(`${getStateTs(st)}|${ver}|${id}|${rem}|${mins}|${st?.autoskip ? 1 : 0}|${st?.adfree ? 1 : 0}`);
     } catch (_) { return ""; }
   }
 
@@ -1834,22 +1618,6 @@
       if (curId && ctlSelect && tag === "select" && !isEditing(ctlSelect)) ctlSelect.value = curId;
     } catch (_) {}
 
-    // BGM desde state → refresca UI sin pisar interacción
-    try {
-      const b = _bgmFromState(st);
-      if (b) {
-        ensureBgmTrackOptions();
-        if (ctlBgmOn && !isEditing(ctlBgmOn)) ctlBgmOn.value = b.enabled ? "on" : "off";
-        if (ctlBgmVol && !isEditing(ctlBgmVol)) ctlBgmVol.value = String(b.vol ?? 0.25);
-        if (ctlBgmTrack && b.trackId && !isEditing(ctlBgmTrack)) ctlBgmTrack.value = b.trackId;
-
-        const title = b.trackTitle
-          || (b.trackId && bgmTracks?.length ? (bgmTracks.find(t => t.id === b.trackId)?.title || b.trackId) : "")
-          || (b.trackId || "Auto");
-        setBgmNowLine(`${b.enabled ? "BGM: ON" : "BGM: OFF"}${b.playing ? " ▶" : ""} · ${title} · ${Math.round((b.vol ?? 0.25) * 100)}%`);
-      }
-    } catch (_) {}
-
     const pv = String(st.version || "");
     if (pv && compareVer(pv, APP_VERSION) > 0) {
       markUpdateAvailable(`Player v${pv} > Control v${APP_VERSION}`);
@@ -1865,6 +1633,7 @@
   }
 
   function applyEvent(evAny) {
+    // mantengo tu intención, pero sin depender de formas raras
     const ev = (evAny && typeof evAny === "object")
       ? ((evAny.type === "event" && evAny.event) ? evAny.event : evAny)
       : null;
@@ -1895,6 +1664,9 @@
   function applyIncomingCmd(msgAny) {
     if (!msgAny || typeof msgAny !== "object") return;
 
+    // Acepta múltiples formas:
+    // {type:'cmd', cmd:'BOT_SAY', payload:{...}}
+    // {kind:'rlc_cmd', data:{...}}
     const msg = (msgAny.kind === "rlc_cmd" && msgAny.data && typeof msgAny.data === "object")
       ? msgAny.data
       : msgAny;
@@ -1916,18 +1688,10 @@
       if (text) botSay(text);
     }
 
+    // Si el player nos manda lista por cmd
     if (cmd === "CAM_LIST" || cmd === "CAMS_LIST") {
       const list = payload.cams || payload.camList || payload.list || null;
       if (Array.isArray(list) && list.length) setCamList(list, "cmd");
-    }
-
-    // BGM cfg por cmd (compat)
-    if (cmd === "BGM_CFG" || cmd === "BGM_SET" || cmd === "MUSIC_SET") {
-      try {
-        const c = normalizeBgmCfg(payload);
-        bgmCfg = saveBgmCfg(c);
-        syncBgmUIFromStore();
-      } catch (_) {}
     }
   }
 
@@ -2117,11 +1881,14 @@
     const v = String(ctlSelect.value || "").trim();
     if (!v) return "";
 
+    // Si es un id exacto en lista, listo
     if (allCams.some(c => String(c.id) === v)) return v;
 
+    // Si el usuario escribió índice (1..N)
     const n = parseInt(v, 10);
     if (Number.isFinite(n) && n >= 1 && n <= allCams.length) return String(allCams[n - 1].id);
 
+    // Si el input puede contener label, intenta match por texto
     const vv = v.toLowerCase();
     const found = allCams.find(c => label(c).toLowerCase() === vv) ||
                   allCams.find(c => label(c).toLowerCase().includes(vv));
@@ -2145,7 +1912,7 @@
     sendCmdAliases("RESET", {}, ["RESET_STATE", "HARD_RESET"]);
   }
 
-  // ───────────────────────── Catalog control (PATCH: sync)
+  // ───────────────────────── Catalog control (mantengo tu estructura)
   const CATALOG_DEFAULTS = {
     enabled: false,
     layout: "quad",
@@ -2162,18 +1929,12 @@
   function normalizeCatalogCfg(inCfg) {
     const c = Object.assign({}, CATALOG_DEFAULTS, (inCfg || {}));
     c.enabled = (c.enabled === true);
-
     c.layout = String(c.layout || "quad").trim();
     if (!/^(solo|duo|quad|grid|list)$/i.test(c.layout)) c.layout = "quad";
-
     c.gap = clamp(parseInt(String(c.gap ?? 8), 10) || 8, 0, 24);
     c.labels = (c.labels !== false);
-
-    c.mode = String(c.mode || "follow").trim().toLowerCase();
-    // PATCH: acepta sync; fixed es alias legacy → sync
-    if (c.mode === "fixed") c.mode = "sync";
-    if (!/^(follow|sync)$/i.test(c.mode)) c.mode = "follow";
-
+    c.mode = String(c.mode || "follow").trim();
+    if (!/^(follow|fixed)$/i.test(c.mode)) c.mode = "follow";
     c.followSlot = clamp(parseInt(String(c.followSlot ?? 0), 10) || 0, 0, 3);
     c.clickCycle = (c.clickCycle !== false);
     c.ytCookies = (c.ytCookies !== false);
@@ -2205,7 +1966,7 @@
       if (ctlCatalogLayout) ctlCatalogLayout.value = CATALOG_DEFAULTS.layout;
       if (ctlCatalogGap) ctlCatalogGap.value = String(CATALOG_DEFAULTS.gap);
       if (ctlCatalogLabels) ctlCatalogLabels.value = CATALOG_DEFAULTS.labels ? "on" : "off";
-      if (ctlCatalogMode) ctlCatalogMode.value = CATALOG_DEFAULTS.mode; // follow
+      if (ctlCatalogMode) ctlCatalogMode.value = CATALOG_DEFAULTS.mode;
       if (ctlCatalogFollowSlot) ctlCatalogFollowSlot.value = String(CATALOG_DEFAULTS.followSlot);
       if (ctlCatalogClickCycle) ctlCatalogClickCycle.value = CATALOG_DEFAULTS.clickCycle ? "on" : "off";
       if (ctlCatalogYtCookies) ctlCatalogYtCookies.value = CATALOG_DEFAULTS.ytCookies ? "on" : "off";
@@ -2299,6 +2060,7 @@
       const cmd = String(el.getAttribute("data-cmd") || el.getAttribute("data-action") || "").trim();
       if (!cmd) return;
 
+      // payload opcional
       let payload = {};
       const raw = el.getAttribute("data-payload");
       if (raw) {
@@ -2309,6 +2071,7 @@
       e.preventDefault();
       e.stopPropagation();
 
+      // si el botón quiere ir a la seleccionada
       if (cmd === "GOTO_SELECTED") { doGoSelected(); return; }
 
       sendCmdAliases(cmd, payload, []);
@@ -2408,15 +2171,6 @@
       botSay(txt);
     });
 
-    // BGM (PATCH)
-    safeOn(ctlBgmOn, "change", applyBgmNow);
-    safeOn(ctlBgmTrack, "change", applyBgmNow);
-    safeOn(ctlBgmVol, "input", applyBgmNow);
-    safeOn(ctlBgmPrev, "click", bgmPrev);
-    safeOn(ctlBgmPlay, "click", bgmToggle);
-    safeOn(ctlBgmNext, "click", bgmNext);
-    safeOn(ctlBgmShuffle, "click", bgmShuffle);
-
     // Auto preview sync
     const autoSync = debounce(syncPreviewUrl, 160);
     [
@@ -2428,9 +2182,7 @@
       ctlChatOn, ctlChatHideCmd, ctlAlertsOn,
       ctlAdsOn, ctlAdLead, ctlAdDur, ctlAdShowDuring, ctlAdChatText,
       ctlTickerOn, ctlTickerLang, ctlTickerSpeed, ctlTickerRefresh, ctlTickerTop, ctlTickerHideOnVote, ctlTickerSpan,
-      ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget,
-      // BGM
-      ctlBgmOn, ctlBgmVol, ctlBgmTrack
+      ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget
     ].forEach(el => safeOn(el, "change", autoSync));
 
     // Click pill para recargar
@@ -2454,9 +2206,8 @@
         else if (msg?.type === "CAM_LIST" || msg?.type === "CAMS_LIST") {
           const list = msg.cams || msg.camList || msg.list || null;
           if (Array.isArray(list) && list.length) setCamList(list, "bcMain");
-        } else if (msg?.type === "BGM_CFG") {
-          try { bgmCfg = saveBgmCfg(normalizeBgmCfg(msg.cfg || msg)); syncBgmUIFromStore(); } catch (_) {}
         } else {
+          // heuristic
           if (msg.cam || msg.currentCam || msg.mins != null) applyState(msg);
         }
       };
@@ -2473,8 +2224,6 @@
         else if (msg?.type === "CAM_LIST" || msg?.type === "CAMS_LIST") {
           const list = msg.cams || msg.camList || msg.list || null;
           if (Array.isArray(list) && list.length) setCamList(list, "bcLegacy");
-        } else if (msg?.type === "BGM_CFG") {
-          try { bgmCfg = saveBgmCfg(normalizeBgmCfg(msg.cfg || msg)); syncBgmUIFromStore(); } catch (_) {}
         } else {
           if (msg.cam || msg.currentCam || msg.mins != null) applyState(msg);
         }
@@ -2494,7 +2243,6 @@
       if (k === COUNTDOWN_CFG_KEY || k === COUNTDOWN_CFG_KEY_BASE) syncCountdownUIFromStore();
       if (k === HELIX_CFG_KEY || k === HELIX_CFG_KEY_BASE) syncHelixUIFromStore();
       if (k === BOT_STORE_KEY || k === BOT_STORE_KEY_BASE) { syncBotUIFromStore(); botApplyCfgAndMaybeConnect(); }
-      if (k === BGM_CFG_KEY || k === BGM_CFG_KEY_BASE) syncBgmUIFromStore();
     });
   }
 
@@ -2539,13 +2287,11 @@
     const now = Date.now();
     const age = now - (lastSeenAt || 0);
 
+    // Poll LS fallback
     pollLS();
 
     // Mantén lista viva
     if (!allCams.length) refreshGlobalLists(false);
-
-    // Mantén BGM tracks vivos por si music.js carga tarde
-    ensureBgmTrackOptions();
 
     if (!updateAvailable) {
       if (age > 3500) {
@@ -2586,10 +2332,6 @@
         }
       } catch (_) {}
 
-      // BGM
-      syncBgmUIFromStore();
-      ensureBgmTrackOptions();
-
       syncTickerUIFromStore();
       syncCountdownUIFromStore();
       syncHelixUIFromStore();
@@ -2619,7 +2361,7 @@
 
       heartbeatId = setInterval(heartbeat, 900);
       setStatus(`Control listo · v${APP_VERSION}${KEY ? ` · key OK` : " · (sin key)"}`, true);
-      log("boot OK", { KEY, BUS, CMD_KEY, STATE_KEY, EVT_KEY, CAMLIST_KEY, BGM_CFG_KEY });
+      log("boot OK", { KEY, BUS, CMD_KEY, STATE_KEY, EVT_KEY, CAMLIST_KEY });
     } catch (e) {
       console.error(e);
       setStatus(`ERROR init: ${String(e?.message || e)}`, false);

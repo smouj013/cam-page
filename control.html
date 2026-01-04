@@ -1,4 +1,4 @@
-<!-- control.html — Random Live Cams (CONTROL) v2.3.8 (KEY-SYNC + CAM LIST FIX) -->
+<!-- control.html — Random Live Cams (CONTROL) v2.3.5 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -15,51 +15,6 @@
 
   <!-- ✅ Mantener versión actual del control (NO subir) -->
   <script>window.APP_VERSION = "2.3.8";</script>
-
-  <!-- ✅ KEY SYNC (MISMA CLAVE QUE EL PLAYER)
-       - Lee ?key= o ?k=
-       - Si no viene, usa localStorage (última clave)
-       - Si no hay nada, usa "main"
-       - Expone: window.RLC_KEY, window.RLC_BUS_NAME
-       - (Opcional) auto-redirect para añadir ?key=... si faltaba (evita des-sync accidental)
-  -->
-  <script>
-    (() => {
-      "use strict";
-      const KEY_STORE = "rlc_key_v1";
-
-      const readStore = () => { try { return localStorage.getItem(KEY_STORE) || ""; } catch(_) { return ""; } };
-      const writeStore = (v) => { try { localStorage.setItem(KEY_STORE, v); } catch(_) {} };
-
-      try{
-        const u = new URL(location.href);
-        const urlKey = (u.searchParams.get("key") || u.searchParams.get("k") || "").trim();
-        const stored = readStore().trim();
-        const key = (urlKey || stored || "main");
-
-        // Normaliza key para evitar cosas raras en nombres de BC/keys
-        const safeKey = key.replace(/[^\w\-.:]/g, "_").slice(0, 64) || "main";
-
-        // Expón globals para que control.js / tickers / catálogo puedan usarlo
-        window.RLC_KEY = safeKey;
-        window.RLC_BUS_NAME = `rlc_bus_v1:${safeKey}`;
-
-        // Guarda última clave válida
-        if (safeKey && safeKey !== stored) writeStore(safeKey);
-
-        // Si no venía key en URL, opcionalmente redirige para que quede explícita (evita abrir tabs desincronizadas)
-        if (!urlKey){
-          // Si NO quieres redirección automática, comenta estas 4 líneas:
-          u.searchParams.set("key", safeKey);
-          // preserva otros params; el sentinel de version añadirá ?v si hace falta
-          history.replaceState(null, "", u.toString());
-        }
-      }catch(_){
-        window.RLC_KEY = "main";
-        window.RLC_BUS_NAME = "rlc_bus_v1:main";
-      }
-    })();
-  </script>
 
   <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
   <script>
@@ -119,8 +74,6 @@
 
           u.searchParams.delete("repair");
           u.searchParams.set("v", window.APP_VERSION || "repair");
-          // conserva key si existe
-          if (!u.searchParams.get("key") && window.RLC_KEY) u.searchParams.set("key", window.RLC_KEY);
           location.replace(u.toString());
         };
 
@@ -252,38 +205,11 @@
     .hint{color:var(--news-muted)}
     .btn.full{display:block!important;width:100%!important}
 
-    /* ✅ CAM LIST VISIBILITY FIX (no más “se ven dos rayas”)
-       - fuerza altura real
-       - colores de option y selected (Opera/Chrome/Win)
-       - padding correcto
-    */
     #ctlSelect.select{
-      width:100%;
-      padding:10px 10px !important;
-      border-radius:14px!important;
-      height:auto;
-      min-height:360px;           /* 👈 clave */
-      max-height:520px;
-      overflow:auto;
-      background:rgba(0,0,0,.22)!important;
-      color:rgba(255,255,255,.92)!important;
-      line-height:1.25;
-      -webkit-text-fill-color:rgba(255,255,255,.92);
+      padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto
     }
-    #ctlSelect option{
-      padding:10px 10px;
-      margin:2px 0;
-      border-radius:10px;
-      color:rgba(255,255,255,.92);
-      background:rgba(0,0,0,.20);
-    }
-    #ctlSelect option:hover{
-      background:rgba(55,214,255,.12);
-    }
-    #ctlSelect option:checked{
-      background:rgba(55,214,255,.24);
-      color:rgba(255,255,255,.98);
-    }
+    #ctlSelect option{padding:8px 10px;border-radius:10px}
+    #ctlSelect option:checked{background:rgba(55,214,255,.22)}
 
     #ctlDiagCard pre{
       border:1px solid rgba(255,255,255,.12);
@@ -354,11 +280,6 @@
       <div class="controlTitle">
         <div class="kicker">CONTROL ROOM</div>
         <div class="name">Random Live Cams</div>
-
-        <!-- ✅ Key visible (solo info). No rompe nada si tu JS no lo usa. -->
-        <div class="hint mono" style="margin-top:8px; opacity:.9">
-          KEY: <span id="ctlKeyText">—</span>
-        </div>
       </div>
       <div class="pill mono" id="ctlStatus" aria-live="polite">Conectando…</div>
     </header>
@@ -625,7 +546,7 @@
       <div class="card">
         <div class="cardTitle">Cambiar cámara</div>
         <input id="ctlSearch" class="input" type="text" placeholder="Buscar (título / lugar / fuente)…" autocomplete="off" />
-        <select id="ctlSelect" class="select" size="12" aria-label="Lista de cámaras"></select>
+        <select id="ctlSelect" class="select" size="10" aria-label="Lista de cámaras"></select>
         <div class="row2">
           <button id="ctlGo" class="btn full" type="button">Ir</button>
           <button id="ctlBan" class="btn ghost full" type="button">Excluir esta (solo local)</button>
@@ -804,7 +725,7 @@
     <footer class="controlFooter" aria-label="Ayuda rápida" style="margin-top:14px; opacity:.9">
       <span class="muted">Teclas: ←/→ navegar · Espacio pausa · R reshuffle · B ban</span>
       <span class="dot">•</span>
-      <span class="muted mono" id="ctlBusName">Canal: —</span>
+      <span class="muted mono" id="ctlBusName">Canal: rlc_bus_v1</span>
     </footer>
 
     <noscript>
@@ -841,18 +762,6 @@
         const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
         showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
       });
-
-      // Pinta KEY/BUS en UI sin depender de control.js
-      const paint = () => {
-        try{
-          const keyEl = qs("#ctlKeyText");
-          const busEl = qs("#ctlBusName");
-          if (keyEl) keyEl.textContent = String(window.RLC_KEY || "main");
-          if (busEl) busEl.textContent = `Canal: ${String(window.RLC_BUS_NAME || "rlc_bus_v1:main")}`;
-        }catch(_){}
-      };
-      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", paint, { once:true });
-      else paint();
     })();
   </script>
 
@@ -860,7 +769,7 @@
   <script defer src="./cams.js?v=2.3.8"></script>
   <script defer src="./music.js?v=2.3.8"></script>
 
-  <!-- ✅ Control principal -->
+  <!-- ✅ Control principal (ya lo tienes) -->
   <script defer src="./control.js?v=2.3.8"></script>
 
   <!-- Opcionales -->
