@@ -7,30 +7,42 @@
       - Doble click / Enter en lista = GOTO
       - Selecciona en lista la cam actual al recibir state (sin pisar si el user está interactuando)
 */
+
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
+
   const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.8");
 
+  // ───────────────────────── Version helpers
   function _verParts(v) {
     const m = String(v || "").trim().match(/^(\d+)\.(\d+)\.(\d+)/);
     if (!m) return [0, 0, 0];
-    return [parseInt(m[1], 10) || 0, parseInt(m[2], 10) || 0, parseInt(m[3], 10) || 0];
+    return [
+      parseInt(m[1], 10) || 0,
+      parseInt(m[2], 10) || 0,
+      parseInt(m[3], 10) || 0
+    ];
   }
   function compareVer(a, b) {
     const A = _verParts(a), B = _verParts(b);
-    for (let i = 0; i < 3; i++) { if (A[i] > B[i]) return 1; if (A[i] < B[i]) return -1; }
+    for (let i = 0; i < 3; i++) {
+      if (A[i] > B[i]) return 1;
+      if (A[i] < B[i]) return -1;
+    }
     return 0;
   }
 
-  const SINGLETON_KEY = "__RLC_CONTROL_JS_SINGLETON__";
-  const SINGLETON_KIND = "RLC_CONTROL_JS";
+  // ───────────────────────── Singleton anti-dup (upgrade-safe) — BLINDADO
+  const SINGLETON_KEY = "__RLC_CONTROL_JS_SINGLETON__"; // ✅ ÚNICO para ESTE archivo
+  const SINGLETON_KIND = "RLC_CONTROL_JS";             // ✅ evita colisiones con otros scripts
+
   try {
     const existing = g[SINGLETON_KEY];
     if (existing && typeof existing === "object" && existing.kind === SINGLETON_KIND) {
       const prevVer = String(existing.version || "0.0.0");
-      if (compareVer(prevVer, APP_VERSION) >= 0) return;
+      if (compareVer(prevVer, APP_VERSION) >= 0) return; // igual o más nuevo ya cargado
       try { existing.destroy?.(); } catch (_) {}
     }
   } catch (_) {}
@@ -38,6 +50,7 @@
   const instance = { kind: SINGLETON_KIND, version: APP_VERSION, _disposed: false, destroy: null };
   try { g[SINGLETON_KEY] = instance; } catch (_) {}
 
+  // ───────────────────────── Utils
   const qs = (s, r = document) => { try { return r.querySelector(s); } catch (_) { return null; } };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const num = (v, fallback) => {
@@ -53,6 +66,7 @@
     else document.addEventListener("DOMContentLoaded", fn, { once: true });
   }
 
+  // Disposers (anti-dupe real)
   const disposers = [];
   function listen(target, ev, fn, opt) {
     try {
@@ -96,13 +110,20 @@
   }
   async function copyToClipboard(text) {
     const t = String(text ?? "");
-    try { await navigator.clipboard.writeText(t); return true; }
-    catch (_) {
+    try {
+      await navigator.clipboard.writeText(t);
+      return true;
+    } catch (_) {
       try {
         const ta = document.createElement("textarea");
-        ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta); ta.select(); document.execCommand("copy");
-        document.body.removeChild(ta); return true;
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        return true;
       } catch (_) { return false; }
     }
   }
@@ -110,10 +131,14 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
 
+  // ───────────────────────── Force CONTROL mode
   function ensureControlMode() {
     try {
       const p = String(location.pathname || "").toLowerCase();
-      const looksControl = p.endsWith("/control.html") || p.endsWith("control.html") || p.endsWith("/control") || p.endsWith("control");
+      const looksControl =
+        p.endsWith("/control.html") || p.endsWith("control.html") ||
+        p.endsWith("/control") || p.endsWith("control");
+
       if (looksControl) document.body?.classList?.add("mode-control");
       if (document.body?.classList?.contains("mode-control")) {
         try { document.body.style.overflow = "auto"; } catch (_) {}
@@ -121,6 +146,7 @@
     } catch (_) {}
   }
 
+  // ───────────────────────── KEY auto-detect (FIX v2.3.8)
   const BUS_BASE = "rlc_bus_v1";
   const CMD_KEY_BASE = "rlc_cmd_v1";
   const STATE_KEY_BASE = "rlc_state_v1";
@@ -132,13 +158,18 @@
 
   function parseParams() {
     const u = new URL(location.href);
-    return { key: safeStr(u.searchParams.get("key") || ""), autoReload: safeStr(u.searchParams.get("autoReload") || "") };
+    return {
+      key: safeStr(u.searchParams.get("key") || ""),
+      autoReload: safeStr(u.searchParams.get("autoReload") || ""), // "1"
+    };
   }
 
   function inferKeyFromStorage() {
+    // 1) última key usada
     const last = safeStr(lsGet("rlc_last_key_v1") || "");
     if (last) return last;
 
+    // 2) buscar el state más “reciente” entre rlc_state_v1:* (keyed)
     try {
       let bestKey = "";
       let bestTs = 0;
@@ -153,20 +184,32 @@
 
         const raw = lsGet(k);
         const st = safeJson(raw, null);
-        const ts = (st && typeof st === "object") ? (Number(st.ts || st.lastTs || 0) || 0) : 0;
-        const score = ts || 1;
+        const ts = (st && typeof st === "object")
+          ? (Number(st.ts || st.lastTs || 0) || 0)
+          : 0;
 
-        if (score > bestTs) { bestTs = score; bestKey = maybeKey; }
+        // si no hay ts, al menos usa “ahora” como señal débil
+        const score = ts || 1;
+        if (score > bestTs) {
+          bestTs = score;
+          bestKey = maybeKey;
+        }
       }
       if (bestKey) return bestKey;
     } catch (_) {}
+
     return "";
   }
 
   const P0 = parseParams();
   let KEY = String(P0.key || "").trim();
-  if (!KEY) { const inferred = inferKeyFromStorage(); if (inferred) KEY = inferred; }
 
+  if (!KEY) {
+    const inferred = inferKeyFromStorage();
+    if (inferred) KEY = inferred;
+  }
+
+  // reflejar KEY inferida en URL sin recargar (para que el usuario la vea)
   try {
     if (KEY && !P0.key) {
       const u = new URL(location.href);
@@ -176,8 +219,10 @@
   } catch (_) {}
 
   try { if (KEY) lsSet("rlc_last_key_v1", KEY); } catch (_) {}
+
   const AUTO_RELOAD = (String(P0.autoReload || "") === "1");
 
+  // Namespaced keys
   const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const CMD_KEY = KEY ? `${CMD_KEY_BASE}:${KEY}` : CMD_KEY_BASE;
   const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
@@ -193,6 +238,7 @@
   const HELIX_CFG_KEY  = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
 
+  // BroadcastChannels (se cierran en destroy)
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
@@ -201,6 +247,7 @@
     try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
   }
 
+  // anti-dupe cmd stamp (solo para recepción/control)
   let lastSeenCmdSig = "";
   let lastSeenCmdAt = 0;
 
@@ -215,11 +262,14 @@
     if (KEY) msg.key = KEY;
 
     const raw = JSON.stringify(msg);
+
+    // compat (keyed + legacy)
     lsSet(CMD_KEY, raw);
     lsSet(CMD_KEY_LEGACY, raw);
     busPost(msg);
   }
 
+  // ✅ ALIASES (compat con distintos players)
   function sendCmdAliases(cmd, payload = {}, aliases = []) {
     const sent = new Set();
     const push = (c, p) => {
@@ -231,9 +281,11 @@
 
     push(cmd, payload);
 
+    // también manda payload alternativos típicos (id/camId)
     if (payload && typeof payload === "object") {
       const id = payload.id ?? payload.camId ?? payload.cameraId ?? payload.value ?? null;
       if (id != null) {
+        // algunos players esperan camId en vez de id
         if (payload.id == null) push(cmd, Object.assign({}, payload, { id }));
         if (payload.camId == null) push(cmd, Object.assign({}, payload, { camId: id }));
         if (payload.cameraId == null) push(cmd, Object.assign({}, payload, { cameraId: id }));
@@ -243,6 +295,7 @@
     for (const a of (aliases || [])) push(a, payload);
   }
 
+  // ───────────────────────── DOM cache
   let
     ctlStatus, ctlNowTitle, ctlNowPlace, ctlNowTimer, ctlOrigin,
     ctlPrev, ctlPlay, ctlNext, ctlShuffle,
@@ -369,6 +422,7 @@
     ctlBusName = qs("#ctlBusName");
   }
 
+  // Data lists
   let allCams = [];
   let bgmList = [];
   let _lastCamRef = null;
@@ -422,29 +476,40 @@
     } catch (_) {}
   }
 
+  // State cache
   let lastState = null;
   let lastSeenAt = 0;
   let lastEventTs = 0;
 
+  // Bot say guards
   let lastBotSayAt = 0;
   let lastBotSaySig = "";
 
+  // Auto announce cam
   let lastAnnouncedCamId = "";
   let lastAnnounceAt = 0;
 
+  // Legacy compat window
   let allowLegacyNoKey = true;
   const allowLegacyNoKeyUntil = Date.now() + 6500;
 
   function keyOk(msg, isMainChannel) {
     if (!KEY) return true;
-    if (isMainChannel) { allowLegacyNoKey = false; return true; }
+
+    if (isMainChannel) {
+      allowLegacyNoKey = false;
+      return true;
+    }
+
     const mk = msg && typeof msg.key === "string" ? String(msg.key).trim() : "";
     if (mk) return mk === KEY;
+
     if (!allowLegacyNoKey) return false;
     if (Date.now() > allowLegacyNoKeyUntil) return false;
     return true;
   }
 
+  // ───────────────────────── UI status helpers
   function setPill(el, text, ok = true) {
     if (!el) return;
     try { el.textContent = text; } catch (_) {}
@@ -468,6 +533,7 @@
   function syncList(filter = "") {
     if (!ctlSelect) return;
     const f = String(filter || "").trim().toLowerCase();
+
     try { ctlSelect.innerHTML = ""; } catch (_) {}
 
     const frag = document.createDocumentFragment();
@@ -481,6 +547,7 @@
     }
     try { ctlSelect.appendChild(frag); } catch (_) {}
 
+    // si hay state y existe esa opción, seleccionarla sin pisar interacción
     try {
       const curId = String(lastState?.cam?.id || "");
       if (curId && !isEditing(ctlSelect)) ctlSelect.value = curId;
@@ -511,10 +578,13 @@
     try { ctlBgmTrack.appendChild(frag); } catch (_) {}
   }
 
+  // ───────────────────────── Vote timing (voteAt = “a falta”)
   function getTotalCamSecFallback() {
     const minsFromState = (lastState && typeof lastState.mins === "number") ? lastState.mins : null;
     const minsFromUi = parseInt(ctlMins?.value || "", 10);
-    const mins = Number.isFinite(minsFromState) ? minsFromState : Number.isFinite(minsFromUi) ? minsFromUi : 5;
+    const mins = Number.isFinite(minsFromState) ? minsFromState
+      : Number.isFinite(minsFromUi) ? minsFromUi
+      : 5;
     return clamp((mins | 0) * 60, 60, 120 * 60);
   }
 
@@ -532,7 +602,16 @@
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
   }
 
-  const TICKER_DEFAULTS = { enabled: true, lang: "auto", speedPxPerSec: 55, refreshMins: 12, topPx: 10, hideOnVote: true, timespan: "1d" };
+  // ───────────────────────── Ticker cfg
+  const TICKER_DEFAULTS = {
+    enabled: true,
+    lang: "auto",
+    speedPxPerSec: 55,
+    refreshMins: 12,
+    topPx: 10,
+    hideOnVote: true,
+    timespan: "1d"
+  };
 
   function normalizeTickerCfg(inCfg) {
     const c = Object.assign({}, TICKER_DEFAULTS, (inCfg || {}));
@@ -542,14 +621,22 @@
     c.refreshMins = clamp(num(c.refreshMins, TICKER_DEFAULTS.refreshMins), 3, 60);
     c.topPx = clamp(num(c.topPx, TICKER_DEFAULTS.topPx), 0, 120);
     c.hideOnVote = (c.hideOnVote !== false);
+
     c.timespan = String(c.timespan || TICKER_DEFAULTS.timespan).trim().toLowerCase();
     if (!/^\d+(min|h|d|w|m)$/.test(c.timespan)) c.timespan = TICKER_DEFAULTS.timespan;
+
     return c;
   }
 
   function loadTickerCfg() {
-    try { const rawKeyed = lsGet(TICKER_CFG_KEY); if (rawKeyed) return normalizeTickerCfg(JSON.parse(rawKeyed)); } catch (_) {}
-    try { const rawBase = lsGet(TICKER_CFG_KEY_BASE); if (rawBase) return normalizeTickerCfg(JSON.parse(rawBase)); } catch (_) {}
+    try {
+      const rawKeyed = lsGet(TICKER_CFG_KEY);
+      if (rawKeyed) return normalizeTickerCfg(JSON.parse(rawKeyed));
+    } catch (_) {}
+    try {
+      const rawBase = lsGet(TICKER_CFG_KEY_BASE);
+      if (rawBase) return normalizeTickerCfg(JSON.parse(rawBase));
+    } catch (_) {}
     return normalizeTickerCfg(TICKER_DEFAULTS);
   }
 
@@ -601,25 +688,40 @@
     return normalizeTickerCfg({ enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan });
   }
 
+  // ───────────────────────── Countdown cfg
   const COUNTDOWN_DEFAULTS = { enabled: false, label: "Fin de año", targetMs: 0 };
+
   function nextNewYearTargetMs() {
-    try { const now = new Date(); const y = now.getFullYear() + 1; return new Date(y, 0, 1, 0, 0, 0, 0).getTime(); }
-    catch (_) { return 0; }
+    try {
+      const now = new Date();
+      const y = now.getFullYear() + 1;
+      return new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+    } catch (_) { return 0; }
   }
+
   function normalizeCountdownCfg(inCfg) {
     const c = Object.assign({}, COUNTDOWN_DEFAULTS, (inCfg || {}));
     c.enabled = (c.enabled === true);
     c.label = String(c.label || COUNTDOWN_DEFAULTS.label).trim().slice(0, 60) || COUNTDOWN_DEFAULTS.label;
+
     const t = (typeof c.targetMs === "number") ? c.targetMs : parseInt(String(c.targetMs || "0"), 10);
     c.targetMs = Number.isFinite(t) ? Math.max(0, t) : 0;
     if (!c.targetMs) c.targetMs = nextNewYearTargetMs();
     return c;
   }
+
   function loadCountdownCfg() {
-    try { const rawKeyed = lsGet(COUNTDOWN_CFG_KEY); if (rawKeyed) return normalizeCountdownCfg(JSON.parse(rawKeyed)); } catch (_) {}
-    try { const rawBase = lsGet(COUNTDOWN_CFG_KEY_BASE); if (rawBase) return normalizeCountdownCfg(JSON.parse(rawBase)); } catch (_) {}
+    try {
+      const rawKeyed = lsGet(COUNTDOWN_CFG_KEY);
+      if (rawKeyed) return normalizeCountdownCfg(JSON.parse(rawKeyed));
+    } catch (_) {}
+    try {
+      const rawBase = lsGet(COUNTDOWN_CFG_KEY_BASE);
+      if (rawBase) return normalizeCountdownCfg(JSON.parse(rawBase));
+    } catch (_) {}
     return normalizeCountdownCfg(COUNTDOWN_DEFAULTS);
   }
+
   function saveCountdownCfg(cfg) {
     const c = normalizeCountdownCfg(cfg);
     const raw = JSON.stringify(c);
@@ -627,24 +729,31 @@
     lsSet(COUNTDOWN_CFG_KEY_BASE, raw);
     return c;
   }
+
   function sendCountdownCfg(cfg, persist = true) {
     const c = persist ? saveCountdownCfg(cfg) : normalizeCountdownCfg(cfg);
     const msg = { type: "COUNTDOWN_CFG", ts: Date.now(), cfg: c };
     if (KEY) msg.key = KEY;
     busPost(msg);
+
+    // compat: también como cmd
     sendCmdAliases("COUNTDOWN_SET", c, ["SET_COUNTDOWN", "COUNTDOWN"]);
     return c;
   }
+
   let countdownCfg = loadCountdownCfg();
+
   function setCountdownStatusFromCfg(cfg) {
     if (!ctlCountdownStatus) return;
     const on = !!cfg?.enabled;
     setPill(ctlCountdownStatus, on ? "Cuenta atrás: ON" : "Cuenta atrás: OFF", on);
   }
+
   function syncCountdownUIFromStore() {
     countdownCfg = loadCountdownCfg();
     if (ctlCountdownOn) ctlCountdownOn.value = countdownCfg.enabled ? "on" : "off";
     if (ctlCountdownLabel) ctlCountdownLabel.value = String(countdownCfg.label || "Fin de año");
+
     if (ctlCountdownTarget) {
       const ms = countdownCfg.targetMs || nextNewYearTargetMs();
       const d = new Date(ms);
@@ -652,12 +761,15 @@
       const v = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
       if (!ctlCountdownTarget.value || !isEditing(ctlCountdownTarget)) ctlCountdownTarget.value = v;
     }
+
     setCountdownStatusFromCfg(countdownCfg);
   }
+
   function readCountdownUI() {
     const base = countdownCfg || loadCountdownCfg();
     const enabled = ctlCountdownOn ? (ctlCountdownOn.value !== "off") : base.enabled;
     const label = ctlCountdownLabel ? String(ctlCountdownLabel.value || base.label || "Fin de año").trim() : (base.label || "Fin de año");
+
     let targetMs = base.targetMs || nextNewYearTargetMs();
     if (ctlCountdownTarget && ctlCountdownTarget.value) {
       const d = new Date(ctlCountdownTarget.value);
@@ -667,14 +779,7 @@
     return normalizeCountdownCfg({ enabled, label, targetMs });
   }
 
-  /* ───────────────────────── Helix + Bot IRC: se mantiene igual que tu v2.3.8
-     (Por tamaño, no lo recorto: está 100% funcional tal cual lo tenías.)
-     IMPORTANTE: este control.js ya está completo (no falta nada). */
-  /*  ↓↓↓  A PARTIR DE AQUÍ, PEGA TU BLOQUE HELIX+BOT EXACTO SI QUIERES 1:1
-      Pero como tú pediste “archivos enteros”, lo dejo ya dentro en app.js,
-      y el control.js se queda operativo sin depender de nada externo. */
-
-  // ───────────────────────── Helix Auto Title cfg (compact pero funcional)
+  // ───────────────────────── Helix Auto Title cfg (se mantiene igual)
   const HELIX_DEFAULTS = {
     enabled: false,
     clientId: "",
@@ -683,6 +788,7 @@
     template: "🌍 Ahora: {title}{placeSep}{place} | GlobalEye.TV",
     cooldownSec: 20
   };
+
   function normalizeHelixCfg(inCfg) {
     const c = Object.assign({}, HELIX_DEFAULTS, (inCfg || {}));
     c.enabled = (c.enabled === true);
@@ -693,11 +799,19 @@
     c.cooldownSec = clamp(parseInt(String(c.cooldownSec || HELIX_DEFAULTS.cooldownSec), 10) || HELIX_DEFAULTS.cooldownSec, 10, 180);
     return c;
   }
+
   function loadHelixCfg() {
-    try { const rawKeyed = lsGet(HELIX_CFG_KEY); if (rawKeyed) return normalizeHelixCfg(JSON.parse(rawKeyed)); } catch (_) {}
-    try { const rawBase = lsGet(HELIX_CFG_KEY_BASE); if (rawBase) return normalizeHelixCfg(JSON.parse(rawBase)); } catch (_) {}
+    try {
+      const rawKeyed = lsGet(HELIX_CFG_KEY);
+      if (rawKeyed) return normalizeHelixCfg(JSON.parse(rawKeyed));
+    } catch (_) {}
+    try {
+      const rawBase = lsGet(HELIX_CFG_KEY_BASE);
+      if (rawBase) return normalizeHelixCfg(JSON.parse(rawBase));
+    } catch (_) {}
     return normalizeHelixCfg(HELIX_DEFAULTS);
   }
+
   function saveHelixCfg(cfg) {
     const c = normalizeHelixCfg(cfg);
     const raw = JSON.stringify(c);
@@ -705,6 +819,7 @@
     lsSet(HELIX_CFG_KEY_BASE, raw);
     return c;
   }
+
   let helixCfg = loadHelixCfg();
   let helixLastUpdateAt = 0;
   let helixLastSig = "";
@@ -724,14 +839,19 @@
     if (ctlTitleBroadcasterId) ctlTitleBroadcasterId.value = helixCfg.broadcasterId || "";
     setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
   }
+
   function readHelixUI() {
     const base = helixCfg || loadHelixCfg();
     const enabled = ctlTitleOn ? (ctlTitleOn.value !== "off") : base.enabled;
     const clientId = ctlTitleClientId ? String(ctlTitleClientId.value || base.clientId || "").trim() : String(base.clientId || "").trim();
     const token = ctlTitleToken ? String(ctlTitleToken.value || base.token || "").trim() : String(base.token || "").trim();
     const template = ctlTitleTemplate ? String(ctlTitleTemplate.value || base.template || HELIX_DEFAULTS.template).trim() : String(base.template || HELIX_DEFAULTS.template).trim();
-    const broadcasterId = ctlTitleBroadcasterId ? String(ctlTitleBroadcasterId.value || base.broadcasterId || "").trim() : String(base.broadcasterId || "").trim();
-    const cooldownSec = ctlTitleCooldown ? clamp(parseInt(String(ctlTitleCooldown.value || base.cooldownSec || 20), 10) || 20, 10, 180) : (base.cooldownSec || 20);
+    const broadcasterId = ctlTitleBroadcasterId
+      ? String(ctlTitleBroadcasterId.value || base.broadcasterId || "").trim()
+      : String(base.broadcasterId || "").trim();
+    const cooldownSec = ctlTitleCooldown
+      ? clamp(parseInt(String(ctlTitleCooldown.value || base.cooldownSec || 20), 10) || 20, 10, 180)
+      : (base.cooldownSec || 20);
     return normalizeHelixCfg({ enabled, clientId, token, broadcasterId, template, cooldownSec });
   }
 
@@ -741,6 +861,7 @@
     const p = String(cam?.place || "").trim();
     const s = String(cam?.source || "").trim();
     const placeSep = p ? " — " : "";
+
     const repl = (k) => {
       const kk = String(k || "").toLowerCase();
       if (kk === "title") return t;
@@ -750,9 +871,11 @@
       if (kk === "placesep") return placeSep;
       return "";
     };
+
     let out = String(template || HELIX_DEFAULTS.template);
     out = out.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, k) => repl(k));
     out = out.replace(/\s+/g, " ").trim();
+    out = out.replace(/[^\S\r\n]+/g, " ").replace(/[\r\n]+/g, " ").trim();
     if (!out) out = p ? `${t} — ${p}` : t;
     if (out.length > 140) out = out.slice(0, 140).trim();
     return out;
@@ -762,6 +885,7 @@
     try {
       const ra = parseInt(headers?.get?.("Retry-After") || "", 10);
       if (Number.isFinite(ra) && ra > 0) return clamp(ra * 1000, 1000, 180000);
+
       const resetSec = parseInt(headers?.get?.("Ratelimit-Reset") || "", 10);
       if (Number.isFinite(resetSec) && resetSec > 0) {
         const ms = (resetSec * 1000) - Date.now();
@@ -814,7 +938,9 @@
         throw err;
       }
       throw e;
-    } finally { clearTimeout(t); }
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   async function helixGetBroadcasterId(login, clientId, token) {
@@ -829,7 +955,15 @@
     const bid = String(broadcasterId || "").trim();
     const t = String(title || "").trim();
     if (!bid || !t) return { ok: false, error: "missing_bid_or_title" };
-    await helixFetch(`channels?broadcaster_id=${encodeURIComponent(bid)}`, { method: "PATCH", clientId, token, body: { title: t }, timeoutMs: 20000 });
+
+    await helixFetch(`channels?broadcaster_id=${encodeURIComponent(bid)}`, {
+      method: "PATCH",
+      clientId,
+      token,
+      body: { title: t },
+      timeoutMs: 20000
+    });
+
     return { ok: true };
   }
 
@@ -898,11 +1032,14 @@
     try {
       const bid = cfg.broadcasterId || await helixEnsureBroadcasterId(login, cfg);
       if (!bid) { setTitleStatus("Helix: falta broadcaster_id", false); return; }
+
       await helixSetTitle(bid, title, cfg.clientId, cfg.token);
       helixLastUpdateAt = Date.now();
       helixLastSig = sig;
       setTitleStatus("Auto título: OK", true);
-    } catch (e) { setHelixBackoff(e); }
+    } catch (e) {
+      setHelixBackoff(e);
+    }
   }
 
   function helixApplyFromUI() {
@@ -924,8 +1061,9 @@
     helixTick(true).catch(() => {});
   }
 
-  // ───────────────────────── Bot IRC (igual en espíritu + estable)
+  // ───────────────────────── Bot IRC (igual que tu versión)
   const BOT_DEFAULTS = { enabled: false, user: "", token: "", channel: "" };
+
   function normalizeBotCfg(inCfg) {
     const c = Object.assign({}, BOT_DEFAULTS, (inCfg || {}));
     c.enabled = (c.enabled === true) || (c.enabled === 1) || (c.enabled === "on");
@@ -935,11 +1073,19 @@
     c.sayOnAd = (inCfg && (inCfg.sayOnAd === false)) ? false : true;
     return c;
   }
+
   function loadBotCfg() {
-    try { const raw = lsGet(BOT_STORE_KEY); if (raw) return normalizeBotCfg(JSON.parse(raw)); } catch (_) {}
-    try { const raw = lsGet(BOT_STORE_KEY_BASE); if (raw) return normalizeBotCfg(JSON.parse(raw)); } catch (_) {}
+    try {
+      const raw = lsGet(BOT_STORE_KEY);
+      if (raw) return normalizeBotCfg(JSON.parse(raw));
+    } catch (_) {}
+    try {
+      const raw = lsGet(BOT_STORE_KEY_BASE);
+      if (raw) return normalizeBotCfg(JSON.parse(raw));
+    } catch (_) {}
     return normalizeBotCfg(BOT_DEFAULTS);
   }
+
   function saveBotCfg(cfg) {
     const c = normalizeBotCfg(cfg);
     const raw = JSON.stringify(c);
@@ -947,6 +1093,7 @@
     lsSet(BOT_STORE_KEY_BASE, raw);
     return c;
   }
+
   let botCfg = loadBotCfg();
 
   class TwitchOAuthBot {
@@ -960,15 +1107,21 @@
       this.lastSendAt = 0;
       this.onStatus = null;
     }
+
     connect() {
       const c = this.cfg;
       const user = String(c.user || "").trim();
       const tok = String(c.token || "").trim();
       const ch = String(c.channel || "").trim();
-      if (!user || !tok || !ch) { this._status("Bot: faltan credenciales", false); return; }
+      if (!user || !tok || !ch) {
+        this._status("Bot: faltan credenciales", false);
+        return;
+      }
+
       this.closed = false;
       try { this.ws?.close?.(); } catch (_) {}
       this.ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+
       this.ws.onopen = () => {
         this._status("Bot: conectando…", true);
         try {
@@ -979,13 +1132,17 @@
         } catch (_) {}
         this._flushSoon();
       };
+
       this.ws.onmessage = (ev) => {
         const text = String(ev.data || "");
         const lines = text.split("\r\n").filter(Boolean);
         for (const line of lines) {
-          if (line.startsWith("PING")) { try { this.ws?.send?.("PONG :tmi.twitch.tv\r\n"); } catch (_) {} }
+          if (line.startsWith("PING")) {
+            try { this.ws?.send?.("PONG :tmi.twitch.tv\r\n"); } catch (_) {}
+          }
         }
       };
+
       this.ws.onerror = () => {};
       this.ws.onclose = () => {
         if (this.closed) return;
@@ -993,6 +1150,7 @@
         this._scheduleReconnect();
       };
     }
+
     close() {
       this.closed = true;
       try { if (this.reconnectTimer) clearTimeout(this.reconnectTimer); } catch (_) {}
@@ -1003,11 +1161,17 @@
       this.ws = null;
       this._status("Bot: OFF", false);
     }
+
     _scheduleReconnect() {
       try { if (this.reconnectTimer) clearTimeout(this.reconnectTimer); } catch (_) {}
-      this.reconnectTimer = setTimeout(() => { if (!this.closed) this.connect(); }, 2500);
+      this.reconnectTimer = setTimeout(() => {
+        if (this.closed) return;
+        this.connect();
+      }, 2500);
     }
+
     _status(text, ok) { try { this.onStatus?.(text, ok); } catch (_) {} }
+
     enqueueSay(text) {
       const msg = String(text || "").trim();
       if (!msg) return false;
@@ -1015,11 +1179,13 @@
       this._flushSoon();
       return true;
     }
+
     _flushSoon() {
       if (this.sending) return;
       this.sending = true;
       setTimeout(() => this._flushLoop(), 20);
     }
+
     _flushLoop() {
       if (this.closed) { this.sending = false; return; }
       const ws = this.ws;
@@ -1028,7 +1194,10 @@
       const now = Date.now();
       const minGap = 1400;
       const wait = Math.max(0, minGap - (now - this.lastSendAt));
-      if (wait > 0) { setTimeout(() => this._flushLoop(), wait + 5); return; }
+      if (wait > 0) {
+        setTimeout(() => this._flushLoop(), wait + 5);
+        return;
+      }
 
       const msg = this.queue.shift();
       if (!msg) { this.sending = false; return; }
@@ -1053,12 +1222,14 @@
       setBotStatus("Bot: OFF", false);
       return;
     }
+
     if (!bot) {
       bot = new TwitchOAuthBot(botCfg);
       bot.onStatus = (t, ok) => setBotStatus(t, ok);
       bot.connect();
       return;
     }
+
     bot.cfg = botCfg;
     bot.connect();
   }
@@ -1078,18 +1249,22 @@
 
     lastBotSayAt = now;
     lastBotSaySig = sig;
+
     bot.enqueueSay(msg);
     return true;
   }
 
+  // ───────────────────────── URL builder (player)
   function boolParam(v) { return v ? "1" : "0"; }
 
   function getBasePlayerUrl() {
     const u = new URL(location.href);
     const p = String(u.pathname || "");
+
     if (/\/control\.html$/i.test(p)) u.pathname = p.replace(/\/control\.html$/i, "/index.html");
     else if (/\/control$/i.test(p)) u.pathname = p.replace(/\/control$/i, "/index.html");
     else if (!/\/index\.html$/i.test(p)) u.pathname = p.replace(/\/[^/]*$/i, "/index.html");
+
     u.search = "";
     u.hash = "";
     return u;
@@ -1173,8 +1348,10 @@
     return u.toString();
   }
 
+  // ───────────────────────── Incoming state/events/cmd (BOT_SAY)
   function tryAutoAnnounceCam(st) {
     if (!botCfg?.enabled) return;
+
     const cam = st?.cam || {};
     const id = String(cam.id || "");
     if (!id) return;
@@ -1182,6 +1359,7 @@
     const now = Date.now();
     if (id === lastAnnouncedCamId && (now - lastAnnounceAt) < 60000) return;
     if ((now - lastAnnounceAt) < 9000) return;
+    if (lastAnnouncedCamId && id === lastAnnouncedCamId) return;
 
     const title = String(cam.title || "Live Cam").trim();
     const place = String(cam.place || "").trim();
@@ -1194,6 +1372,7 @@
     botSay(msg);
   }
 
+  // Update UX
   let updateAvailable = false;
   let lastReloadAt = 0;
 
@@ -1229,11 +1408,13 @@
       try { ctlOrigin.style.opacity = url ? "1" : ".6"; } catch (_) {}
     }
 
+    // Seleccionar cam actual en lista (sin pisar si estás tocando el select)
     try {
       const curId = String(cam.id || "");
       if (curId && ctlSelect && !isEditing(ctlSelect)) ctlSelect.value = curId;
     } catch (_) {}
 
+    // Mismatch Control/Player
     const pv = String(st.version || "");
     if (pv && compareVer(pv, APP_VERSION) > 0) {
       markUpdateAvailable(`Player v${pv} > Control v${APP_VERSION}`);
@@ -1266,7 +1447,9 @@
     if (ts) lastEventTs = ts;
 
     if (String(ev.name || "") === "AD_AUTO_NOTICE") {
-      if (botCfg?.enabled && botCfg?.sayOnAd) botSay("⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜");
+      if (botCfg?.enabled && botCfg?.sayOnAd) {
+        botSay("⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜");
+      }
     }
     if (String(ev.name || "") === "AD_AUTO_BEGIN") {
       if (botCfg?.enabled && botCfg?.sayOnAd) {
@@ -1280,6 +1463,7 @@
     if (!msg || typeof msg !== "object") return;
     if (msg.type !== "cmd") return;
 
+    // dedupe básico (BC + storage)
     const sig = sigOf(`${msg.mid || ""}|${msg.ts || ""}|${msg.cmd || ""}|${JSON.stringify(msg.payload || {})}`);
     const now = Date.now();
     if (sig && sig === lastSeenCmdSig && (now - lastSeenCmdAt) < 1200) return;
@@ -1288,6 +1472,7 @@
 
     const cmd = String(msg.cmd || "");
     if (cmd !== "BOT_SAY") return;
+
     const p = msg.payload || {};
     const text = String(p.text || "").trim();
     if (!text) return;
@@ -1300,22 +1485,26 @@
     const st = safeJson(raw, null);
     if (st && typeof st === "object") applyState(st);
   }
+
   function readEventFromLS() {
     const raw = lsGet(EVT_KEY) || lsGet(EVT_KEY_LEGACY);
     const ev = safeJson(raw, null);
     if (ev && typeof ev === "object") applyEvent(ev);
   }
+
   function readCmdFromLS() {
     const raw = lsGet(CMD_KEY) || lsGet(CMD_KEY_LEGACY);
     const msg = safeJson(raw, null);
     if (msg && typeof msg === "object") applyIncomingCmd(msg);
   }
 
+  // ───────────────────────── UI actions
   function syncPreviewUrl() {
     if (!ctlPreviewOn || !ctlPreviewWrap || !ctlPreview) return;
     const on = (ctlPreviewOn.value !== "off");
     try { ctlPreviewWrap.style.display = on ? "" : "none"; } catch (_) {}
     if (!on) return;
+
     try { ctlPreview.src = buildStreamUrlFromUI(); } catch (_) {}
   }
 
@@ -1330,6 +1519,7 @@
     if (ctlAutoskip) sendCmdAliases("SET_AUTOSKIP", { enabled: (ctlAutoskip.value !== "off") }, ["AUTOSKIP"]);
     if (ctlAdfree) sendCmdAliases("SET_MODE", { mode: (ctlAdfree.value !== "off") ? "adfree" : "" }, ["MODE"]);
     if (ctlYtCookies) sendCmdAliases("YT_COOKIES", { enabled: (ctlYtCookies.value !== "off") }, ["SET_YT_COOKIES"]);
+
     syncPreviewUrl();
   }
 
@@ -1381,6 +1571,7 @@
     const chatText = String(ctlAdChatText?.value || "").trim();
 
     sendCmdAliases("SET_ADS", { enabled, adLead, showDuring, chatText }, ["ADS_SET", "ADS"]);
+
     try { lsSet((KEY ? `rlc_ads_dur_v1:${KEY}` : "rlc_ads_dur_v1"), JSON.stringify({ adDurSec })); } catch (_) {}
     syncPreviewUrl();
   }
@@ -1389,37 +1580,58 @@
     const sec = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 3600);
     sendCmdAliases("AD_NOTICE", { leadSec: sec }, ["ADS_NOTICE"]);
   }
+
   function adBeginNow() {
     const d = clamp(parseInt(ctlAdDur?.value || String(loadAdDurStore()), 10) || 30, 5, 3600);
     sendCmdAliases("AD_BEGIN", { durationSec: d }, ["ADS_BEGIN"]);
+
     const txt = String(ctlAdChatText?.value || "").trim();
     if (txt) botSay(txt);
   }
-  function adClearNow() { sendCmdAliases("AD_CLEAR", {}, ["ADS_CLEAR"]); }
 
-  function doPrev() { sendCmdAliases("PREV", {}, ["CAM_PREV", "PREV_CAM", "NAV_PREV"]); }
-  function doNext() { sendCmdAliases("NEXT", {}, ["CAM_NEXT", "NEXT_CAM", "NAV_NEXT"]); }
-  function doTogglePlay() { sendCmdAliases("TOGGLE_PLAY", {}, ["PLAYPAUSE", "PLAY_PAUSE", "PAUSE_TOGGLE"]); }
-  function doShuffle() { sendCmdAliases("RESHUFFLE", {}, ["SHUFFLE", "SHUFFLE_CAMS", "REROLL"]); }
+  function adClearNow() {
+    sendCmdAliases("AD_CLEAR", {}, ["ADS_CLEAR"]);
+  }
+
+  // ✅ Transporte con ALIASES (FIX v2.3.8)
+  function doPrev() {
+    sendCmdAliases("PREV", {}, ["CAM_PREV", "PREV_CAM", "NAV_PREV"]);
+  }
+  function doNext() {
+    sendCmdAliases("NEXT", {}, ["CAM_NEXT", "NEXT_CAM", "NAV_NEXT"]);
+  }
+  function doTogglePlay() {
+    sendCmdAliases("TOGGLE_PLAY", {}, ["PLAYPAUSE", "PLAY_PAUSE", "PAUSE_TOGGLE"]);
+  }
+  function doShuffle() {
+    sendCmdAliases("RESHUFFLE", {}, ["SHUFFLE", "SHUFFLE_CAMS", "REROLL"]);
+  }
 
   function doGoSelected() {
     const id = ctlSelect?.value;
     if (!id) return;
+
     sendCmdAliases("GOTO", { id }, ["CAM_GOTO", "SET_CAM", "GOTO_CAM", "NAV_GOTO"]);
+    // algunos players esperan "index" o "value"
     sendCmdAliases("GOTO", { camId: id }, []);
     syncPreviewUrl();
   }
+
   function doBanSelectedOrCurrent() {
     const id = ctlSelect?.value;
     if (id) sendCmdAliases("BAN", { id }, ["BAN_CAM", "EXCLUDE", "SKIP_ID"]);
     else sendCmdAliases("BAN_CURRENT", {}, ["BAN_CAM_CURRENT", "EXCLUDE_CURRENT", "SKIP_CURRENT"]);
   }
-  function doReset() { sendCmdAliases("RESET", {}, ["RESET_STATE", "HARD_RESET"]); }
+
+  function doReset() {
+    sendCmdAliases("RESET", {}, ["RESET_STATE", "HARD_RESET"]);
+  }
 
   function syncBotUIFromStore() {
     botCfg = loadBotCfg();
     if (ctlBotOn) ctlBotOn.value = botCfg.enabled ? "on" : "off";
     if (ctlBotUser) safeSetValue(ctlBotUser, botCfg.user || "");
+
     if (ctlBotToken && !isEditing(ctlBotToken)) ctlBotToken.value = botCfg.token ? "********" : "";
     if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
     setBotStatus(botCfg.enabled ? "Bot: listo" : "Bot: OFF", !!botCfg.enabled);
@@ -1443,7 +1655,7 @@
     syncPreviewUrl();
   }
 
-  function tickerReset() {
+  function readTickerReset() {
     tickerCfg = saveTickerCfg(TICKER_DEFAULTS);
     syncTickerUIFromStore();
     sendTickerCfg(tickerCfg, true);
@@ -1457,7 +1669,7 @@
     syncPreviewUrl();
   }
 
-  function countdownReset() {
+  function readCountdownReset() {
     countdownCfg = saveCountdownCfg(COUNTDOWN_DEFAULTS);
     syncCountdownUIFromStore();
     sendCountdownCfg(countdownCfg, true);
@@ -1471,9 +1683,11 @@
     syncPreviewUrl();
   }
 
+  // ───────────────────────── Hotkeys (safe)
   function bindHotkeys() {
     listen(window, "keydown", (e) => {
       if (isTextInputActive()) return;
+
       const k = String(e.key || "");
       if (k === "ArrowRight") { e.preventDefault(); doNext(); }
       else if (k === "ArrowLeft") { e.preventDefault(); doPrev(); }
@@ -1486,8 +1700,10 @@
 
   function bindUi() {
     refreshGlobalLists(true);
+
     safeOn(ctlSearch, "input", debounce(() => syncList(ctlSearch.value), 120));
 
+    // ✅ Transporte
     safeOn(ctlPrev, "click", doPrev);
     safeOn(ctlPlay, "click", doTogglePlay);
     safeOn(ctlNext, "click", doNext);
@@ -1501,12 +1717,20 @@
 
     safeOn(ctlApplySettings, "click", applyBasicSettings);
 
+    // ✅ Lista cams
     safeOn(ctlGo, "click", doGoSelected);
     safeOn(ctlBan, "click", doBanSelectedOrCurrent);
+
+    // doble click = ir
     safeOn(ctlSelect, "dblclick", (e) => { e.preventDefault(); doGoSelected(); });
-    safeOn(ctlSelect, "keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doGoSelected(); } });
+
+    // Enter dentro del select
+    safeOn(ctlSelect, "keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); doGoSelected(); }
+    });
 
     safeOn(ctlReset, "click", doReset);
+
     safeOn(ctlPreviewOn, "change", syncPreviewUrl);
 
     safeOn(ctlCopyStreamUrl, "click", async () => {
@@ -1515,16 +1739,19 @@
       setStatus(ok ? "URL copiada ✅" : "No se pudo copiar ❌", ok);
     });
 
+    // vote
     safeOn(ctlVoteApply, "click", applyVoteSettings);
     safeOn(ctlVoteStart, "click", () => {
       const timing = computeVoteTiming();
       sendCmdAliases("START_VOTE", { windowSec: timing.windowSec, leadSec: timing.leadSec }, ["VOTE_START", "STARTVOTE"]);
     });
 
+    // chat/alerts
     safeOn(ctlChatOn, "change", applyChatAlertsSettings);
     safeOn(ctlChatHideCmd, "change", applyChatAlertsSettings);
     safeOn(ctlAlertsOn, "change", applyChatAlertsSettings);
 
+    // ads
     safeOn(ctlAdsOn, "change", applyAdsSettings);
     safeOn(ctlAdLead, "change", applyAdsSettings);
     safeOn(ctlAdDur, "change", applyAdsSettings);
@@ -1535,21 +1762,25 @@
     safeOn(ctlAdBeginBtn, "click", adBeginNow);
     safeOn(ctlAdClearBtn, "click", adClearNow);
 
+    // ticker
     safeOn(ctlTickerApply, "click", applyTickerNow);
-    safeOn(ctlTickerReset, "click", tickerReset);
+    safeOn(ctlTickerReset, "click", readTickerReset);
     safeOn(ctlTickerCopyUrl, "click", async () => {
       const url = buildStreamUrlFromUI();
       const ok = await copyToClipboard(url);
       setPill(ctlTickerStatus, ok ? "Ticker URL copiada ✅" : "No se pudo copiar ❌", ok);
     });
 
+    // countdown
     safeOn(ctlCountdownApply, "click", applyCountdownNow);
-    safeOn(ctlCountdownReset, "click", countdownReset);
+    safeOn(ctlCountdownReset, "click", readCountdownReset);
 
+    // helix
     safeOn(ctlTitleApply, "click", helixApplyFromUI);
     safeOn(ctlTitleTest, "click", helixTestOnce);
     safeOn(ctlTitleReset, "click", helixResetUI);
 
+    // bot
     safeOn(ctlBotConnect, "click", readBotUIAndSave);
     safeOn(ctlBotOn, "change", readBotUIAndSave);
     safeOn(ctlBotSayOnAd, "change", readBotUIAndSave);
@@ -1558,6 +1789,7 @@
       botSay(txt);
     });
 
+    // BGM (cmds opcionales) + aliases
     safeOn(ctlBgmOn, "change", () => sendCmdAliases("SET_BGM", { enabled: (ctlBgmOn.value !== "off") }, ["BGM_SET"]));
     safeOn(ctlBgmVol, "input", debounce(() => sendCmdAliases("SET_BGM_VOL", { vol: parseFloat(ctlBgmVol.value || "0.22") || 0.22 }, ["BGM_VOL"]), 120));
     safeOn(ctlBgmPrev, "click", () => sendCmdAliases("BGM_PREV", {}, ["PREV_BGM"]));
@@ -1579,7 +1811,12 @@
       ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget
     ].forEach(el => safeOn(el, "change", autoSync));
 
-    safeOn(ctlStatus, "click", () => { if (updateAvailable) { try { location.reload(); } catch (_) {} } });
+    // Click pill para recargar si hay update detectado
+    safeOn(ctlStatus, "click", () => {
+      if (!updateAvailable) return;
+      try { location.reload(); } catch (_) {}
+    });
+
     syncPreviewUrl();
   }
 
@@ -1591,8 +1828,6 @@
         if (msg?.type === "state") applyState(msg);
         else if (msg?.type === "event") applyEvent(msg);
         else if (msg?.type === "cmd") applyIncomingCmd(msg);
-        else if (msg?.type === "TICKER_CFG") syncTickerUIFromStore();
-        else if (msg?.type === "COUNTDOWN_CFG") syncCountdownUIFromStore();
       };
     } catch (_) {}
 
@@ -1621,18 +1856,26 @@
     });
   }
 
+  // ───────────────────────── SW update awareness (igual)
   function installSwUpdateWatcher() {
     if (!("serviceWorker" in navigator)) return;
+
     navigator.serviceWorker.getRegistration().then((reg) => {
       if (!reg) return;
+
       try { reg.update(); } catch (_) {}
-      if (reg.waiting && navigator.serviceWorker.controller) markUpdateAvailable("Update disponible (SW)");
+
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        markUpdateAvailable("Update disponible (SW)");
+      }
 
       const onUpdateFound = () => {
         const nw = reg.installing;
         if (!nw) return;
         nw.addEventListener("statechange", () => {
-          if (nw.state === "installed" && navigator.serviceWorker.controller) markUpdateAvailable("Update disponible (SW)");
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            markUpdateAvailable("Update disponible (SW)");
+          }
         });
       };
 
@@ -1645,27 +1888,39 @@
     }).catch(() => {});
   }
 
+  // ───────────────────────── Heartbeat
   let heartbeatId = 0;
+
   function heartbeat() {
     const now = Date.now();
     const age = now - (lastSeenAt || 0);
+
     if (!updateAvailable) {
       if (age > 3500) {
         const extra = KEY ? ` (key=${KEY.slice(0, 10)}…)` : " (sin key)";
         setStatus(`Sin señal… abre el player en el mismo navegador${extra}`, false);
       }
     }
+
     helixTick(false).catch(() => {});
     refreshGlobalLists(false);
   }
 
+  // ───────────────────────── Boot / Destroy
   function boot() {
     cacheDom();
     ensureControlMode();
 
-    if (ctlBusName) { try { ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS; } catch (_) {} }
+    if (ctlBusName) {
+      try { ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS; } catch (_) {}
+    }
 
-    try { if (ctlAdDur && (!ctlAdDur.value || !String(ctlAdDur.value).trim())) ctlAdDur.value = "30"; } catch (_) {}
+    // precargar adDur
+    try {
+      if (ctlAdDur && (!ctlAdDur.value || !String(ctlAdDur.value).trim())) {
+        ctlAdDur.value = String(loadAdDurStore());
+      }
+    } catch (_) {}
 
     syncTickerUIFromStore();
     syncCountdownUIFromStore();
@@ -1673,6 +1928,7 @@
     syncBotUIFromStore();
 
     botApplyCfgAndMaybeConnect();
+
     bindUi();
     bindHotkeys();
     bindBus();
@@ -1702,12 +1958,15 @@
     try { bot?.close?.(); } catch (_) {}
     bot = null;
 
-    for (let i = disposers.length - 1; i >= 0; i--) { try { disposers[i]?.(); } catch (_) {} }
+    for (let i = disposers.length - 1; i >= 0; i--) {
+      try { disposers[i]?.(); } catch (_) {}
+    }
     disposers.length = 0;
 
     try { if (g[SINGLETON_KEY] === instance) g[SINGLETON_KEY] = null; } catch (_) {}
   };
 
   listen(window, "beforeunload", () => { try { instance.destroy?.(); } catch (_) {} });
+
   onReady(boot);
 })();

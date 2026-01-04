@@ -1,4 +1,4 @@
-<!-- control.html — Random Live Cams (CONTROL) v2.3.8 -->
+<!-- control.html — Random Live Cams (CONTROL) v2.3.5 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -45,7 +45,7 @@
   </script>
 
   <!-- Cache-bust -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.8" />
+  <link rel="stylesheet" href="./styles.css?v=2.3.5" />
 
   <!-- REPAIR MODE: control.html?repair=1 -->
   <script>
@@ -123,13 +123,16 @@
 
     .controlWrap{position:relative;z-index:1}
 
+    /* ✅ Header NO sticky */
     .controlHeader{
-      position:relative;top:auto;z-index:2;
+      position:relative;
+      top:auto;
+      z-index:2;
       background:linear-gradient(90deg, rgba(255,59,59,.18), rgba(10,14,22,.88) 25%, rgba(55,214,255,.16));
       border:1px solid var(--news-stroke);box-shadow:var(--news-glow);
       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       border-radius:var(--news-radius);overflow:hidden;
-      padding:14px 14px 12px;margin:14px 14px 14px;
+      padding:14px 14px 12px;margin-bottom:14px;
     }
 
     .controlHeader::after{
@@ -148,23 +151,13 @@
     .controlTitle .kicker{color:rgba(255,255,255,.75);letter-spacing:.26em}
     .controlTitle .name{text-transform:uppercase;letter-spacing:.06em}
 
-    .controlGrid{
-      display:grid;
-      grid-template-columns:repeat(3,minmax(280px,1fr));
-      gap:14px;
-      padding:0 14px 14px;
-    }
-    @media (max-width:1080px){.controlGrid{grid-template-columns:repeat(2,minmax(280px,1fr))}}
-    @media (max-width:760px){.controlGrid{grid-template-columns:1fr}}
-
     .card{
       background:var(--news-panel);
       border:1px solid var(--news-stroke);
       border-radius:var(--news-radius);
       box-shadow:var(--news-glow);
       position:relative;
-      overflow:hidden;
-      padding:14px;
+      overflow:hidden
     }
 
     .card::before{
@@ -173,14 +166,14 @@
       opacity:.80
     }
 
-    .cardTitle{font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.86);margin-bottom:10px}
+    .cardTitle{font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.86)}
 
     .pill{
       border:1px solid var(--news-stroke2)!important;
       background:rgba(0,0,0,.28)!important;
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-      padding:8px 10px;border-radius:999px;
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)
     }
+
     .pill--ok{border-color:rgba(25,226,138,.35)!important;box-shadow:0 0 0 1px rgba(25,226,138,.12) inset}
     .pill--bad{border-color:rgba(255,90,90,.40)!important;box-shadow:0 0 0 1px rgba(255,90,90,.12) inset}
 
@@ -188,44 +181,29 @@
       border-radius:14px!important;
       border:1px solid rgba(255,255,255,.14)!important;
       background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06))!important;
-      box-shadow:0 10px 30px rgba(0,0,0,.30);
-      color:rgba(255,255,255,.92);
-      padding:10px 12px;
-      cursor:pointer;
+      box-shadow:0 10px 30px rgba(0,0,0,.30)
     }
+
     .btn.ghost{background:rgba(0,0,0,.18)!important;border-color:rgba(255,255,255,.12)!important}
+
     .btn:hover{
       transform:translateY(-1px);
       border-color:rgba(55,214,255,.25)!important;
       box-shadow:0 14px 36px rgba(0,0,0,.38),0 0 0 1px rgba(55,214,255,.08) inset
     }
-    .btn.full{display:block!important;width:100%!important}
 
     .input,.select{
       border-radius:14px!important;
       border:1px solid rgba(255,255,255,.14)!important;
       background:rgba(0,0,0,.18)!important;
-      color:rgba(255,255,255,.92)!important;
-      padding:10px 12px;
-      width:100%;
-      box-sizing:border-box;
+      color:rgba(255,255,255,.92)!important
     }
-    .hint{color:var(--news-muted);font-size:13px;line-height:1.35}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
 
-    .row{display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center;margin:10px 0}
-    .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;margin-top:10px}
-    .controls3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px}
-    .dot{opacity:.55;margin:0 8px}
-    .nowTitle{font-weight:900;font-size:18px;margin-top:4px}
-    .nowMeta{margin-top:6px;opacity:.90;font-size:13px}
-    .controlFooter{
-      display:flex;flex-wrap:wrap;gap:10px;align-items:center;
-      padding:0 14px 14px;color:rgba(255,255,255,.70);font-size:13px
+    .hint{color:var(--news-muted)}
+
+    #ctlSelect.select{
+      padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto
     }
-    .muted{opacity:.85}
-
-    #ctlSelect.select{padding:8px!important;border-radius:14px!important;height:auto;max-height:360px;overflow:auto}
     #ctlSelect option{padding:8px 10px;border-radius:10px}
     #ctlSelect option:checked{background:rgba(55,214,255,.22)}
 
@@ -236,8 +214,14 @@
       padding:10px 12px
     }
 
+    .btn.full{display:block!important;width:100%!important}
+
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-      .controlHeader,.pill{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(10,14,22,.92)!important}
+      .controlHeader,.pill{
+        backdrop-filter:none!important;
+        -webkit-backdrop-filter:none!important;
+        background:rgba(10,14,22,.92)!important
+      }
     }
   </style>
 </head>
@@ -253,7 +237,7 @@
     </header>
 
     <!-- DIAGNÓSTICO EN PANTALLA -->
-    <section id="ctlDiagCard" class="card" style="display:none; margin:0 14px 14px">
+    <section id="ctlDiagCard" class="card" style="display:none; margin-top:12px">
       <div class="cardTitle">Diagnóstico</div>
       <div class="hint" style="margin:10px 0 8px">Se detectó un error JS. Copia este texto y pégamelo.</div>
       <pre id="ctlDiagText" class="mono" style="white-space:pre-wrap; margin:0; opacity:.92"></pre>
@@ -341,90 +325,96 @@
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
       </div>
 
-      <!-- TICKER (NEWS/ECON) -->
+      <!-- CATALOG MODE -->
       <div class="card">
-        <div class="cardTitle">Ticker (NEWS/ECON)</div>
+        <div class="cardTitle">Modo catálogo (CCTV)</div>
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogOn">
+            <span>Catálogo</span>
+            <select id="ctlCatalogOn" class="select">
+              <option value="off">OFF</option>
+              <option value="on">ON</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlCatalogStatus" aria-live="polite">Catálogo: —</div>
+        </div>
+
+        <label class="row" for="ctlCatalogLayout">
+          <span>Layout</span>
+          <select id="ctlCatalogLayout" class="select">
+            <option value="quad">2×2 (4 cams)</option>
+          </select>
+        </label>
 
         <div class="row2">
-          <label class="row" style="margin:0" for="ctlTickerOn">
-            <span>Ticker</span>
-            <select id="ctlTickerOn" class="select">
+          <label class="row" style="margin:0" for="ctlCatalogGap">
+            <span>Separación (px)</span>
+            <input id="ctlCatalogGap" class="input" type="number" min="0" max="24" step="1" value="8" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogLabels">
+            <span>Labels</span>
+            <select id="ctlCatalogLabels" class="select">
               <option value="on">ON</option>
               <option value="off">OFF</option>
             </select>
           </label>
-          <div class="pill mono" id="ctlTickerStatus" aria-live="polite">Ticker: —</div>
         </div>
 
-        <label class="row" for="ctlTickerLang"><span>Idioma</span>
-          <select id="ctlTickerLang" class="select">
-            <option value="auto">Auto</option>
-            <option value="es">ES</option>
-            <option value="en">EN</option>
-          </select>
-        </label>
-
-        <label class="row" for="ctlTickerSpeed"><span>Velocidad</span>
-          <input id="ctlTickerSpeed" class="input" type="number" min="20" max="140" step="1" value="55" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlTickerRefresh"><span>Refresh (min)</span>
-          <input id="ctlTickerRefresh" class="input" type="number" min="3" max="60" step="1" value="12" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlTickerTop"><span>Top (px)</span>
-          <input id="ctlTickerTop" class="input" type="number" min="0" max="120" step="1" value="10" inputmode="numeric" />
-        </label>
-
-        <label class="row" for="ctlTickerHideOnVote"><span>Hide on vote</span>
-          <select id="ctlTickerHideOnVote" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
-        </label>
-
-        <label class="row" for="ctlTickerSpan"><span>Timespan</span>
-          <select id="ctlTickerSpan" class="select">
-            <option value="30min">30min</option>
-            <option value="12h">12h</option>
-            <option value="1d" selected>1d</option>
-            <option value="3d">3d</option>
-            <option value="1w">1w</option>
-          </select>
-        </label>
-
         <div class="row2">
-          <button id="ctlTickerApply" class="btn full" type="button">Aplicar ticker</button>
-          <button id="ctlTickerReset" class="btn ghost full" type="button">Reset ticker</button>
-        </div>
-
-        <button id="ctlTickerCopyUrl" class="btn ghost full" type="button" style="margin-top:8px">Copiar URL (con ticker)</button>
-
-        <div class="hint">✅ El control guarda cfg en localStorage y la manda al player por BroadcastChannel.</div>
-      </div>
-
-      <!-- COUNTDOWN -->
-      <div class="card">
-        <div class="cardTitle">Countdown (overlay en stream)</div>
-        <div class="row2">
-          <label class="row" style="margin:0" for="ctlCountdownOn">
-            <span>Countdown</span>
-            <select id="ctlCountdownOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
+          <label class="row" style="margin:0" for="ctlCatalogMode">
+            <span>Modo</span>
+            <select id="ctlCatalogMode" class="select">
+              <option value="follow">Follow (1 sigue)</option>
+              <option value="sync">Sync (rotan 4)</option>
+            </select>
           </label>
-          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Countdown: —</div>
+          <label class="row" style="margin:0" for="ctlCatalogFollowSlot">
+            <span>Follow slot</span>
+            <select id="ctlCatalogFollowSlot" class="select">
+              <option value="0">Slot 1</option><option value="1">Slot 2</option><option value="2">Slot 3</option><option value="3">Slot 4</option>
+            </select>
+          </label>
         </div>
 
-        <label class="row" for="ctlCountdownLabel"><span>Texto</span>
-          <input id="ctlCountdownLabel" class="input" type="text" value="FIN DE AÑO" autocomplete="off" />
-        </label>
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogClickCycle">
+            <span>Click cycle</span>
+            <select id="ctlCatalogClickCycle" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogYtCookies">
+            <span>YT cookies</span>
+            <select id="ctlCatalogYtCookies" class="select">
+              <option value="on">ON (sesión)</option>
+              <option value="off">OFF (nocookie)</option>
+            </select>
+          </label>
+        </div>
 
-        <label class="row" for="ctlCountdownTarget"><span>Objetivo</span>
-          <input id="ctlCountdownTarget" class="input" type="datetime-local" />
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCatalogWxTiles">
+            <span>Weather tiles</span>
+            <select id="ctlCatalogWxTiles" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
+          </label>
+          <label class="row" style="margin:0" for="ctlCatalogWxRefreshSec">
+            <span>WX refresh (s)</span>
+            <input id="ctlCatalogWxRefreshSec" class="input" type="number" min="10" max="180" step="1" value="30" inputmode="numeric" />
+          </label>
+        </div>
+
+        <label class="row" for="ctlCatalogMuted">
+          <span>Mutear vídeos</span>
+          <select id="ctlCatalogMuted" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
 
         <div class="row2">
-          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar countdown</button>
-          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset countdown</button>
+          <button id="ctlCatalogApply" class="btn full" type="button">Aplicar catálogo</button>
+          <button id="ctlCatalogReset" class="btn ghost full" type="button">Reset catálogo</button>
         </div>
 
-        <div class="hint">✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).</div>
+        <div class="hint">✅ Muestra 4 cams (CCTV). En player, el HUD de single-cam se oculta cuando catálogo está ON.</div>
       </div>
 
       <!-- AUTO TITLE -->
@@ -468,6 +458,33 @@
         <div class="hint">Placeholders: <b>{title}</b> <b>{place}</b> <b>{source}</b> <b>{label}</b> <b>{placeSep}</b><br/>Necesita token de usuario con scope <b>channel:manage:broadcast</b>.</div>
       </div>
 
+      <!-- COUNTDOWN -->
+      <div class="card">
+        <div class="cardTitle">Countdown (overlay en stream)</div>
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlCountdownOn">
+            <span>Countdown</span>
+            <select id="ctlCountdownOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
+          </label>
+          <div class="pill mono" id="ctlCountdownStatus" aria-live="polite">Countdown: —</div>
+        </div>
+
+        <label class="row" for="ctlCountdownLabel"><span>Texto</span>
+          <input id="ctlCountdownLabel" class="input" type="text" value="FIN DE AÑO" autocomplete="off" />
+        </label>
+
+        <label class="row" for="ctlCountdownTarget"><span>Objetivo</span>
+          <input id="ctlCountdownTarget" class="input" type="datetime-local" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlCountdownApply" class="btn full" type="button">Aplicar countdown</button>
+          <button id="ctlCountdownReset" class="btn ghost full" type="button">Reset countdown</button>
+        </div>
+
+        <div class="hint">✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).</div>
+      </div>
+
       <!-- CAM SELECT -->
       <div class="card">
         <div class="cardTitle">Cambiar cámara</div>
@@ -488,12 +505,34 @@
           <select id="ctlPreviewOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
         </label>
 
+        <!-- ✅ FIX: sin class hidden; control.js controla display -->
         <div id="ctlPreviewWrap" class="previewWrap" style="display:none">
           <iframe id="ctlPreview" class="previewFrame" title="Preview stream"
             referrerpolicy="strict-origin-when-cross-origin"
             allow="autoplay; encrypted-media; picture-in-picture"></iframe>
         </div>
         <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
+      </div>
+
+      <!-- BGM -->
+      <div class="card">
+        <div class="cardTitle">Música ambiente (BGM)</div>
+        <label class="row" for="ctlBgmOn"><span>Enable</span>
+          <select id="ctlBgmOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
+        </label>
+        <label class="row" for="ctlBgmVol"><span>Volumen</span>
+          <input id="ctlBgmVol" class="input" type="range" min="0" max="1" step="0.01" value="0.25" />
+        </label>
+        <label class="row" for="ctlBgmTrack"><span>Track</span>
+          <select id="ctlBgmTrack" class="select" aria-label="Track BGM"></select>
+        </label>
+        <div class="controls3">
+          <button class="btn" id="ctlBgmPrev" type="button" aria-label="Track anterior">⏮</button>
+          <button class="btn" id="ctlBgmPlay" type="button" aria-label="Play/Pausa BGM">▶/⏸</button>
+          <button class="btn" id="ctlBgmNext" type="button" aria-label="Siguiente track">⏭</button>
+        </div>
+        <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
+        <div class="hint" id="ctlBgmNow">—</div>
       </div>
 
       <!-- TWITCH -->
@@ -633,7 +672,7 @@
     </footer>
 
     <noscript>
-      <div class="card" style="margin:0 14px 14px">
+      <div class="card" style="margin-top:12px">
         <div class="cardTitle">JavaScript desactivado</div>
         <div class="hint">Este panel requiere JavaScript para funcionar.</div>
       </div>
@@ -669,12 +708,12 @@
     })();
   </script>
 
-  <!-- Scripts -->
-  <script defer src="./cams.js?v=2.3.8"></script>
-  <script defer src="./music.js?v=2.3.8"></script>
+  <!-- Scripts (cache-bust v2.3.5) -->
+  <script defer src="./cams.js?v=2.3.5"></script>
+  <script defer src="./music.js?v=2.3.4"></script>
   <script defer src="./control.js?v=2.3.8"></script>
-  <script defer src="./catalogControl.js?v=2.3.8"></script>
-  <script defer src="./pointsControl.js?v=2.3.8"></script>
-  <script defer src="./rlcTickersControl.js?v=2.3.8"></script>
+  <script defer src="./catalogControl.js?v=2.3.5"></script>
+  <script defer src="./pointsControl.js?v=2.3.5"></script>
+  <script defer src="./rlcTickersControl.js?v=2.3.5"></script>
 </body>
 </html>
