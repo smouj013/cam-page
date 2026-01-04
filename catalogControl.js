@@ -1,17 +1,17 @@
-/* catalogControl.js — RLC Catalog Control v1.3.1 (MULTI-TILES + SINGLETON HARDEN)
+/* catalogControl.js — RLC Catalog Control v1.3.8 (RLC 2.3.8 COMPAT / MULTI-TILES / HARDENED)
    ✅ Solo para control.html
-   ✅ Guarda config en localStorage (keyed + legacy)
-   ✅ Emite config por BroadcastChannel (keyed + legacy)
-   ✅ Boot sync: emite config al arrancar (player se entera aunque no toques nada)
+   ✅ Compat total con RLC v2.3.8:
+      - KEY auto: ?key=... o localStorage rlc_last_key_v1
+      - BroadcastChannel keyed + legacy (sin quedarse sordo)
+      - localStorage mirror (CFG keyed + legacy) + ping (keyed + legacy)
+      - postMessage same-origin a parent/opener (preview/iframe) opcional
+      - Boot sync doble (120ms + 1200ms) para que el Player se entere aunque cargue tarde
    ✅ Live apply suave (change/input con debounce)
-   ✅ MULTI-TILES:
-      - layout presets: "quad"(4), "six"(6), "nine"(9), "twelve"(12), "sixteen"(16), "custom"
-      - tiles: 1..25
-      - cols/rows: 1..6 (auto-ajusta si cols*rows < tiles)
-   ✅ Compat total: si tu HTML NO tiene los nuevos controles => usa defaults/guardado y NO crashea
+   ✅ MULTI-TILES: presets + custom (tiles/cols/rows) con auto-ajuste
    ✅ Harden:
-      - singleton con destroy() para evitar doble carga y listeners duplicados
-      - followSlot UI clampa al rango de options existentes (si tu select tiene solo 0..3)
+      - Singleton con destroy() (evita doble carga y listeners duplicados)
+      - followSlot clamp a opciones reales del <select> y al nº de tiles
+      - Dedupe por firma (ts + hash simple) para no spamear el bus
 */
 
 (() => {
@@ -19,21 +19,17 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const VER = "1.3.1";
+  const VER = "1.3.8";
   const INST_KEY = "__RLC_CATALOG_CONTROL_INSTANCE__";
 
-  // Singleton (si recarga por caché/hot-reload, limpia la instancia anterior)
+  // ───────────────────────── Singleton (evita doble carga)
   try {
     const prev = g[INST_KEY];
     if (prev && prev.__ver === VER) return;
     if (prev && typeof prev.destroy === "function") prev.destroy();
   } catch (_) {}
 
-  // ───────────────────────── Keys / Bus
-  const BUS_BASE  = "rlc_bus_v1";
-  const CFG_BASE  = "rlc_catalog_cfg_v1";
-  const PING_BASE = "rlc_catalog_ping_v1";
-
+  // ───────────────────────── Utils
   const qs = (s, r = document) => r.querySelector(s);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const num = (v, fb) => {
@@ -42,11 +38,41 @@
   };
   const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
 
-  function parseParams() {
-    const u = new URL(location.href);
-    return { key: safeStr(u.searchParams.get("key") || "") };
+  const now = () => Date.now();
+
+  function readLS(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function writeLS(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  function delLS(k) { try { localStorage.removeItem(k); } catch (_) {} }
+
+  function readJson(k) {
+    try {
+      const raw = readLS(k);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      return (obj && typeof obj === "object") ? obj : null;
+    } catch (_) { return null; }
   }
-  const KEY = String(parseParams().key || "").trim();
+  function writeJson(k, obj) { try { writeLS(k, JSON.stringify(obj)); } catch (_) {} }
+
+  function parseParamsKey() {
+    try {
+      const u = new URL(location.href);
+      return safeStr(u.searchParams.get("key") || "");
+    } catch (_) { return ""; }
+  }
+
+  // ✅ KEY auto (2.3.8): si no viene en URL, intenta inferir de rlc_last_key_v1 (lo guarda el player)
+  const KEY = (() => {
+    const kUrl = parseParamsKey();
+    if (kUrl) return kUrl;
+    const kLast = safeStr(readLS("rlc_last_key_v1") || "");
+    return kLast || "";
+  })();
+
+  // ───────────────────────── Bus/Keys (RLC 2.3.8)
+  const BUS_BASE  = "rlc_bus_v1";
+  const CFG_BASE  = "rlc_catalog_cfg_v1";
+  const PING_BASE = "rlc_catalog_ping_v1";
 
   const BUS        = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
   const BUS_LEGACY = BUS_BASE;
@@ -76,7 +102,7 @@
     return { tiles: t, cols, rows };
   }
 
-  // ───────────────────────── Defaults (compat + multi)
+  // ───────────────────────── Defaults
   const DEFAULTS = {
     enabled: false,
 
@@ -98,18 +124,6 @@
     wxRefreshSec: 30
   };
 
-  // ───────────────────────── Storage helpers
-  function readJson(k) {
-    try {
-      const raw = localStorage.getItem(k);
-      if (!raw) return null;
-      const obj = JSON.parse(raw);
-      return (obj && typeof obj === "object") ? obj : null;
-    } catch (_) { return null; }
-  }
-  function writeJson(k, obj) { try { localStorage.setItem(k, JSON.stringify(obj)); } catch (_) {} }
-  function clearKey(k) { try { localStorage.removeItem(k); } catch (_) {} }
-
   // ───────────────────────── Normalize
   function normalizeCfg(inCfg) {
     const c = Object.assign({}, DEFAULTS, inCfg || {});
@@ -125,6 +139,7 @@
 
     let layout = safeStr(c.layout).toLowerCase();
 
+    // allow "layout=12" => custom tiles=12 auto
     if (layout && /^\d+$/.test(layout)) {
       const g0 = autoGridForTiles(parseInt(layout, 10));
       c.layout = "custom";
@@ -141,6 +156,7 @@
       c.cols = clamp((parseInt(c.cols, 10) || g1.cols), 1, 6);
       c.rows = clamp((parseInt(c.rows, 10) || g1.rows), 1, 6);
 
+      // si cols*rows < tiles => ajusta rows o recalcula
       if ((c.cols * c.rows) < c.tiles) {
         c.rows = clamp(Math.ceil(c.tiles / c.cols), 1, 6);
         if ((c.cols * c.rows) < c.tiles) {
@@ -150,6 +166,7 @@
       }
     }
 
+    // followSlot clamp al rango de tiles (y luego se clampa a options del select en UI)
     c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, Math.max(0, (c.tiles | 0) - 1));
     c.clickCycle = (c.clickCycle !== false);
     c.ytCookies  = (c.ytCookies !== false);
@@ -169,20 +186,86 @@
   function saveCfg(cfg) {
     const c = normalizeCfg(cfg);
     writeJson(CFG_KEY, c);
-    writeJson(CFG_KEY_LEGACY, c); // compat
+    writeJson(CFG_KEY_LEGACY, c); // compat (keyless)
     return c;
   }
 
-  // ───────────────────────── Send config
-  function sendCfg(cfg) {
-    const msg = { type: "CATALOG_CFG", cfg, ts: Date.now() };
+  // ───────────────────────── Send config (BC + LS ping + postMessage)
+  function safePostBC(ch, msg) { try { ch && ch.postMessage && ch.postMessage(msg); } catch (_) {} }
+
+  function canPostMessageTarget(win) {
+    try { return !!(win && win.postMessage); } catch (_) { return false; }
+  }
+
+  function postToParentOrOpener(msg) {
+    // same-origin safety (best effort)
+    try {
+      if (canPostMessageTarget(window.parent) && window.parent !== window) {
+        window.parent.postMessage(msg, location.origin);
+      }
+    } catch (_) {}
+    try {
+      if (canPostMessageTarget(window.opener)) {
+        window.opener.postMessage(msg, location.origin);
+      }
+    } catch (_) {}
+  }
+
+  // Dedupe por firma (evita spam si input dispara igual 20 veces)
+  let lastSig = "";
+  function sigOf(cfg) {
+    try {
+      const c = normalizeCfg(cfg);
+      // firma corta y estable
+      return [
+        c.enabled ? 1 : 0,
+        c.layout, c.tiles, c.cols, c.rows,
+        c.gapPx,
+        c.labels ? 1 : 0,
+        c.muted ? 1 : 0,
+        c.mode,
+        c.followSlot,
+        c.clickCycle ? 1 : 0,
+        c.ytCookies ? 1 : 0,
+        c.wxTiles ? 1 : 0,
+        c.wxRefreshSec
+      ].join("|");
+    } catch (_) {
+      return String(Math.random());
+    }
+  }
+
+  function sendCfg(cfg, reason = "apply") {
+    const c = normalizeCfg(cfg);
+
+    const sig = sigOf(c);
+    if (reason !== "boot" && sig === lastSig) return; // no re-spam
+    lastSig = sig;
+
+    // ✅ formato principal (lo normal en tu player/catalogView)
+    const msg = { type: "CATALOG_CFG", cfg: c, ts: now() };
     if (KEY) msg.key = KEY;
 
-    try { bcMain && bcMain.postMessage(msg); } catch (_) {}
-    try { bcLegacy && bcLegacy.postMessage(msg); } catch (_) {}
+    // ✅ fallback para listeners que esperen "cmd"
+    const cmd = { type: "cmd", cmd: "CATALOG_SET", payload: c, ts: msg.ts };
+    if (KEY) cmd.key = KEY;
 
-    try { localStorage.setItem(PING_KEY, String(Date.now())); } catch (_) {}
-    try { localStorage.setItem(PING_KEY_LEGACY, String(Date.now())); } catch (_) {}
+    safePostBC(bcMain, msg);
+    safePostBC(bcLegacy, msg);
+
+    safePostBC(bcMain, cmd);
+    safePostBC(bcLegacy, cmd);
+
+    // mirror/ping por LS
+    try { writeJson(CFG_KEY, c); } catch (_) {}
+    try { writeJson(CFG_KEY_LEGACY, c); } catch (_) {}
+
+    try { writeLS(PING_KEY, String(msg.ts)); } catch (_) {}
+    try { writeLS(PING_KEY_LEGACY, String(msg.ts)); } catch (_) {}
+
+    // postMessage same-origin (preview iframe / otra pestaña)
+    postToParentOrOpener(msg);
+    postToParentOrOpener(cmd);
   }
 
   // ───────────────────────── UI helpers
@@ -190,8 +273,10 @@
     const el = qs("#ctlCatalogStatus");
     if (!el) return;
     el.textContent = text;
-    el.classList.toggle("pill--ok", !!ok);
-    el.classList.toggle("pill--bad", !ok);
+    try {
+      el.classList.toggle("pill--ok", !!ok);
+      el.classList.toggle("pill--bad", !ok);
+    } catch (_) {}
   }
 
   function readOnOff(sel, fallbackBool) {
@@ -216,8 +301,7 @@
     if (!el) return;
     const v = String(value ?? "");
     const opts = Array.from(el.options || []);
-    const has = opts.some(o => String(o.value) === v);
-    if (has) el.value = v;
+    if (opts.some(o => String(o.value) === v)) el.value = v;
   }
 
   function setSelectIntClampedToOptions(sel, value) {
@@ -225,20 +309,12 @@
     if (!el) return;
 
     const opts = Array.from(el.options || []);
-    if (!opts.length) {
-      try { el.value = String(value ?? "0"); } catch (_) {}
-      return;
-    }
+    if (!opts.length) { try { el.value = String(value ?? "0"); } catch (_) {} return; }
 
     const exact = String(value ?? "");
-    if (opts.some(o => String(o.value) === exact)) {
-      el.value = exact;
-      return;
-    }
+    if (opts.some(o => String(o.value) === exact)) { el.value = exact; return; }
 
-    const nums = opts
-      .map(o => parseInt(String(o.value), 10))
-      .filter(n => Number.isFinite(n));
+    const nums = opts.map(o => parseInt(String(o.value), 10)).filter(n => Number.isFinite(n));
     if (!nums.length) return;
 
     const lo = Math.min(...nums);
@@ -281,7 +357,7 @@
 
     setSelectValueIfExists("#ctlCatalogMode", c.mode);
 
-    // followSlot: en tu HTML actual suele tener solo 0..3 -> clamp a options disponibles
+    // followSlot clamp UI
     setSelectIntClampedToOptions("#ctlCatalogFollowSlot", c.followSlot);
 
     writeOnOff("#ctlCatalogClickCycle", c.clickCycle);
@@ -303,6 +379,7 @@
 
     const layout = readFirstFoundValue(["#ctlCatalogLayout"], base.layout);
 
+    // compat: algunos HTML viejos usan count/cams
     const tiles = num(readFirstFoundValue(["#ctlCatalogTiles", "#ctlCatalogCount", "#ctlCatalogCams"], ""), base.tiles);
     const cols  = num(readFirstFoundValue(["#ctlCatalogCols"], ""), base.cols);
     const rows  = num(readFirstFoundValue(["#ctlCatalogRows"], ""), base.rows);
@@ -319,22 +396,47 @@
     const wxTiles = readOnOff("#ctlCatalogWxTiles", base.wxTiles);
     const wxRefreshSec = num(qs("#ctlCatalogWxRefreshSec")?.value, base.wxRefreshSec);
 
-    return normalizeCfg({
-      enabled,
-      layout,
-      tiles,
-      cols,
-      rows,
-      gapPx,
-      labels,
-      muted,
-      mode,
-      followSlot,
-      clickCycle,
-      ytCookies,
-      wxTiles,
-      wxRefreshSec
+    // lógica multi-tiles: si layout preset => fuerza tiles/cols/rows
+    const draft = normalizeCfg({
+      enabled, layout, tiles, cols, rows,
+      gapPx, labels, muted,
+      mode, followSlot,
+      clickCycle, ytCookies,
+      wxTiles, wxRefreshSec
     });
+
+    // si usuario cambia tiles/cols/rows manualmente y layout no es custom => lo pasamos a custom
+    // (solo si existen esos inputs)
+    const hasTilesCtl = !!qs("#ctlCatalogTiles") || !!qs("#ctlCatalogCols") || !!qs("#ctlCatalogRows");
+    if (hasTilesCtl && draft.layout !== "custom") {
+      const uiTiles = qs("#ctlCatalogTiles");
+      const uiCols  = qs("#ctlCatalogCols");
+      const uiRows  = qs("#ctlCatalogRows");
+      const touched =
+        (!!uiTiles && safeStr(uiTiles.value) !== "" && (parseInt(uiTiles.value,10)||0) !== (LAYOUTS[draft.layout]?.tiles||draft.tiles)) ||
+        (!!uiCols  && safeStr(uiCols.value)  !== "" ) ||
+        (!!uiRows  && safeStr(uiRows.value)  !== "" );
+
+      if (touched) {
+        draft.layout = "custom";
+        const g0 = autoGridForTiles(draft.tiles);
+        draft.tiles = g0.tiles;
+        // respeta cols/rows si vienen, pero garantiza capacidad
+        draft.cols = clamp(draft.cols || g0.cols, 1, 6);
+        draft.rows = clamp(draft.rows || g0.rows, 1, 6);
+        if ((draft.cols * draft.rows) < draft.tiles) {
+          draft.rows = clamp(Math.ceil(draft.tiles / draft.cols), 1, 6);
+          if ((draft.cols * draft.rows) < draft.tiles) {
+            const g1 = autoGridForTiles(draft.tiles);
+            draft.cols = g1.cols; draft.rows = g1.rows;
+          }
+        }
+      }
+    }
+
+    // followSlot clamp final al nº tiles
+    draft.followSlot = clamp(draft.followSlot|0, 0, Math.max(0, (draft.tiles|0) - 1));
+    return normalizeCfg(draft);
   }
 
   // ───────────────────────── Debounce
@@ -381,16 +483,17 @@
   function boot() {
     const saved = saveCfg(loadCfg());
 
-    // Boot sync SIEMPRE (aunque falte UI)
-    try { setTimeout(() => sendCfg(saved), 120); } catch (_) { try { sendCfg(saved); } catch (_) {} }
+    // ✅ Boot sync doble (player puede cargar después)
+    try { setTimeout(() => sendCfg(saved, "boot"), 120); } catch (_) { try { sendCfg(saved, "boot"); } catch (_) {} }
+    try { setTimeout(() => sendCfg(saveCfg(loadCfg()), "boot"), 1200); } catch (_) {}
 
-    // Si hay UI, la sincronizamos y enganchamos listeners
+    // Si hay UI, sync UI
     const hasToggle = !!qs("#ctlCatalogOn");
     if (hasToggle) applyUIFromCfg(saved);
 
     const doApply = () => {
       const cfg = saveCfg(collectCfgFromUI());
-      sendCfg(cfg);
+      sendCfg(cfg, "apply");
       applyUIFromCfg(cfg);
     };
     const doApplyDebounced = debounce(doApply, 160);
@@ -398,10 +501,10 @@
     on(qs("#ctlCatalogApply"), "click", doApply);
 
     on(qs("#ctlCatalogReset"), "click", () => {
-      clearKey(CFG_KEY);
-      clearKey(CFG_KEY_LEGACY);
+      delLS(CFG_KEY);
+      delLS(CFG_KEY_LEGACY);
       const cfg = saveCfg(DEFAULTS);
-      sendCfg(cfg);
+      sendCfg(cfg, "apply");
       applyUIFromCfg(cfg);
     });
 
@@ -414,12 +517,10 @@
       "#ctlCatalogGap",
       "#ctlCatalogLabels",
       "#ctlCatalogMuted",
-
       "#ctlCatalogMode",
       "#ctlCatalogFollowSlot",
       "#ctlCatalogClickCycle",
       "#ctlCatalogYtCookies",
-
       "#ctlCatalogWxTiles",
       "#ctlCatalogWxRefreshSec"
     ];
@@ -431,13 +532,30 @@
       on(el, "input", () => doApplyDebounced());
     }
 
+    // ✅ Si otro tab/escritura cambia CFG en LS, resinc UI
     on(window, "storage", (e) => {
-      if (!e) return;
+      if (!e || !e.key) return;
       if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
         const c = loadCfg();
         applyUIFromCfg(c);
       }
     });
+
+    // ✅ Seguridad extra: si tu control.html está dentro de iframe same-origin y recibe un "REQ_CATALOG_CFG"
+    // responde con la config actual
+    on(window, "message", (ev) => {
+      try {
+        if (ev.origin && ev.origin !== location.origin) return;
+      } catch (_) {}
+      const msg = ev && ev.data;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "REQ_CATALOG_CFG") {
+        const c = loadCfg();
+        sendCfg(c, "boot");
+      }
+    }, { passive: true });
+
+    setStatus(saved.enabled ? `Catálogo: ON (${saved.tiles})` : "Catálogo: OFF", saved.enabled);
   }
 
   if (document.readyState === "loading") {

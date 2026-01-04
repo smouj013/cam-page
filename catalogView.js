@@ -1,4 +1,4 @@
-/* catalogView.js — RLC Catalog View v1.2.1 (MULTI-TILES + SINGLETON HARDEN)
+/* catalogView.js — RLC Catalog View v1.2.8 (RLC 2.3.8 COMPAT / MULTI-TILES / SINGLETON HARDEN)
    ✅ Catálogo en rejilla configurable (N tiles)
    ✅ Modo "follow": SOLO 1 tile (followSlot) sigue al state (los demás sticky)
    ✅ Modo "sync": rotan TODOS los tiles a la vez
@@ -9,7 +9,14 @@
    ✅ WX por tile si existe window.RLCWx.getSummaryForCam()
       - sin placeholders ("…"), solo visible con datos válidos
       - refresh suave sin flicker
-   ✅ Compat total: cfg vieja (quad 4) funciona como antes
+   ✅ Compat total con RLC v2.3.8:
+      - KEY auto: window.RLC_KEY / ?key= / localStorage rlc_last_key_v1
+      - BUS auto: window.RLC_BUS / rlc_bus_v1:{key}
+      - Acepta CFG por:
+          * {type:"CATALOG_CFG", cfg:{...}}
+          * {type:"cmd", cmd:"CATALOG_SET", payload:{...}}
+      - Acepta postMessage same-origin (state/cfg/cmd)
+      - Legacy sin key permitido breve al arrancar
    ✅ Harden:
       - singleton con destroy() (evita timers duplicados)
       - polling optimizado: solo re-render si cambia cam (id/index)
@@ -20,7 +27,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const VER = "1.2.1";
+  const VER = "1.2.8";
   const INST_KEY = "__RLC_CATALOG_VIEW_INSTANCE__";
 
   try {
@@ -29,23 +36,58 @@
     if (prev && typeof prev.destroy === "function") prev.destroy();
   } catch (_) {}
 
+  // ───────────────────────── helpers
+  const qs = (s, r = document) => r.querySelector(s);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
+  const now = () => Date.now();
+
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function readJson(key) {
+    try {
+      const raw = lsGet(key);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      return (obj && typeof obj === "object") ? obj : null;
+    } catch (_) { return null; }
+  }
+  function writeJson(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
+  }
+
+  function parseParams() {
+    try {
+      const u = new URL(location.href);
+      return { key: safeStr(u.searchParams.get("key") || "") };
+    } catch (_) {
+      return { key: "" };
+    }
+  }
+
+  // ───────────────────────── KEY auto (RLC 2.3.8)
+  const KEY = (() => {
+    const k1 = safeStr(g.RLC_KEY || "");
+    if (k1) return k1;
+
+    const k2 = safeStr(parseParams().key || "");
+    if (k2) return k2;
+
+    const k3 = safeStr(lsGet("rlc_last_key_v1") || "");
+    return k3 || "";
+  })();
+
   // ───────────────────────── Keys / Bus
   const BUS_BASE = "rlc_bus_v1";
   const STATE_KEY_BASE = "rlc_state_v1";
   const CFG_BASE = "rlc_catalog_cfg_v1";
   const SLOTS_BASE = "rlc_catalog_slots_v1";
 
-  const qs = (s, r = document) => r.querySelector(s);
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
-
-  function parseParams() {
-    const u = new URL(location.href);
-    return { key: safeStr(u.searchParams.get("key") || "") };
-  }
-  const KEY = String(parseParams().key || "").trim();
-
-  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  // BUS main: usa el que expone index 2.3.8 si está
+  const BUS_MAIN = (() => {
+    const b = safeStr(g.RLC_BUS || "");
+    if (b) return b;
+    return KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  })();
   const BUS_LEGACY = BUS_BASE;
 
   const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
@@ -56,8 +98,29 @@
 
   const SLOTS_KEY = KEY ? `${SLOTS_BASE}:${KEY}` : SLOTS_BASE;
 
-  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_MAIN) : null;
+  // bcLegacy solo tiene sentido si estamos en modo keyed
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+  // Compat keyless unos segundos (como tu points/control)
+  let allowLegacyNoKey = true;
+  const allowLegacyNoKeyUntil = now() + 6500;
+
+  function keyOk(msg, isMainChannel) {
+    if (!KEY) return true;
+
+    if (isMainChannel) {
+      allowLegacyNoKey = false;
+      return true;
+    }
+
+    const mk = msg && typeof msg.key === "string" ? String(msg.key).trim() : "";
+    if (mk) return mk === KEY;
+
+    if (!allowLegacyNoKey) return false;
+    if (now() > allowLegacyNoKeyUntil) return false;
+    return true;
+  }
 
   // ───────────────────────── Layout presets
   const LAYOUTS = {
@@ -96,18 +159,6 @@
     wxTiles: true,
     wxRefreshSec: 30
   };
-
-  function readJson(key) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return null;
-      const obj = JSON.parse(raw);
-      return (obj && typeof obj === "object") ? obj : null;
-    } catch (_) { return null; }
-  }
-  function writeJson(key, obj) {
-    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
-  }
 
   function normalizeCfg(inCfg) {
     const c = Object.assign({}, DEFAULTS, inCfg || {});
@@ -164,21 +215,31 @@
   let CFG = loadCfg();
   let lastState = null;
 
-  function keyOk(msg, isMainChannel) {
-    if (!KEY) return true;
-    if (isMainChannel) return true;
-    return (msg && msg.key === KEY);
+  // ───────────────────────── State helpers (robustos)
+  function normalizeStateMaybe(st) {
+    if (!st || typeof st !== "object") return null;
+
+    // estado típico: {type:"state", index, cam:{id,...}}
+    if (st.type === "state") return st;
+
+    // tolera shapes raros si vienen por postMessage/legacy
+    const hasCam = !!st.cam && typeof st.cam === "object";
+    const hasIdx = Number.isFinite(st.index) || typeof st.index === "number";
+    if (hasCam || hasIdx) return Object.assign({ type: "state" }, st);
+
+    return null;
   }
 
   function readStateFromLS() {
     try {
-      const rawMain = localStorage.getItem(STATE_KEY);
-      const rawLegacy = rawMain ? null : localStorage.getItem(STATE_KEY_LEGACY);
+      const rawMain = lsGet(STATE_KEY);
+      const rawLegacy = rawMain ? null : lsGet(STATE_KEY_LEGACY);
       const raw = rawMain || rawLegacy;
       if (!raw) return null;
 
-      const st = JSON.parse(raw);
-      if (!st || st.type !== "state") return null;
+      const parsed = JSON.parse(raw);
+      const st = normalizeStateMaybe(parsed);
+      if (!st) return null;
 
       const isMain = !!rawMain;
       if (!keyOk(st, isMain)) return null;
@@ -415,12 +476,16 @@
 
   function signalCatalogMode(on) {
     try { document.documentElement.dataset.rlcCatalog = on ? "1" : "0"; } catch (_) {}
-    try { g.dispatchEvent(new CustomEvent("rlc_catalog_mode", { detail: { on: !!on, ts: Date.now() } })); } catch (_) {}
+    try { g.dispatchEvent(new CustomEvent("rlc_catalog_mode", { detail: { on: !!on, ts: now() } })); } catch (_) {}
   }
 
   // ───────────────────────── Catalog data helpers
   function getCamList() {
-    return Array.isArray(g.CAM_LIST) ? g.CAM_LIST : [];
+    // compat: distintas convenciones
+    if (Array.isArray(g.CAM_LIST)) return g.CAM_LIST;
+    if (Array.isArray(g.CAMS)) return g.CAMS;
+    if (Array.isArray(g.cams)) return g.cams;
+    return [];
   }
 
   function findIndexById(list, id) {
@@ -742,7 +807,7 @@
 
   function saveSlotIds(ids) {
     const arr = Array.isArray(ids) ? ids.map(x => String(x || "")) : [];
-    writeJson(SLOTS_KEY, { ts: Date.now(), ids: arr.slice(0, 25) });
+    writeJson(SLOTS_KEY, { ts: now(), ids: arr.slice(0, 25) });
   }
 
   function ensureUnique(ids) {
@@ -1012,23 +1077,42 @@
     updateCatalog();
   }
 
-  // ───────────────────────── Bus listeners
+  // ───────────────────────── Bus listeners (CFG + STATE + CMD fallback)
   let _lastStateSig = "";
+
+  function applyCfgAny(rawCfg) {
+    if (!rawCfg || typeof rawCfg !== "object") return;
+    CFG = normalizeCfg(rawCfg);
+    setCatalogEnabled(CFG.enabled);
+    updateCatalog();
+  }
+
   function onBusMessage(msg, isMain) {
     if (!msg || typeof msg !== "object") return;
 
+    // CATALOG_CFG estándar
     if (msg.type === "CATALOG_CFG" && msg.cfg && typeof msg.cfg === "object") {
-      if (!keyOk(msg, isMain)) return;
-      CFG = normalizeCfg(msg.cfg);
-      setCatalogEnabled(CFG.enabled);
-      updateCatalog();
+      if (!keyOk(msg, !!isMain)) return;
+      applyCfgAny(msg.cfg);
       return;
     }
 
+    // fallback: cmd CATALOG_SET
+    if (msg.type === "cmd") {
+      const cmd = safeStr(msg.cmd || msg.name || "").toUpperCase();
+      if (cmd === "CATALOG_SET") {
+        if (!keyOk(msg, !!isMain)) return;
+        const payload = (msg.payload && typeof msg.payload === "object") ? msg.payload : (msg.cfg || null);
+        if (payload) applyCfgAny(payload);
+        return;
+      }
+    }
+
+    // estado
     if (msg.type === "state") {
-      if (!keyOk(msg, isMain)) return;
+      if (!keyOk(msg, !!isMain)) return;
       const sig = stateSig(msg);
-      if (sig && sig === _lastStateSig) return; // evita renders por “tick” del timer
+      if (sig && sig === _lastStateSig) return;
       _lastStateSig = sig;
       lastState = msg;
       if (CFG.enabled) updateCatalog();
@@ -1038,6 +1122,21 @@
 
   if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
   if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
+
+  // postMessage same-origin (por si llega directo desde control/preview)
+  on(window, "message", (ev) => {
+    try {
+      if (ev.origin && ev.origin !== location.origin) return;
+    } catch (_) {}
+    const msg = ev && ev.data;
+    if (!msg || typeof msg !== "object") return;
+
+    // Aceptamos los mismos formatos
+    if (msg.type === "CATALOG_CFG" || msg.type === "cmd" || msg.type === "state") {
+      // si viene sin canal, tratamos como "main"
+      onBusMessage(msg, true);
+    }
+  }, { passive: true });
 
   // polling suave (optimizado)
   const poll = setInterval(() => {
@@ -1051,8 +1150,9 @@
   }, 550);
   inst._timers.add(poll);
 
+  // storage: CFG cambiado por control / mirror
   on(window, "storage", (e) => {
-    if (!e) return;
+    if (!e || !e.key) return;
     if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
       CFG = normalizeCfg(loadCfg());
       setCatalogEnabled(CFG.enabled);

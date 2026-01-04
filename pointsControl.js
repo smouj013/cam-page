@@ -1,14 +1,14 @@
-/* pointsControl.js — RLC Points v1.2.0 (KEYED BUS + OVERLAY + CONTROL + SAFE STORAGE + DEDUPE FIX + AUTO CARD IN CONTROL)
+/* pointsControl.js — RLC Points v1.2.0 (PLAYER AUTO-INTEGRATED + KEYED BUS + CONTROL + SAFE STORAGE + DEDUPE)
    ✅ Funciona sin backend (localStorage + BroadcastChannel)
    ✅ Namespace por ?key=... (compat RLC)
    ✅ Un mismo archivo sirve para:
       - Control (panel admin) si detecta/inyecta IDs ctlPts*
-      - Overlay (browser source) si detecta / crea root de puntos o ?pts=1
+      - Player (broadcast): INTEGRA overlay automáticamente (sin ?pts=1)
+      - Overlay dedicado para OBS con ?pts=1 (&ptsOnly=1 opcional)
    ✅ Null-safe (si faltan elementos, no rompe)
-   ✅ DEDUPE FIX: dedupe por tipo (evita perder CFG/STATE si comparten ts)
+   ✅ DEDUPE: por tipo (evita perder CFG/STATE si comparten ts)
    ✅ Live apply suave en control
-   ✅ NEW: Auto-inyecta una card "POINTS" dentro de .controlGrid si no existe
-   ✅ Overlay-only para OBS con ?pts=1 (&ptsOnly=1 por defecto en copy-url)
+   ✅ Auto-inyecta una card "POINTS" dentro de .controlGrid si no existe
 */
 (() => {
   "use strict";
@@ -48,9 +48,18 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
   function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} }
 
+  function onReady(fn){
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn, { once:true });
+    } else fn();
+  }
+
   function parseParams() {
     const u = new URL(location.href);
-    const overlay = parseBool(u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"), false);
+    const overlay = parseBool(
+      u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"),
+      false
+    );
     return {
       key: safeStr(u.searchParams.get("key") || ""),
       overlay,
@@ -163,7 +172,7 @@
     const b = safeJson(lsGet(PTS_CFG_KEY_BASE), null);
     if (b && typeof b === "object") return normalizeCfg(b);
 
-    // query overrides
+    // query overrides (solo primera vez)
     const c = normalizeCfg(CFG_DEFAULTS);
     if (P.name) c.name = P.name;
     if (P.icon) c.icon = P.icon;
@@ -178,6 +187,7 @@
   function saveCfg(cfg) {
     const c = normalizeCfg(cfg);
     const raw = JSON.stringify(c);
+    // ✅ guarda siempre en keyed y base para que player/control se vean aunque uno vaya keyless
     lsSet(PTS_CFG_KEY, raw);
     lsSet(PTS_CFG_KEY_BASE, raw);
     return c;
@@ -220,15 +230,24 @@
     return s;
   }
 
-  // ───────────────────────── Control panel auto-inject (en control.html)
+  // ───────────────────────── Page detect (CONTROL vs PLAYER vs overlay-only)
   function isLikelyControlPage() {
     if (document.body?.classList?.contains("mode-control")) return true;
     if (qs(".controlWrap") || qs(".controlGrid") || qs("main.controlWrap")) return true;
-    // fallback: si existe el header típico
     if (qs("#ctlStatus") || qs(".controlHeader")) return true;
     return false;
   }
 
+  function isLikelyPlayerPage() {
+    if (document.body?.classList?.contains("mode-player")) return true;
+    if (qs("#stage") || qs("#hud") || qs("#frame") || qs("#video")) return true;
+    return false;
+  }
+
+  const IS_CONTROL_PAGE = isLikelyControlPage();
+  const IS_PLAYER_PAGE  = isLikelyPlayerPage();
+
+  // ───────────────────────── Control panel auto-inject (en control.html)
   function injectControlCardStylesOnce() {
     if (qs("#rlcPtsControlStyles")) return;
     const st = document.createElement("style");
@@ -245,17 +264,14 @@
 #ctlPtsCard input,#ctlPtsCard select{width:100%}
 #ctlPtsCard .rlcPtsBtns{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
 #ctlPtsCard .rlcPtsBtns button{min-height:38px}
-#ctlPtsCard .rlcPtsRow{display:flex;gap:10px;align-items:end}
-#ctlPtsCard .rlcPtsRow .rlcFld{flex:1 1 auto}
 #ctlPtsCard .rlcPtsMini{opacity:.75;font-size:12px;line-height:1.35;margin-top:8px}
 `.trim();
     document.head.appendChild(st);
   }
 
   function ensureControlCard() {
-    if (!isLikelyControlPage()) return false;
+    if (!IS_CONTROL_PAGE) return false;
 
-    // Si ya existen inputs, no inyectes nada
     if (qs("#ctlPtsApply") || qs("#ctlPointsApply") || qs("#ctlPtsValue") || qs("#ctlPtsName")) return true;
 
     const grid = qs(".controlGrid") || qs("section.controlGrid") || qs("#controlGrid") || null;
@@ -269,7 +285,6 @@
     card.className = "card";
     card.id = "ctlPtsCard";
 
-    // markup: compatible con tu script (IDs ctlPts*)
     card.innerHTML = `
       <div class="rlcPtsHead">
         <div class="rlcPtsTitle">
@@ -304,7 +319,7 @@
         </label>
 
         <label class="rlcFld">
-          <span>Icon (emoji o 1 char)</span>
+          <span>Icon</span>
           <input id="ctlPtsIcon" type="text" placeholder="💎" maxlength="6" />
         </label>
 
@@ -335,7 +350,7 @@
         </label>
 
         <label class="rlcFld">
-          <span>Scale (0.6 - 1.8)</span>
+          <span>Scale</span>
           <input id="ctlPtsScale" type="number" min="0.6" max="1.8" step="0.05" />
         </label>
 
@@ -354,8 +369,8 @@
       </div>
 
       <div class="rlcPtsMini">
-        OBS: añade la URL copiada como <b>Browser Source</b> (transparente).<br/>
-        Tip: SHIFT+click en la URL dentro de OBS para revisarla rápido.
+        Si quieres overlay separado (opcional), copia la URL y úsala como Browser Source transparente.<br/>
+        Pero si cargas este script en el <b>PLAYER</b>, ya va integrado en la emisión.
       </div>
     `.trim();
 
@@ -363,59 +378,102 @@
     return true;
   }
 
-  // Asegura card antes de detectar control/overlay
-  ensureControlCard();
+  // ───────────────────────── Decide overlay mode
+  // ✅ NUEVO: si es PLAYER, overlayWanted SIEMPRE (integrado en broadcast)
+  const overlayWanted =
+    IS_PLAYER_PAGE ||
+    !!P.overlay ||
+    !!document.getElementById("rlcPtsRoot");
 
-  // ───────────────────────── Overlay UI (auto-inject)
+  // Solo aplica “ptsOnly” en overlay dedicado, NO en player
+  const overlayOnlyMode = !!(P.overlay && P.overlayOnly && !IS_PLAYER_PAGE);
+
+  // ───────────────────────── Overlay UI
   const OVERLAY_ROOT_ID = "rlcPtsRoot";
 
   let cfg = loadCfg();
   let state = loadState();
 
-  function detectIsControl() {
-    return (
-      !!qs("#ctlPtsApply") ||
-      !!qs("#ctlPointsApply") ||
-      !!qs("#ctlPtsValue") ||
-      !!qs("#ctlPtsName")
-    );
-  }
-
-  const isControl = detectIsControl();
-
-  // overlayWanted:
-  // - si ?pts=1
-  // - o ya existe root
-  // - o NO es página de control (página dedicada overlay)
-  const overlayWanted = !!P.overlay || !!document.getElementById(OVERLAY_ROOT_ID) || (!isLikelyControlPage());
-
   function injectOverlayStylesOnce() {
     if (document.getElementById("rlcPtsStyles")) return;
     const st = document.createElement("style");
     st.id = "rlcPtsStyles";
-    st.textContent =
-      ":root{--rlcPtsScale:1;--rlcPtsX:12px;--rlcPtsY:12px}" +
-      ".rlcPtsRoot{position:fixed;z-index:10005;pointer-events:none;transform:translateZ(0) scale(var(--rlcPtsScale));transform-origin:top left}" +
-      ".rlcPtsRoot.pos-tl{left:max(var(--rlcPtsX),env(safe-area-inset-left));top:max(var(--rlcPtsY),env(safe-area-inset-top));transform-origin:top left}" +
-      ".rlcPtsRoot.pos-tr{right:max(var(--rlcPtsX),env(safe-area-inset-right));top:max(var(--rlcPtsY),env(safe-area-inset-top));transform-origin:top right}" +
-      ".rlcPtsRoot.pos-bl{left:max(var(--rlcPtsX),env(safe-area-inset-left));bottom:max(var(--rlcPtsY),env(safe-area-inset-bottom));transform-origin:bottom left}" +
-      ".rlcPtsRoot.pos-br{right:max(var(--rlcPtsX),env(safe-area-inset-right));bottom:max(var(--rlcPtsY),env(safe-area-inset-bottom));transform-origin:bottom right}" +
-      ".rlcPtsCard{min-width:230px;max-width:min(420px,calc(100vw - 24px));padding:12px 14px;border-radius:18px;background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.12);box-shadow:0 16px 46px rgba(0,0,0,.40);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}" +
-      ".rlcPtsTop{display:flex;align-items:center;gap:10px}" +
-      ".rlcPtsIcon{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;font-size:18px;background:rgba(77,215,255,.16);border:1px solid rgba(255,255,255,.12)}" +
-      ".rlcPtsMeta{min-width:0;flex:1 1 auto}" +
-      ".rlcPtsName{font-weight:900;font-size:12px;letter-spacing:.3px;color:rgba(255,255,255,.82);text-transform:uppercase}" +
-      ".rlcPtsVal{margin-top:2px;font-weight:950;font-size:20px;line-height:1.05;color:rgba(255,255,255,.96);display:flex;align-items:baseline;gap:8px}" +
-      ".rlcPtsDelta{font-weight:900;font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:rgba(255,255,255,.9);opacity:0;transform:translateY(4px);transition:opacity .18s ease, transform .18s ease}" +
-      ".rlcPtsDelta.on{opacity:1;transform:translateY(0)}" +
-      ".rlcPtsDelta.plus{background:rgba(25,226,138,.14);border-color:rgba(25,226,138,.22)}" +
-      ".rlcPtsDelta.minus{background:rgba(255,90,90,.14);border-color:rgba(255,90,90,.22)}" +
-      ".rlcPtsBar{margin-top:10px;height:7px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden}" +
-      ".rlcPtsBar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,rgba(77,215,255,.88),rgba(255,206,87,.88))}" +
-      ".rlcPtsGoalRow{margin-top:6px;display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:rgba(255,255,255,.78)}" +
-      ".rlcPtsRoot.off{display:none!important}" +
-      "body.rlcPtsOnly{background:transparent!important}html.rlcPtsOnly,body.rlcPtsOnly{background:transparent!important}" +
-      "body.rlcPtsOnly .controlWrap{display:none!important}";
+    st.textContent = `
+:root{--rlcPtsScale:1;--rlcPtsX:12px;--rlcPtsY:12px;--rlcPtsTopExtra:0px}
+.rlcPtsRoot{
+  position:fixed;
+  z-index:10050;
+  pointer-events:none;
+  transform:translateZ(0) scale(var(--rlcPtsScale));
+}
+.rlcPtsRoot.pos-tl{
+  left:max(var(--rlcPtsX),env(safe-area-inset-left));
+  top:calc(max(var(--rlcPtsY),env(safe-area-inset-top)) + var(--ui-top-offset,0px) + var(--rlcPtsTopExtra,0px));
+  transform-origin:top left
+}
+.rlcPtsRoot.pos-tr{
+  right:max(var(--rlcPtsX),env(safe-area-inset-right));
+  top:calc(max(var(--rlcPtsY),env(safe-area-inset-top)) + var(--ui-top-offset,0px) + var(--rlcPtsTopExtra,0px));
+  transform-origin:top right
+}
+.rlcPtsRoot.pos-bl{
+  left:max(var(--rlcPtsX),env(safe-area-inset-left));
+  bottom:max(var(--rlcPtsY),env(safe-area-inset-bottom));
+  transform-origin:bottom left
+}
+.rlcPtsRoot.pos-br{
+  right:max(var(--rlcPtsX),env(safe-area-inset-right));
+  bottom:max(var(--rlcPtsY),env(safe-area-inset-bottom));
+  transform-origin:bottom right
+}
+.rlcPtsCard{
+  min-width:230px;
+  max-width:min(420px,calc(100vw - 24px));
+  padding:12px 14px;
+  border-radius:18px;
+  background:rgba(10,14,20,.62);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 16px 46px rgba(0,0,0,.40);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+}
+.rlcPtsTop{display:flex;align-items:center;gap:10px}
+.rlcPtsIcon{
+  width:34px;height:34px;border-radius:12px;
+  display:grid;place-items:center;font-size:18px;
+  background:rgba(77,215,255,.16);
+  border:1px solid rgba(255,255,255,.12);
+}
+.rlcPtsMeta{min-width:0;flex:1 1 auto}
+.rlcPtsName{
+  font-weight:900;font-size:12px;letter-spacing:.3px;
+  color:rgba(255,255,255,.82);text-transform:uppercase;
+}
+.rlcPtsVal{
+  margin-top:2px;font-weight:950;font-size:20px;line-height:1.05;
+  color:rgba(255,255,255,.96);
+  display:flex;align-items:baseline;gap:8px
+}
+.rlcPtsDelta{
+  font-weight:900;font-size:12px;padding:4px 8px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.08);
+  color:rgba(255,255,255,.9);
+  opacity:0;transform:translateY(4px);
+  transition:opacity .18s ease, transform .18s ease;
+}
+.rlcPtsDelta.on{opacity:1;transform:translateY(0)}
+.rlcPtsDelta.plus{background:rgba(25,226,138,.14);border-color:rgba(25,226,138,.22)}
+.rlcPtsDelta.minus{background:rgba(255,90,90,.14);border-color:rgba(255,90,90,.22)}
+.rlcPtsBar{margin-top:10px;height:7px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden}
+.rlcPtsBar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,rgba(77,215,255,.88),rgba(255,206,87,.88))}
+.rlcPtsGoalRow{margin-top:6px;display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:rgba(255,255,255,.78)}
+.rlcPtsRoot.off{display:none!important}
+
+/* overlay-only transparente (solo cuando ?pts=1&ptsOnly=1 y NO es player) */
+body.rlcPtsOnly, html.rlcPtsOnly { background:transparent!important; }
+body.rlcPtsOnly .controlWrap{display:none!important}
+`.trim();
     document.head.appendChild(st);
   }
 
@@ -444,6 +502,7 @@
           '<div class="rlcPtsBar" id="rlcPtsBarWrap"><i id="rlcPtsBarFill"></i></div>' +
           '<div class="rlcPtsGoalRow" id="rlcPtsGoalRow"><span id="rlcPtsGoalL">0</span><span id="rlcPtsGoalR">0</span></div>' +
         "</div>";
+
       document.body.appendChild(elRoot);
     }
 
@@ -521,12 +580,18 @@
       if (elGoalR) elGoalR.textContent = `Goal ${fmtK(goal)}`;
     }
 
+    // ✅ delta: solo cuando ya hay baseline (evita pop en el boot)
     if (cfg.showDelta) {
-      if (lastRenderValue == null) lastRenderValue = v;
-      const d = (v - (lastRenderValue | 0)) | 0;
-      if (d !== 0) showDelta(d);
+      if (lastRenderValue == null) {
+        lastRenderValue = v;
+      } else {
+        const d = (v - (lastRenderValue | 0)) | 0;
+        if (d !== 0) showDelta(d);
+        lastRenderValue = v;
+      }
+    } else {
+      lastRenderValue = v;
     }
-    lastRenderValue = v;
   }
 
   // ───────────────────────── Control UI (IDs)
@@ -553,7 +618,6 @@
   function setCtlStatus(text, ok = true) {
     if (!ctlPtsStatus) return;
     ctlPtsStatus.textContent = text;
-    // usa clases tipo tu UI si existen
     try {
       ctlPtsStatus.classList.toggle("pill--ok", !!ok);
       ctlPtsStatus.classList.toggle("pill--bad", !ok);
@@ -575,6 +639,7 @@
   }
 
   function syncControlUI() {
+    const isControl = !!(ctlPtsApply || ctlPtsValue || ctlPtsName);
     if (!isControl) return;
 
     if (ctlPtsOn && !isEditing(ctlPtsOn)) ctlPtsOn.value = cfg.enabled ? "on" : "off";
@@ -619,6 +684,8 @@
   function applyControlAll() {
     cfg = publishCfg(readControlCfg());
     state = publishState(readControlState());
+    // baseline para que el delta no salte por “apply”
+    lastRenderValue = (state.value | 0);
     renderOverlay();
     syncControlUI();
   }
@@ -636,7 +703,6 @@
   function resetAll() {
     cfg = publishCfg(CFG_DEFAULTS);
     state = publishState({ value: 0, goal: 0, updatedAt: Date.now() });
-    // para que no salte delta raro tras reset
     lastRenderValue = null;
     syncControlUI();
     renderOverlay();
@@ -680,6 +746,7 @@
   }
 
   function bindControl() {
+    const isControl = !!(ctlPtsApply || ctlPtsValue || ctlPtsName);
     if (!isControl) return;
 
     const doApply = () => applyControlAll();
@@ -690,7 +757,6 @@
     try { ctlPtsSub?.addEventListener?.("click", () => applyDelta(-1)); } catch (_) {}
     try { ctlPtsReset?.addEventListener?.("click", resetAll); } catch (_) {}
 
-    // live apply suave en inputs/selects
     const live = [ctlPtsOn, ctlPtsName, ctlPtsIcon, ctlPtsShowGoal, ctlPtsShowDelta, ctlPtsPos, ctlPtsScale, ctlPtsValue, ctlPtsGoal];
     for (const el of live) {
       if (!el) continue;
@@ -719,7 +785,7 @@
     syncControlUI();
   }
 
-  // ───────────────────────── Receive bus messages (DEDUP FIX)
+  // ───────────────────────── Receive bus messages (DEDUP por tipo)
   const lastSeenByType = { PTS_CFG: 0, PTS_STATE: 0 };
 
   function shouldAcceptMsg(msg) {
@@ -741,16 +807,16 @@
     if (msg.type === "PTS_CFG" && msg.cfg) {
       cfg = normalizeCfg(msg.cfg);
       saveCfg(cfg);
-      syncControlUI();
       renderOverlay();
+      syncControlUI();
       return;
     }
 
     if (msg.type === "PTS_STATE" && msg.state) {
       state = normalizeState(msg.state);
       saveState(state);
-      syncControlUI();
       renderOverlay();
+      syncControlUI();
       return;
     }
   }
@@ -787,6 +853,7 @@
     setValue: (v) => {
       const next = Math.max(0, (parseInt(String(v ?? "0"), 10) || 0));
       state = publishState({ ...state, value: next, updatedAt: Date.now() });
+      lastRenderValue = next;
       renderOverlay(); syncControlUI();
       return state;
     },
@@ -802,9 +869,12 @@
   };
 
   // ───────────────────────── Boot
-  (function boot() {
-    // overlay-only para OBS
-    if (P.overlay && P.overlayOnly) {
+  onReady(() => {
+    // card control (si procede)
+    ensureControlCard();
+
+    // overlay-only transparente (solo overlay dedicado)
+    if (overlayOnlyMode) {
       try {
         document.documentElement.classList.add("rlcPtsOnly");
         document.body.classList.add("rlcPtsOnly");
@@ -819,7 +889,7 @@
     const hadCfg = !!lsGet(PTS_CFG_KEY) || !!lsGet(PTS_CFG_KEY_BASE);
     const hadSt  = !!lsGet(PTS_STATE_KEY) || !!lsGet(PTS_STATE_KEY_BASE);
 
-    // si es primera vez, publica para sincronizar todas las pestañas
+    // primera vez: publica para sincronizar
     if (!hadCfg) cfg = publishCfg(cfg);
     if (!hadSt) {
       state.updatedAt = Date.now();
@@ -829,5 +899,5 @@
     bindControl();
     renderOverlay();
     syncControlUI();
-  })();
+  });
 })();
