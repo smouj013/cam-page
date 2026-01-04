@@ -1,15 +1,14 @@
-/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.0 (NEWSROOM/BLACKCAST) — FULL
-   ✅ Compatible con: index.html (player) + control.html (control)
+/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.2 (NEWSROOM/BLACKCAST) — FULL
+   ✅ Compat: index.html (player) + control.html (control) + RLC 2.3.8
    ✅ NO rompe IDs/clases existentes (hud/vote/chat/control/tickers)
-   ✅ Look “TV broadcast” (negro sobrio + acentos mínimos) + overlays integrados
-   ✅ Chat tipo “globo” + soporte avatar + nombre encima (si el HTML/JS lo trae)
-   ✅ Tickers top (NEWS + ECON) con estética TV y stacking limpio
-   ✅ Fallbacks Opera GX / Safari / sin backdrop / sin mask
+   ✅ Look “TV broadcast” (negro elegante + acentos sutiles) + overlays limpios
+   ✅ Evita “gaps fantasma” cuando tickers están off / no existen
+   ✅ Fallbacks Opera GX / Safari (sin backdrop, sin mask, sin :has)
 */
 
 /* ───────────────────────── THEME TOKENS ───────────────────────── */
 :root{
-  /* Base (TV) */
+  /* Base */
   --bg:  #05060a;
   --bg2: #070912;
   --bg3: #0b1020;
@@ -29,22 +28,23 @@
   --muted:  rgba(255,255,255,.70);
   --muted2: rgba(255,255,255,.52);
 
-  /* Accents (sobrios, “TV”) */
+  /* Accents */
   --accent:  #57c9ff; /* azul TV */
   --accent2: #a2b6ff; /* violeta suave */
-  --danger:  #ff355a; /* rojo NEWS/LIVE */
-  --ok:      #47d79b; /* verde suave */
+  --danger:  #ff355a; /* live/news */
+  --ok:      #47d79b; /* ok */
   --warn:    #ffd36a;
 
-  /* Broadcast glass */
+  /* Glass */
   --glass:  rgba(255,255,255,.05);
   --glass2: rgba(255,255,255,.08);
 
-  /* Radius & shadows */
+  /* Radius */
   --r:    16px;
   --r-sm: 12px;
   --r-lg: 20px;
 
+  /* Shadows */
   --shadow:       0 18px 60px rgba(0,0,0,.55);
   --shadow-soft:  0 14px 44px rgba(0,0,0,.38);
   --shadow-tight: 0 10px 26px rgba(0,0,0,.30);
@@ -72,28 +72,29 @@
   --hudMarqueeDur: 12s;
 
   /* ───────── TICKERS ───────── */
-  --rlcBarH: 34px;        /* altura barra */
-  --rlcTickerTop: 10px;   /* top base (fallback) */
-  --rlcTickerGap: 6px;    /* gap entre barras */
+  --rlcBarH: 34px;
+  --rlcTickerTop: 10px;
+  --rlcTickerGap: 6px;
 
-  /* JS setea: (barH*count) + (gap si 2 barras) */
+  /* JS suele setearlo; si no, 0 = no offset */
   --rlcTickerH: 0px;
 
-  /* Offset overlays (solo si hay ticker) */
-  --ui-top-offset: calc(var(--rlcTickerH, 0px) + min(var(--rlcTickerH, 0px), var(--rlcTickerGap, 6px)));
+  /* Offset overlays (robusto: si tickerH=0 => 0) */
+  --ui-top-offset: var(--rlcTickerH, 0px);
 
   /* Broadcast vibe */
-  --scan-opacity: .045;
-  --grain-opacity: .07;
+  --scan-opacity: .040;
+  --grain-opacity: .070;
   --vignette-opacity: .52;
 
-  /* Media (si quieres tocar un pelín la “tele”) */
-  --media-filter: none; /* ejemplo: contrast(1.03) saturate(1.02) */
+  /* Media */
+  --media-filter: none; /* ej: contrast(1.03) saturate(1.02) */
 }
 
-/* Hooks opcionales */
+/* Hooks: si forzas ticker OFF desde body o params */
 body.ticker--off,
 body[data-ticker="0"]{
+  --rlcTickerH: 0px;
   --ui-top-offset: 0px;
 }
 
@@ -116,7 +117,7 @@ body[data-ticker="0"]{
 }
 @keyframes rlcSheen{
   0%{ transform: translate3d(-120%,0,0); opacity: 0; }
-  20%{ opacity: .12; }
+  18%{ opacity: .12; }
   100%{ transform: translate3d(120%,0,0); opacity: 0; }
 }
 
@@ -176,18 +177,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 *::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.24); }
 
 /* ───────────────────────── TOP TICKERS (NEWS + ECON) ───────────────────────── */
-/* Nota: index.html tiene inline con !important para posición/left/right/top.
-   Aquí definimos la “piel TV” del ticker y su contenido interno. */
+/* index.html suele fijar posición con inline !important; aquí solo skin + contenido */
 
 #rlcNewsTicker,
 #rlcEconTicker{
   position: fixed;
   left: 0;
   right: 0;
-
   top: var(--rlcNewsTop, var(--rlcTickerTop, 0px));
   height: var(--rlcBarH);
-  z-index: 20;
+  z-index: 30;
 
   display:flex;
   align-items:center;
@@ -195,15 +194,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   padding-left: max(12px, env(safe-area-inset-left));
   padding-right: max(12px, env(safe-area-inset-right));
 
-  background:
-    linear-gradient(180deg, rgba(6,7,10,.92), rgba(5,6,9,.88));
+  background: linear-gradient(180deg, rgba(6,7,10,.92), rgba(5,6,9,.88));
   border: 1px solid rgba(255,255,255,.10);
   box-shadow: 0 10px 26px rgba(0,0,0,.38);
   overflow:hidden;
   isolation:isolate;
 }
 
-/* “TV line” arriba + brillo */
 #rlcNewsTicker::before,
 #rlcEconTicker::before{
   content:"";
@@ -219,10 +216,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 #rlcEconTicker::after{
   content:"";
   position:absolute;
-  inset:-6px;
+  inset:-10px;
   pointer-events:none;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent);
-  filter: blur(10px);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.10), transparent);
+  filter: blur(12px);
   opacity: .10;
   z-index:0;
 }
@@ -233,7 +230,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   box-shadow: 0 10px 26px rgba(0,0,0,.38), 0 0 0 1px rgba(255,53,90,.10) inset;
 }
 
-/* ECON (debajo) */
+/* ECON debajo */
 #rlcEconTicker{
   --ticker-accent: rgba(71,215,155,.95);
   top: var(--rlcEconTop, calc(var(--rlcNewsTop, var(--rlcTickerTop, 0px)) + var(--rlcBarH) + var(--rlcTickerGap, 6px)));
@@ -291,7 +288,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   z-index:2;
 }
 
-/* Badge estilo TV */
+/* Badge */
 #rlcNewsTicker .tickerBadge,
 #rlcEconTicker .tickerBadge{
   flex: 0 0 auto;
@@ -403,7 +400,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   gap: 8px;
 
   color: var(--text);
-
   background: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.045));
   box-shadow: var(--shadow-tight);
 
@@ -481,17 +477,16 @@ input[type="range"]{ accent-color: var(--accent); }
   inset: 0;
   overflow: hidden;
 
-  /* Fondo TV sobrio */
   background:
     radial-gradient(900px 520px at 50% 10%, rgba(87,201,255,.10), transparent 62%),
     radial-gradient(900px 620px at 18% 84%, rgba(255,53,90,.08), transparent 64%),
     radial-gradient(900px 620px at 86% 86%, rgba(71,215,155,.06), transparent 64%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.015) 0, rgba(255,255,255,.015) 1px, transparent 1px, transparent 60px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 1px, transparent 1px, transparent 60px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.014) 0, rgba(255,255,255,.014) 1px, transparent 1px, transparent 60px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.010) 0, rgba(255,255,255,.010) 1px, transparent 1px, transparent 60px),
     linear-gradient(180deg, var(--bg), var(--bg2));
 }
 
-/* Vignette + scanlines ultra sutil */
+/* Vignette + scanlines sutil */
 .stage::before{
   content:"";
   position:absolute;
@@ -509,7 +504,7 @@ input[type="range"]{ accent-color: var(--accent); }
   inset:-12%;
   pointer-events:none;
   z-index: 2;
-  background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,.08) 45%, transparent 75%);
+  background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,.07) 45%, transparent 75%);
   filter: blur(18px);
   opacity: .10;
 }
@@ -543,7 +538,7 @@ input[type="range"]{ accent-color: var(--accent); }
 .fallback{
   position:absolute;
   inset:0;
-  z-index: 4;
+  z-index: 50;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -578,13 +573,12 @@ input[type="range"]{ accent-color: var(--accent); }
   left: max(12px, env(safe-area-inset-left));
   bottom: max(12px, env(safe-area-inset-bottom));
   width: min(640px, calc(100vw - 24px));
-  z-index: 5;
+  z-index: 20;
 
   overflow:hidden;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.12);
-  background:
-    linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
+  background: linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
   box-shadow: var(--shadow-soft);
 
   backdrop-filter: blur(12px);
@@ -637,7 +631,7 @@ input[type="range"]{ accent-color: var(--accent); }
   min-width: 0;
 }
 
-/* Badge LIVE (TV) */
+/* Badge LIVE */
 .badge{
   height: 28px;
   display:inline-flex;
@@ -664,7 +658,7 @@ input[type="range"]{ accent-color: var(--accent); }
   animation: rlcPulseDot 2.1s ease-in-out infinite;
 }
 
-/* Title (clamp + marquee seguro) */
+/* Title */
 .hudTitle{
   font-size: 13px;
   font-weight: 950;
@@ -674,8 +668,8 @@ input[type="range"]{ accent-color: var(--accent); }
 
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  line-clamp: 2;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
 
   overflow: hidden;
   text-overflow: ellipsis;
@@ -684,18 +678,18 @@ input[type="range"]{ accent-color: var(--accent); }
   mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
 }
 .hud.hud--collapsed .hudTitle{
-  line-clamp: 1;
   -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 
-/* HUD TITLE MARQUEE (si data-marquee="1") */
+/* HUD TITLE MARQUEE */
 .hud.hud--collapsed .hudTitle[data-marquee="1"]{
   position: relative;
   display: block;
   white-space: nowrap;
 
-  line-clamp: unset;
   -webkit-line-clamp: unset;
+  line-clamp: unset;
   -webkit-box-orient: initial;
 
   color: transparent;
@@ -769,7 +763,7 @@ input[type="range"]{ accent-color: var(--accent); }
 .hudToggle:hover{ filter: brightness(1.08); background: rgba(255,255,255,.08); }
 .hudToggle:active{ transform: translateY(1px); }
 
-/* Progress (TV bar) */
+/* Progress */
 .progress{
   position:relative;
   height: 3px;
@@ -899,7 +893,7 @@ input[type="range"]{ accent-color: var(--accent); }
   top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
   right: max(12px, env(safe-area-inset-right));
   width: min(320px, calc(100vw - 24px));
-  z-index: 6;
+  z-index: 25;
 
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.12);
@@ -987,7 +981,7 @@ input[type="range"]{ accent-color: var(--accent); }
   top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
   left: max(12px, env(safe-area-inset-left));
   right: auto;
-  z-index: 8;
+  z-index: 26;
   pointer-events:none;
 }
 #adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
@@ -1018,17 +1012,13 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── CHAT OVERLAY (BUBBLES + AVATAR + NAME) ───────────────────────── */
-/* ✅ Sin romper: soporta múltiples estructuras.
-   - Si tu JS mete <img class="avatar"> y un nodo de nombre, lo estiliza.
-   - Si no, se ve igual “globo TV” sin avatar/nombre. */
-
 .rlcChatRoot{
   position:absolute;
   right: max(12px, env(safe-area-inset-right));
   bottom: max(12px, env(safe-area-inset-bottom));
   width: min(420px, calc(100vw - 24px));
   max-height: min(46vh, 520px);
-  z-index: 7;
+  z-index: 24;
   pointer-events:none;
   display:none;
 }
@@ -1045,22 +1035,21 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 2px;
 }
 
-/* Cada mensaje: intentamos atrapar lo que sea */
+/* Base mensaje */
 #rlcChatList > *{
   pointer-events:none;
   position: relative;
 
-  /* layout “bubble”: avatar (si existe) + cuerpo */
   display:grid;
   grid-template-columns: auto 1fr;
   column-gap: 10px;
   align-items: end;
 
-  padding: 0; /* el padding va dentro del bubble */
+  padding: 0;
   animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
 }
 
-/* Avatar: si hay <img> lo usamos; si no, lo escondemos sin romper */
+/* Avatar */
 #rlcChatList > * img,
 #rlcChatList > * .avatar,
 #rlcChatList > * .pfp{
@@ -1075,12 +1064,7 @@ input[type="range"]{ accent-color: var(--accent); }
   grid-row: 1;
 }
 
-/* Si tu HTML NO tiene avatar, pero el msg tiene clase conocida, no forzamos nada */
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp)){
-  grid-template-columns: 1fr;
-}
-
-/* “Nombre” encima: soportamos varias clases comunes + data-user */
+/* “Nombre” encima */
 #rlcChatList > * .name,
 #rlcChatList > * .user,
 #rlcChatList > * .author,
@@ -1103,7 +1087,7 @@ input[type="range"]{ accent-color: var(--accent); }
   z-index: 2;
 }
 
-/* Si el contenedor lleva data-user/name, lo pintamos como “label” (sin tocar HTML) */
+/* data-user/name */
 #rlcChatList > *[data-user]::before,
 #rlcChatList > *[data-name]::before,
 #rlcChatList > *[data-author]::before{
@@ -1113,7 +1097,7 @@ input[type="range"]{ accent-color: var(--accent); }
   color: rgba(255,255,255,.88);
 
   position:absolute;
-  left: 44px; /* deja hueco para avatar */
+  left: 44px;
   top: -8px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -1124,14 +1108,8 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 #rlcChatList > *[data-name]::before{ content: attr(data-name); }
 #rlcChatList > *[data-author]::before{ content: attr(data-author); }
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-user]::before,
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-name]::before,
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-author]::before{
-  left: 0;
-}
 
-/* Bubble (texto): si tu JS ya envuelve el texto en un div, lo pillamos.
-   Si no, aplicamos a todo el mensaje como “bubble body”. */
+/* Bubble body (si hay wrapper) */
 #rlcChatList > * .msg,
 #rlcChatList > * .message,
 #rlcChatList > * .body{
@@ -1152,8 +1130,6 @@ input[type="range"]{ accent-color: var(--accent); }
   position: relative;
   z-index: 1;
 }
-
-/* “Tail” del globo */
 #rlcChatList > * .msg::after,
 #rlcChatList > * .message::after,
 #rlcChatList > * .body::after{
@@ -1170,30 +1146,15 @@ input[type="range"]{ accent-color: var(--accent); }
   border-bottom-left-radius: 3px;
 }
 
-/* Si NO hay wrapper .msg/.message/.body: convierte el item completo en bubble */
-#rlcChatList > *:not(:has(.msg)):not(:has(.message)):not(:has(.body)){
+/* Si NO hay wrapper: el item es bubble */
+#rlcChatList > *{
   border-radius: 16px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(10,12,18,.86), rgba(8,10,14,.72));
-  box-shadow: 0 12px 28px rgba(0,0,0,.34);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  padding: 10px 12px;
-  font-size: 12.5px;
-  line-height: 1.28;
 }
-#rlcChatList > *:not(:has(.msg)):not(:has(.message)):not(:has(.body))::after{
-  content:"";
-  position:absolute;
-  left: -6px;
-  bottom: 10px;
-  width: 12px;
-  height: 12px;
-  background: linear-gradient(180deg, rgba(10,12,18,.86), rgba(8,10,14,.72));
-  border-left: 1px solid rgba(255,255,255,.12);
-  border-bottom: 1px solid rgba(255,255,255,.12);
-  transform: rotate(45deg);
-  border-bottom-left-radius: 3px;
+#rlcChatList > *:not(.msg):not(.message):not(.body){
+  /* no tocamos por si tu JS mete wrappers; lo reforzamos con selector below */
+}
+#rlcChatList > *:not(:where(:has(.msg),:has(.message),:has(.body))) {
+  /* ⚠️ Este selector usa :has; lo redefinimos abajo con @supports para no depender de él */
 }
 
 /* Tipografía interna */
@@ -1206,6 +1167,42 @@ input[type="range"]{ accent-color: var(--accent); }
   color: rgba(87,201,255,.92);
 }
 
+/* ✅ :has opcional: si el navegador lo soporta, ajusta layout cuando no hay avatar/wrapper */
+@supports selector(:has(*)){
+  #rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp)){
+    grid-template-columns: 1fr;
+  }
+  #rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-user]::before,
+  #rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-name]::before,
+  #rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-author]::before{
+    left: 0;
+  }
+
+  #rlcChatList > *:not(:has(.msg)):not(:has(.message)):not(:has(.body)){
+    border: 1px solid rgba(255,255,255,.12);
+    background: linear-gradient(180deg, rgba(10,12,18,.86), rgba(8,10,14,.72));
+    box-shadow: 0 12px 28px rgba(0,0,0,.34);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.28;
+  }
+  #rlcChatList > *:not(:has(.msg)):not(:has(.message)):not(:has(.body))::after{
+    content:"";
+    position:absolute;
+    left: -6px;
+    bottom: 10px;
+    width: 12px;
+    height: 12px;
+    background: linear-gradient(180deg, rgba(10,12,18,.86), rgba(8,10,14,.72));
+    border-left: 1px solid rgba(255,255,255,.12);
+    border-bottom: 1px solid rgba(255,255,255,.12);
+    transform: rotate(45deg);
+    border-bottom-left-radius: 3px;
+  }
+}
+
 /* ───────────────────────── CONTROL ROOM ───────────────────────── */
 .mode-control{
   overflow:auto;
@@ -1214,15 +1211,13 @@ input[type="range"]{ accent-color: var(--accent); }
     radial-gradient(900px 620px at 22% 12%, rgba(87,201,255,.10), transparent 62%),
     radial-gradient(980px 720px at 82% 82%, rgba(71,215,155,.08), transparent 62%),
     radial-gradient(900px 500px at 60% 10%, rgba(255,53,90,.08), transparent 64%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0, rgba(255,255,255,.018) 1px, transparent 1px, transparent 60px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 1px, transparent 1px, transparent 60px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.016) 0, rgba(255,255,255,.016) 1px, transparent 1px, transparent 60px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.010) 0, rgba(255,255,255,.010) 1px, transparent 1px, transparent 60px),
     linear-gradient(180deg, #04060b, #070a12);
 }
 .mode-control .stage, .mode-control .layer, .mode-control .layer-media, .mode-control .layer-ui{ display:none !important; }
 
 .controlWrap{ max-width: 1240px; margin: 0 auto; padding: 16px; }
-
-/* header NO sticky */
 .mode-control .controlHeader{ position: relative !important; top:auto !important; }
 
 .controlHeader{
@@ -1306,7 +1301,7 @@ input[type="range"]{ accent-color: var(--accent); }
   position:absolute;
   inset:-2px;
   pointer-events:none;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.14), transparent);
   filter: blur(10px);
   opacity: 0;
   animation: rlcSheen 10s var(--ease-soft) infinite;
