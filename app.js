@@ -1696,10 +1696,10 @@
 
   function sendNow() {
     const cam = cams[idx] || {};
-    const t = String(cam.title || "Live Cam");
+    const t = String(cam.title || "🌍");
     const p = String(cam.place || "");
     const src = String(cam.source || "");
-    botSay(`🌍 Ahora: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}`);
+    botSay(`📍: ${t}${p ? ` — ${p}` : ""}${src ? ` · ${src}` : ""}`);
   }
 
   function handleTwitchEvent(ev) {

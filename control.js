@@ -1511,14 +1511,14 @@
     if (id === lastAnnouncedCamId && (now - lastAnnounceAt) < 60000) return;
     if ((now - lastAnnounceAt) < 9000) return;
 
-    const title = String(cam.title || "Live Cam").trim();
+    const title = String(cam.title || "🌍").trim();
     const place = String(cam.place || "").trim();
     const src = String(cam.source || "").trim();
 
     lastAnnouncedCamId = id;
     lastAnnounceAt = now;
 
-    const msg = `🌍 Ahora: ${title}${place ? ` — ${place}` : ""}${src ? ` · ${src}` : ""}`;
+    const msg = `📍: ${title}${place ? ` — ${place}` : ""}${src ? ` · ${src}` : ""}`;
     botSay(msg);
   }
 
