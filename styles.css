@@ -1,17 +1,14 @@
-/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.5 (RLC 2.3.9) — FULL
-   ✅ Compatible con: index.html (player) + control.html (control)
-   ✅ NO rompe IDs/clases existentes (hud/vote/chat/control/tickers)
-   ✅ Look “TV broadcast” refinado + legibilidad mejorada
-   ✅ Chat bubbles sólidos (sin “panel negro” en browsers sin backdrop-filter)
-   ✅ 100% sin :has (compat/validadores)
-   ✅ Offset robusto: --ui-top-offset = --rlcTickerH (lo setea rlcTickers.js)
-   ✅ Tickers clicables (links) sin afectar overlays
-   ✅ Fallbacks Opera GX / Safari / sin backdrop / sin mask
+/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.6 (RLC 2.3.9) — FULL (NEWSCAST UI UPGRADE)
+   ✅ Fuente noticiero (IBM Plex Sans Condensed / Plex Mono)
+   ✅ HUD: panel info más pro, sin botón expandir, sin texto de tiempo
+   ✅ Vote: panel mucho más legible (TV)
+   ✅ Alerts/Points/Ads: estilo unificado + stacking anti-solape
+   ✅ Tickers clicables sin romper overlays
+   ✅ Sin :has (compat)
 */
 
-/* ───────────────────────── THEME TOKENS ───────────────────────── */
 :root{
-  /* Base (TV) */
+  /* Base */
   --bg:  #05060a;
   --bg2: #070912;
   --bg3: #0b1020;
@@ -31,36 +28,26 @@
   --muted:  rgba(255,255,255,.70);
   --muted2: rgba(255,255,255,.52);
 
-  /* Accents (sobrios, “TV”) */
-  --accent:  #57c9ff; /* azul TV */
-  --accent2: #a2b6ff; /* violeta suave */
-  --danger:  #ff355a; /* rojo NEWS/LIVE */
-  --ok:      #47d79b; /* verde suave */
+  /* Accents */
+  --accent:  #57c9ff;
+  --accent2: #a2b6ff;
+  --danger:  #ff355a;
+  --ok:      #47d79b;
   --warn:    #ffd36a;
 
-  /* Broadcast glass */
-  --glass:  rgba(255,255,255,.05);
-  --glass2: rgba(255,255,255,.08);
-
-  /* Radius & shadows */
+  /* Radius */
   --r:    16px;
   --r-sm: 12px;
   --r-lg: 20px;
 
+  /* Shadows */
   --shadow:       0 18px 60px rgba(0,0,0,.55);
   --shadow-soft:  0 14px 44px rgba(0,0,0,.38);
   --shadow-tight: 0 10px 26px rgba(0,0,0,.30);
 
-  /* Typography */
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-  --mono: ui-monospace, "Cascadia Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-
-  /* Spacing */
-  --pad: 12px;
-  --gap: 12px;
-
-  /* Focus */
-  --focus: rgba(87,201,255,.26);
+  /* Fonts (NEWSCAST) */
+  --sans: "IBM Plex Sans Condensed", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
 
   /* Motion */
   --ease-out:  cubic-bezier(.2,.9,.2,1);
@@ -73,11 +60,11 @@
   --hudMarqueeGap: 44px;
   --hudMarqueeDur: 12s;
 
-  /* ───────── TICKERS ───────── */
-  --rlcBarH: 34px;        /* altura barra */
-  --rlcTickerTop: 10px;   /* top base (fallback) */
-  --rlcTickerGap: 6px;    /* gap entre barras */
-  --rlcTickerH: 0px;      /* JS setea altura total real */
+  /* Tickers */
+  --rlcBarH: 34px;
+  --rlcTickerTop: 10px;
+  --rlcTickerGap: 6px;
+  --rlcTickerH: 0px; /* lo setea rlcTickers.js */
   --ui-top-offset: var(--rlcTickerH, 0px);
 
   /* Broadcast vibe */
@@ -88,34 +75,39 @@
   /* Media */
   --media-filter: none;
 
-  /* ───────── CHAT ───────── */
+  /* Chat */
   --chatW: min(440px, calc(100vw - 24px));
   --chatMaxH: min(48vh, 560px);
   --chatAvatar: 34px;
   --chatGap: 10px;
 
-  /* Chat bubble (más contraste + texto más legible) */
   --chatBubbleA: rgba(16,20,30,.86);
   --chatBubbleB: rgba(10,12,18,.62);
   --chatBubbleStroke: rgba(255,255,255,.16);
   --chatBubbleGlow: rgba(87,201,255,.14);
   --chatBubbleShadow: 0 14px 32px rgba(0,0,0,.36);
 
-  /* Nombre */
-  --chatNameBgA: rgba(0,0,0,.40);
+  --chatNameBgA: rgba(0,0,0,.42);
   --chatNameBgB: rgba(0,0,0,.24);
 
-  /* Texto chat */
   --chatText: rgba(255,255,255,.94);
-  --chatTextSoft: rgba(255,255,255,.78);
   --chatLink: rgba(87,201,255,.92);
 
-  /* Tail */
   --chatTailSize: 12px;
   --chatTailLift: 10px;
+
+  /* Notices stack (alerts/points/ads) */
+  --rlcNoticeLeft: max(12px, env(safe-area-inset-left));
+  --rlcNoticeTop: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+  --rlcNoticeW: min(420px, calc(100vw - 24px));
+  --rlcNoticeGap: 10px;
+
+  /* Offsets para evitar solapes si existen simultáneamente */
+  --rlcNoticeYPoints: 0px;
+  --rlcNoticeYAlerts: 94px;
+  --rlcNoticeYAds:    188px;
 }
 
-/* Hooks opcionales */
 body.ticker--off,
 body[data-ticker="0"]{
   --ui-top-offset: 0px;
@@ -141,7 +133,7 @@ body[data-ticker="0"]{
 }
 @keyframes rlcSheen{
   0%{ transform: translate3d(-120%,0,0); opacity: 0; }
-  20%{ opacity: .12; }
+  18%{ opacity: .14; }
   100%{ transform: translate3d(120%,0,0); opacity: 0; }
 }
 
@@ -156,7 +148,7 @@ body{
   font-family: var(--sans);
   line-height: 1.28;
   letter-spacing: .01em;
-  overflow: hidden; /* player */
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -175,18 +167,17 @@ a:hover{ text-decoration:none; }
 
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
   outline:none;
-  box-shadow: 0 0 0 3px var(--focus);
+  box-shadow: 0 0 0 3px rgba(87,201,255,.26);
   border-radius: 10px;
 }
 
-/* Strings largos: nunca rompen layout */
 .nowTitle, .nowMeta, .hudTitle, .hudValue, .hudLink, .hint, .fallbackText,
 #rlcChatList, #rlcChatList *{
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-/* Scrollbar (sobre todo control) */
+/* Scrollbar */
 @supports (scrollbar-color: rgba(255,255,255,.22) rgba(255,255,255,.06)){
   *{ scrollbar-color: rgba(255,255,255,.22) rgba(255,255,255,.06); scrollbar-width: thin; }
 }
@@ -209,7 +200,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
   top: var(--rlcNewsTop, var(--rlcTickerTop, 0px));
   height: var(--rlcBarH);
-  z-index: 20;
+  z-index: 100;
 
   display:flex;
   align-items:center;
@@ -223,12 +214,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   overflow:hidden;
   isolation:isolate;
 
-  /* ✅ Links clicables sin afectar la UI */
   pointer-events: auto;
   user-select: none;
 }
 
-/* “TV line” arriba + brillo */
 #rlcNewsTicker::before,
 #rlcEconTicker::before{
   content:"";
@@ -252,13 +241,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   z-index:0;
 }
 
-/* NEWS */
-#rlcNewsTicker{
-  --ticker-accent: var(--danger);
-  box-shadow: 0 10px 26px rgba(0,0,0,.38), 0 0 0 1px rgba(255,53,90,.10) inset;
-}
-
-/* ECON (debajo) */
+#rlcNewsTicker{ --ticker-accent: var(--danger); box-shadow: 0 10px 26px rgba(0,0,0,.38), 0 0 0 1px rgba(255,53,90,.10) inset; }
 #rlcEconTicker{
   --ticker-accent: rgba(71,215,155,.95);
   top: var(--rlcEconTop, calc(var(--rlcNewsTop, var(--rlcTickerTop, 0px)) + var(--rlcBarH) + var(--rlcTickerGap, 6px)));
@@ -268,7 +251,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 #rlcNewsTicker.hidden,
 #rlcEconTicker.hidden{ display:none !important; }
 
-/* Placeholder si está vacío */
 #rlcNewsTicker:empty::before,
 #rlcEconTicker:empty::before{
   content:"";
@@ -281,7 +263,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   border-radius: 999px;
   display:inline-flex;
   align-items:center;
-  font: 950 10px/1 var(--sans);
+  font: 700 10px/1 var(--sans);
   letter-spacing: .16em;
   text-transform: uppercase;
   color: rgba(255,255,255,.86);
@@ -298,13 +280,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   left: calc(max(12px, env(safe-area-inset-left)) + 72px);
   top:50%;
   transform: translateY(-50%);
-  font: 850 12px/1 var(--sans);
+  font: 600 12px/1 var(--sans);
   color: rgba(255,255,255,.62);
   z-index:2;
   opacity: .9;
 }
 
-/* Contenido interno */
 #rlcNewsTicker .tickerInner,
 #rlcEconTicker .tickerInner{
   width:100%;
@@ -317,7 +298,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   pointer-events: auto;
 }
 
-/* Badge estilo TV */
 #rlcNewsTicker .tickerBadge,
 #rlcEconTicker .tickerBadge{
   flex: 0 0 auto;
@@ -329,7 +309,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.14);
   background: rgba(255,255,255,.06);
-  font: 950 10px/1 var(--sans);
+  font: 700 10px/1 var(--sans);
   letter-spacing: .16em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -343,7 +323,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   box-shadow: 0 0 0 3px rgba(255,255,255,.10);
 }
 
-/* Texto */
 #rlcNewsTicker .tickerText,
 #rlcEconTicker .tickerText{
   min-width:0;
@@ -355,7 +334,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   text-shadow: 0 2px 10px rgba(0,0,0,.40);
 }
 
-/* Marquee */
 #rlcNewsTicker .tickerMarquee,
 #rlcEconTicker .tickerMarquee{
   display:inline-flex;
@@ -369,27 +347,23 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   animation: rlcTickerMarquee var(--rlcTickerDur, 18s) linear infinite;
 }
 #rlcNewsTicker:hover .tickerMarquee,
-#rlcEconTicker:hover .tickerMarquee{
-  animation-play-state: paused;
-}
+#rlcEconTicker:hover .tickerMarquee{ animation-play-state: paused; }
 
-/* Items ticker */
 .tkSeg{ display:inline-flex; align-items:center; gap: 16px; white-space: nowrap; }
-.tkSep{ opacity:.55; margin:0 6px; font-weight: 900; }
+.tkSep{ opacity:.55; margin:0 6px; font-weight: 700; }
 .tkItem{
   display:inline-flex;
   align-items:center;
   gap: 8px;
   color: rgba(255,255,255,.92);
   opacity: .95;
-  font-weight: 850;
+  font-weight: 700;
   text-decoration:none;
   pointer-events: auto;
 }
 .tkItem:hover{ opacity:1; text-decoration: underline; }
-.tkSrc{ opacity:.72; font-weight: 950; letter-spacing:.04em; text-transform: uppercase; }
+.tkSrc{ opacity:.72; font-weight: 700; letter-spacing:.04em; text-transform: uppercase; }
 
-/* Econ mini */
 .tkIco{
   width: 18px; height: 18px;
   border-radius: 6px;
@@ -403,18 +377,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .tkIco img{ width:16px; height:16px; object-fit:contain; filter: invert(1); opacity:.92; }
 .tkGlyph{ font-size:14px; line-height:1; }
-.tkNm{ font-weight: 950; letter-spacing:.02em; }
+.tkNm{ font-weight: 700; letter-spacing:.02em; }
 .tkPx, .tkChg, .tkMeta{ font-variant-numeric: tabular-nums; font-family: var(--mono); }
 .tkPx, .tkChg{ opacity:.92; }
 .tkChg.up{ color: rgba(71,215,155,.95); }
 .tkChg.down{ color: rgba(255,95,95,.95); }
-.tkMeta{ opacity:.72; font-weight: 900; }
+.tkMeta{ opacity:.72; font-weight: 600; }
 
-/* En modo control, tickers fuera */
 .mode-control #rlcNewsTicker,
 .mode-control #rlcEconTicker{ display:none !important; }
 
-/* ───────────────────────── UI CONTROLS (btn/input/select) ───────────────────────── */
+/* ───────────────────────── UI CONTROLS ───────────────────────── */
 .btn{
   appearance:none;
   border: 1px solid rgba(255,255,255,.14);
@@ -448,46 +421,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .btn:active{ transform: translateY(1px); }
 .btn:disabled{ opacity:.55; cursor:not-allowed; filter:none; transform:none; }
-.btn.ghost{
-  background: rgba(255,255,255,.045);
-  box-shadow: none;
-  border-color: rgba(255,255,255,.12);
-}
-.btn.full{ width:100%; }
-
-.input, .select, textarea.input{
-  width:100%;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.055);
-  color: var(--text);
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
-  outline:none;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-.input::placeholder, textarea.input::placeholder{ color: rgba(255,255,255,.40); }
-.select:focus, .input:focus, textarea.input:focus{
-  border-color: rgba(87,201,255,.34);
-  background: rgba(255,255,255,.072);
-  box-shadow: 0 0 0 3px rgba(87,201,255,.14);
-}
-.select{
-  -webkit-appearance:none;
-  appearance:none;
-  padding-right: 38px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, rgba(255,255,255,.72) 50%),
-    linear-gradient(135deg, rgba(255,255,255,.72) 50%, transparent 50%);
-  background-position:
-    calc(100% - 18px) 50%,
-    calc(100% - 13px) 50%;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-}
-input[type="range"]{ accent-color: var(--accent); }
 
 /* ───────────────────────── PLAYER LAYOUT ───────────────────────── */
 .app, .stage{ width:100%; height:100%; }
@@ -509,7 +442,6 @@ input[type="range"]{ accent-color: var(--accent); }
   inset: 0;
   overflow: hidden;
 
-  /* Fondo TV sobrio */
   background:
     radial-gradient(900px 520px at 50% 10%, rgba(87,201,255,.10), transparent 62%),
     radial-gradient(900px 620px at 18% 84%, rgba(255,53,90,.08), transparent 64%),
@@ -519,7 +451,6 @@ input[type="range"]{ accent-color: var(--accent); }
     linear-gradient(180deg, var(--bg), var(--bg2));
 }
 
-/* Vignette + scanlines ultra sutil */
 .stage::before{
   content:"";
   position:absolute;
@@ -542,7 +473,6 @@ input[type="range"]{ accent-color: var(--accent); }
   opacity: .10;
 }
 
-/* Grain sobre media */
 .layer-media::after{
   content:"";
   position:absolute;
@@ -555,7 +485,6 @@ input[type="range"]{ accent-color: var(--accent); }
   opacity: .10;
 }
 
-/* Media (video/iframe/img) */
 .media{
   position:absolute;
   inset:0;
@@ -571,7 +500,7 @@ input[type="range"]{ accent-color: var(--accent); }
 .fallback{
   position:absolute;
   inset:0;
-  z-index: 4;
+  z-index: 40;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -589,10 +518,11 @@ input[type="range"]{ accent-color: var(--accent); }
   animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
 }
 .fallbackTitle{
-  font-weight: 950;
+  font-weight: 700;
   margin: 0 0 6px;
-  letter-spacing:.01em;
-  font-size: 15px;
+  letter-spacing:.02em;
+  font-size: 16px;
+  text-transform: uppercase;
 }
 .fallbackText{
   color: var(--muted);
@@ -600,18 +530,18 @@ input[type="range"]{ accent-color: var(--accent); }
   margin: 0 0 12px;
 }
 
-/* ───────────────────────── HUD (LOWER THIRD TV) ───────────────────────── */
+/* ───────────────────────── HUD (NEWS LOWER THIRD) ───────────────────────── */
 .hud{
   position:absolute;
   left: max(12px, env(safe-area-inset-left));
   bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(640px, calc(100vw - 24px));
-  z-index: 5;
+  width: min(680px, calc(100vw - 24px));
+  z-index: 60;
 
   overflow:hidden;
-  border-radius: 14px;
+  border-radius: 16px;
   border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
+  background: linear-gradient(180deg, rgba(6,8,12,.92), rgba(8,10,14,.72));
   box-shadow: var(--shadow-soft);
 
   backdrop-filter: blur(12px);
@@ -622,14 +552,13 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 .hud a, .hud button{ pointer-events:auto; }
 
-/* “TV header strip” */
 .hud::before{
   content:"";
   position:absolute;
   left:0; right:0; top:0;
   height: 3px;
-  background: linear-gradient(90deg, rgba(255,53,90,.85), rgba(87,201,255,.75));
-  opacity: .85;
+  background: linear-gradient(90deg, rgba(255,53,90,.88), rgba(87,201,255,.78));
+  opacity: .9;
   z-index: 1;
 }
 .hud::after{
@@ -638,21 +567,20 @@ input[type="range"]{ accent-color: var(--accent); }
   inset:0;
   pointer-events:none;
   background:
-    radial-gradient(280px 100px at 16% 0%, rgba(255,53,90,.10), transparent 70%),
-    radial-gradient(280px 100px at 78% 0%, rgba(87,201,255,.10), transparent 70%);
-  opacity:.75;
+    radial-gradient(320px 120px at 14% 0%, rgba(255,53,90,.12), transparent 70%),
+    radial-gradient(360px 140px at 78% 0%, rgba(87,201,255,.10), transparent 70%);
+  opacity:.8;
   z-index: 0;
 }
 
 .hudBar{
   position:relative;
   z-index:2;
-  display:grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display:flex;
   align-items:center;
   gap: 10px;
   padding: 10px 12px 9px;
-  min-height: 48px;
+  min-height: 52px;
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
 
@@ -662,9 +590,10 @@ input[type="range"]{ accent-color: var(--accent); }
   align-items:center;
   gap: 10px;
   min-width: 0;
+  width: 100%;
 }
 
-/* Badge LIVE (TV) */
+/* LIVE badge */
 .badge{
   height: 28px;
   display:inline-flex;
@@ -673,10 +602,10 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(90deg, rgba(255,53,90,.16), rgba(0,0,0,0));
+  background: linear-gradient(90deg, rgba(255,53,90,.18), rgba(0,0,0,0));
   color: rgba(255,255,255,.92);
-  font: 950 11px/1 var(--sans);
-  letter-spacing: .14em;
+  font: 700 11px/1 var(--sans);
+  letter-spacing: .18em;
   text-transform: uppercase;
   user-select:none;
   white-space: nowrap;
@@ -691,13 +620,14 @@ input[type="range"]{ accent-color: var(--accent); }
   animation: rlcPulseDot 2.1s ease-in-out infinite;
 }
 
-/* Title (clamp + marquee seguro) */
+/* Title */
 .hudTitle{
-  font-size: 13px;
-  font-weight: 950;
+  font-size: 14px;
+  font-weight: 700;
   min-width: 0;
-  line-height: 1.22;
-  text-shadow: 0 2px 12px rgba(0,0,0,.40);
+  line-height: 1.15;
+  letter-spacing: .02em;
+  text-shadow: 0 2px 14px rgba(0,0,0,.45);
 
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -706,13 +636,12 @@ input[type="range"]{ accent-color: var(--accent); }
   overflow: hidden;
   text-overflow: ellipsis;
 
-  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0, #000 86%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 90%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 90%, transparent 100%);
 }
-.hud.hud--collapsed .hudTitle{ line-clamp: 1; }
 
-/* HUD TITLE MARQUEE (si data-marquee="1") */
-.hud.hud--collapsed .hudTitle[data-marquee="1"]{
+/* HUD marquee opcional si tu JS lo activa */
+.hudTitle[data-marquee="1"]{
   position: relative;
   display: block;
   white-space: nowrap;
@@ -726,8 +655,8 @@ input[type="range"]{ accent-color: var(--accent); }
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
   mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
 }
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::before,
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{
+.hudTitle[data-marquee="1"]::before,
+.hudTitle[data-marquee="1"]::after{
   content: attr(data-title);
   position: absolute;
   top: 0; left: 0;
@@ -740,57 +669,17 @@ input[type="range"]{ accent-color: var(--accent); }
   transform: translate3d(0,0,0);
   animation: rlcHudMarquee var(--hudMarqueeDur) linear infinite;
 }
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{ left: calc(100% + var(--hudMarqueeGap)); }
-.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::before,
-.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::after{ animation-play-state: paused; }
+.hudTitle[data-marquee="1"]::after{ left: calc(100% + var(--hudMarqueeGap)); }
+.hudTitle[data-marquee="1"]:hover::before,
+.hudTitle[data-marquee="1"]:hover::after{ animation-play-state: paused; }
 
-.hudRight{
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  flex-shrink: 0;
-}
+/* Oculta right area (por requerimiento) */
+.hudRight{ display:none !important; }
 
-/* Countdown chip */
-.hudCountdown{
-  position: relative;
-  font-size: 12.5px;
-  font-weight: 950;
-  padding: 6px 10px 6px 30px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.28);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: .02em;
-}
-.hudCountdown::before{
-  content:"⏱";
-  position:absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: .82;
-  font-size: 12px;
-}
-
-.hudToggle{
-  width: 32px;
-  height: 30px;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.06);
-  color: rgba(255,255,255,.92);
-  cursor:pointer;
-  transition: transform var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
-}
-.hudToggle:hover{ filter: brightness(1.08); background: rgba(255,255,255,.08); }
-.hudToggle:active{ transform: translateY(1px); }
-
-/* Progress (TV bar) */
+/* Progress bar (sigue siendo el “tiempo” visual) */
 .progress{
   position:relative;
-  height: 3px;
+  height: 4px;
   background: rgba(255,255,255,.06);
   border-radius: 999px;
   margin: 0 12px;
@@ -811,7 +700,7 @@ input[type="range"]{ accent-color: var(--accent); }
   content:"";
   position:absolute;
   top:-6px; bottom:-6px;
-  width: 40%;
+  width: 42%;
   left: 0;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent);
   filter: blur(.2px);
@@ -821,62 +710,57 @@ input[type="range"]{ accent-color: var(--accent); }
   pointer-events:none;
 }
 
-/* Details */
+/* HUD details: más “broadcast info” */
 .hudDetails{
   padding: 10px 12px 12px;
   background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,0));
-  max-height: 240px;
-  opacity: 1;
-  transform: translate3d(0,0,0);
-  transition:
-    max-height var(--dur-3) var(--ease-soft),
-    opacity var(--dur-2) var(--ease-soft),
-    transform var(--dur-2) var(--ease-soft),
-    padding var(--dur-2) var(--ease-soft);
+  display:flex;
+  flex-direction:column;
+  gap: 8px;
 }
+
 .hudRow{
-  display:grid;
-  grid-template-columns: 86px 1fr;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
   gap: 10px;
-  padding: 8px 0;
-  align-items: start;
-  border-top: 1px solid rgba(255,255,255,.06);
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
 }
-.hudRow:first-child{ border-top: 0; }
+
 .hudLabel{
+  flex: 0 0 auto;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: .14em;
-  font-weight: 950;
-  color: rgba(255,255,255,.60);
-}
-.hudValue{
-  font-size: 12px;
-  color: rgba(255,255,255,.88);
-  min-width: 0;
-  white-space: normal;
-}
-.hudLink{
-  color: rgba(255,255,255,.92);
-  border-bottom: 1px solid rgba(87,201,255,.35);
-}
-.hudLink:hover{ border-bottom-color: rgba(87,201,255,.65); }
-.hudFooter{
-  margin-top: 8px;
-  font-size: 11px;
+  letter-spacing: .18em;
+  font-weight: 700;
   color: rgba(255,255,255,.62);
 }
 
-.hud.hud--collapsed .hudDetails{
-  max-height: 0px;
-  opacity: 0;
-  transform: translate3d(0,-4px,0);
-  padding-top: 0;
-  padding-bottom: 0;
-  pointer-events:none;
+.hudValue{
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align:right;
+  font-size: 12.5px;
+  color: rgba(255,255,255,.90);
 }
 
-/* ───────────────────────── WEATHER CHIP (HUD) ───────────────────────── */
+.hudLink{
+  color: rgba(255,255,255,.92);
+  border-bottom: 1px solid rgba(87,201,255,.40);
+}
+.hudLink:hover{ border-bottom-color: rgba(87,201,255,.78); }
+
+.hudFooter{
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(255,255,255,.60);
+  padding: 0 2px;
+}
+
+/* Weather chip */
 #rlcHudWx{
   justify-self:end;
   display:inline-flex;
@@ -884,13 +768,13 @@ input[type="range"]{ accent-color: var(--accent); }
   gap: 8px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(0,0,0,.28);
+  background: rgba(0,0,0,.26);
   border: 1px solid rgba(255,255,255,.10);
   box-shadow: 0 10px 28px rgba(0,0,0,.40);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 
-  font: 950 12px/1 var(--sans);
+  font: 700 12px/1 var(--sans);
   color: rgba(255,255,255,.92);
   user-select:none;
   white-space: nowrap;
@@ -906,23 +790,24 @@ input[type="range"]{ accent-color: var(--accent); }
 .hudLeft > #rlcHudWx{ grid-column: 3; grid-row: 1; align-self:center; }
 #rlcHudWxIcon{ font-size: 13px; line-height: 1; }
 #rlcHudWx .wxDot{ opacity:.72; }
-#rlcHudWx .wxTemp{ opacity:.90; font-weight: 950; min-width: 3.2em; text-align: right; }
+#rlcHudWx .wxTemp{ opacity:.90; font-weight: 700; min-width: 3.2em; text-align: right; }
 #rlcHudWx .wxTime{ font-family: var(--mono); letter-spacing: .02em; width: 5ch; min-width: 3.6em; text-align: right; }
 #rlcHudWx.wxOff{ display:none !important; }
 
-/* ───────────────────────── VOTE OVERLAY ───────────────────────── */
+/* ───────────────────────── VOTE OVERLAY (UPGRADED) ───────────────────────── */
 .vote,
 #voteBox{
-  position:absolute;
+  position:fixed;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
   right: max(12px, env(safe-area-inset-right));
-  width: min(320px, calc(100vw - 24px));
-  z-index: 6;
+  width: min(360px, calc(100vw - 24px));
+  z-index: 90;
 
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
-  box-shadow: var(--shadow-soft);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: linear-gradient(180deg, rgba(7,9,13,.94), rgba(10,12,18,.78));
+  box-shadow: 0 18px 56px rgba(0,0,0,.44);
+
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   overflow:hidden;
@@ -935,125 +820,167 @@ input[type="range"]{ accent-color: var(--accent); }
   position:absolute;
   left:0; right:0; top:0;
   height:3px;
-  background: linear-gradient(90deg, rgba(255,53,90,.80), rgba(87,201,255,.70));
-  opacity:.85;
+  background: linear-gradient(90deg, rgba(255,53,90,.88), rgba(87,201,255,.74));
+  opacity:.92;
 }
+
 .voteTop{
   display:flex;
   align-items:flex-start;
   justify-content:space-between;
-  padding: 10px 10px 6px;
+  padding: 12px 12px 10px;
   gap: 10px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  border-bottom: 1px solid rgba(255,255,255,.08);
 }
 .voteTitle{
-  font-weight: 950;
+  font-weight: 700;
   font-size: 12px;
-  letter-spacing: .16em;
-  color: rgba(255,255,255,.86);
+  letter-spacing: .22em;
+  color: rgba(255,255,255,.88);
   white-space: nowrap;
   display:inline-flex;
   align-items:center;
-  gap: 8px;
+  gap: 10px;
   text-transform: uppercase;
 }
 .voteTitle::before{
   content:"";
-  width: 8px; height: 8px; border-radius: 999px;
+  width: 9px; height: 9px; border-radius: 999px;
   background: var(--danger);
-  box-shadow: 0 0 0 3px rgba(255,53,90,.16), 0 0 14px rgba(255,53,90,.34);
+  box-shadow: 0 0 0 3px rgba(255,53,90,.16), 0 0 16px rgba(255,53,90,.40);
 }
 .voteTime{
-  font-size: 12px;
-  color: rgba(255,255,255,.72);
+  font-size: 16px;
+  font-weight: 700;
+  color: rgba(255,255,255,.92);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   font-family: var(--mono);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
 }
+
 .voteHint{
-  padding: 8px 10px 10px;
-  font-size: 12px;
-  color: rgba(255,255,255,.64);
-  line-height: 1.32;
+  padding: 10px 12px 12px;
+  font-size: 12.5px;
+  color: rgba(255,255,255,.70);
+  line-height: 1.35;
 }
-.voteBars{ padding: 0 10px 12px; display:grid; gap: 8px; }
+
+.voteBars{ padding: 0 12px 14px; display:grid; gap: 10px; }
 .voteBar{
   position:relative;
-  height: 20px;
+  height: 26px;
   border-radius: 999px;
   background: rgba(255,255,255,.075);
   overflow:hidden;
-  border:  1px solid rgba(255,255,255,.08);
+  border:  1px solid rgba(255,255,255,.10);
 }
-.voteBarFill{ position:absolute; inset:0; width:0%; background: rgba(71,215,155,.42); }
-.voteBarFill.no{ background: rgba(255,77,109,.38); }
+.voteBarFill{
+  position:absolute; inset:0;
+  width:0%;
+  background: linear-gradient(90deg, rgba(71,215,155,.20), rgba(71,215,155,.55));
+}
+.voteBarFill.no{
+  background: linear-gradient(90deg, rgba(255,77,109,.18), rgba(255,77,109,.52));
+}
 .voteBarLabel{
   position:absolute; inset:0;
   display:flex; align-items:center; justify-content:space-between;
-  padding: 0 10px; gap: 8px;
-  font-size: 11px;
-  font-weight: 950;
+  padding: 0 12px;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing:.08em;
   color: rgba(255,255,255,.92);
+  text-transform: uppercase;
+  text-shadow: 0 2px 10px rgba(0,0,0,.34);
   min-width: 0;
 }
 
-/* ───────────────────────── ADS/ALERT overlays (compat) ───────────────────────── */
-#adsBox, #adBox, #adOverlay, #adsOverlay, #rlcAdsBox, #rlcAdBox, #rlcAdOverlay, #rlcAdsOverlay,
-.adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice, .alertBox, .alertsBox, .alertOverlay{
-  position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
-  left: max(12px, env(safe-area-inset-left));
-  right: auto;
-  z-index: 8;
+/* ───────────────────────── NOTICES STACK (POINTS / ALERTS / ADS) ───────────────────────── */
+/* Puntos (intentamos cubrir nombres típicos sin romper) */
+#rlcPointsBox, #pointsBox, #rlcPoints, .rlcPointsBox, .pointsBox{
+  position: fixed !important;
+  left: var(--rlcNoticeLeft) !important;
+  top: var(--rlcNoticeTop) !important;
+  width: var(--rlcNoticeW) !important;
+  z-index: 86 !important;
+  transform: translateY(var(--rlcNoticeYPoints)) !important;
   pointer-events:none;
 }
-#adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
-#rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *,
-.adBox > *, .adsBox > *, .adOverlay > *, .adsOverlay > *, .adNotice > *, .adsNotice > *, .alertBox > *, .alertsBox > *, .alertOverlay > *{
+
+/* Alertas (follow/sub/raid/etc) */
+#rlcAlertsBox, #alertsBox, #alertBox, #rlcAlertBox,
+#followAlertBox, #rlcFollowAlert, #rlcAlertOverlay, .alertBox, .alertsBox, .alertOverlay{
+  position: fixed !important;
+  left: var(--rlcNoticeLeft) !important;
+  top: var(--rlcNoticeTop) !important;
+  width: var(--rlcNoticeW) !important;
+  z-index: 87 !important;
+  transform: translateY(var(--rlcNoticeYAlerts)) !important;
   pointer-events:none;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.12);
+}
+
+/* Ads notice */
+#adsBox, #adBox, #adOverlay, #adsOverlay,
+#rlcAdsBox, #rlcAdBox, #rlcAdOverlay, #rlcAdsOverlay,
+.adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice{
+  position: fixed !important;
+  left: var(--rlcNoticeLeft) !important;
+  top: var(--rlcNoticeTop) !important;
+  width: var(--rlcNoticeW) !important;
+  z-index: 88 !important;
+  transform: translateY(var(--rlcNoticeYAds)) !important;
+  pointer-events:none;
+}
+
+/* Look unificado para el “contenido” interior (si el JS mete un child) */
+#rlcPointsBox > *, #pointsBox > *, #rlcPoints > *,
+#rlcAlertsBox > *, #alertsBox > *, #alertBox > *, #rlcAlertBox > *,
+#adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
+#rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *{
+  pointer-events:none;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.14);
   background: linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
-  box-shadow: 0 12px 30px rgba(0,0,0,.34);
+  box-shadow: 0 14px 40px rgba(0,0,0,.40);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   padding: 10px 12px;
-  max-width: min(420px, calc(100vw - 24px));
   font-size: 12.5px;
   line-height: 1.3;
+  overflow:hidden;
+  position: relative;
 }
+#rlcPointsBox > *::before, #pointsBox > *::before, #rlcPoints > *::before,
+#rlcAlertsBox > *::before, #alertsBox > *::before, #alertBox > *::before, #rlcAlertBox > *::before,
 #adsBox > *::before, #adBox > *::before, #adOverlay > *::before, #adsOverlay > *::before,
-#rlcAdsBox > *::before, #rlcAdBox > *::before, #rlcAdOverlay > *::before, #rlcAdsOverlay > *::before,
-.adBox > *::before, .adsBox > *::before, .adOverlay > *::before, .adsOverlay > *::before, .adNotice > *::before,
-.adsNotice > *::before, .alertBox > *::before, .alertsBox > *::before, .alertOverlay > *::before{
+#rlcAdsBox > *::before, #rlcAdBox > *::before, #rlcAdOverlay > *::before, #rlcAdsOverlay > *::before{
   content:"";
   display:block;
   height: 3px;
   margin: -10px -12px 10px;
   background: linear-gradient(90deg, rgba(255,53,90,.78), rgba(87,201,255,.62));
-  opacity:.85;
+  opacity:.9;
 }
 
-/* ───────────────────────── CHAT OVERLAY (BUBBLES + AVATAR + NAME) ───────────────────────── */
-/* ✅ Objetivo: burbujas más “TV”, más legibles, sin panel negro, sin :has. */
-
+/* ───────────────────────── CHAT OVERLAY (BUBBLES) ───────────────────────── */
 .rlcChatRoot{
-  position:absolute;
+  position:fixed;
   right: max(12px, env(safe-area-inset-right));
   bottom: max(12px, env(safe-area-inset-bottom));
   width: var(--chatW);
   max-height: var(--chatMaxH);
-  z-index: 7;
+  z-index: 80;
   pointer-events:none;
   display:none;
-
-  /* evita “bloques” por herencias raras */
   background: transparent !important;
 }
 .rlcChatRoot.chat--on{ display:block !important; }
 
-/* Lista: apila mensajes hacia abajo; con fade superior suave */
 #rlcChatList{
   position:relative;
   display:flex;
@@ -1064,12 +991,10 @@ input[type="range"]{ accent-color: var(--accent); }
   overflow:hidden;
   padding: 2px;
 
-  /* fade superior (si soporta mask) */
   -webkit-mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
   mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
 }
 
-/* Cada mensaje (fila): jamás pinta fondo */
 #rlcChatList > *{
   pointer-events:none;
   position: relative;
@@ -1078,14 +1003,13 @@ input[type="range"]{ accent-color: var(--accent); }
   gap: var(--chatGap);
   min-width: 0;
 
-  background: transparent !important; /* FIX panel negro */
+  background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
 
   animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
 }
 
-/* Avatar (si existe) */
 #rlcChatList > * img,
 #rlcChatList > * .avatar,
 #rlcChatList > * .pfp{
@@ -1102,7 +1026,6 @@ input[type="range"]{ accent-color: var(--accent); }
     0 0 0 1px rgba(87,201,255,.10) inset;
 }
 
-/* Nombre: pill encima de la burbuja */
 #rlcChatList > * .name,
 #rlcChatList > * .user,
 #rlcChatList > * .author,
@@ -1111,8 +1034,8 @@ input[type="range"]{ accent-color: var(--accent); }
   left: calc(var(--chatAvatar) + var(--chatGap));
   top: -12px;
 
-  font: 950 11px/1 var(--sans);
-  letter-spacing: .04em;
+  font: 700 11px/1 var(--sans);
+  letter-spacing: .06em;
   color: rgba(255,255,255,.92);
 
   padding: 4px 10px;
@@ -1131,7 +1054,6 @@ input[type="range"]{ accent-color: var(--accent); }
   -webkit-backdrop-filter: blur(10px);
 }
 
-/* ───── Burbuja preferida (wrappers típicos) ───── */
 #rlcChatList > * .msg,
 #rlcChatList > * .message,
 #rlcChatList > * .body{
@@ -1151,7 +1073,7 @@ input[type="range"]{ accent-color: var(--accent); }
   padding: 10px 12px 11px;
 
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.35;
   color: var(--chatText);
   text-shadow: 0 2px 10px rgba(0,0,0,.34);
@@ -1160,8 +1082,6 @@ input[type="range"]{ accent-color: var(--accent); }
   position: relative;
   z-index: 2;
 }
-
-/* Strip broadcast (igual que HUD/Vote, pero más fino) */
 #rlcChatList > * .msg::before,
 #rlcChatList > * .message::before,
 #rlcChatList > * .body::before{
@@ -1174,8 +1094,6 @@ input[type="range"]{ accent-color: var(--accent); }
   opacity:.82;
   pointer-events:none;
 }
-
-/* Tail (mejorado) */
 #rlcChatList > * .msg::after,
 #rlcChatList > * .message::after,
 #rlcChatList > * .body::after{
@@ -1193,73 +1111,6 @@ input[type="range"]{ accent-color: var(--accent); }
   box-shadow: -6px 10px 18px rgba(0,0,0,.18);
 }
 
-/* ───── Fallback (sin wrapper): estiliza hijo “contenido” típico ───── */
-#rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp),
-#rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick),
-#rlcChatList > * > p{
-  flex: 1 1 auto;
-  min-width: 0;
-
-  border-radius: 16px;
-  border: 1px solid var(--chatBubbleStroke);
-  background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
-  box-shadow:
-    var(--chatBubbleShadow),
-    0 0 0 1px var(--chatBubbleGlow) inset;
-
-  backdrop-filter: blur(12px) saturate(1.12);
-  -webkit-backdrop-filter: blur(12px) saturate(1.12);
-
-  padding: 10px 12px 11px;
-
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.35;
-  color: var(--chatText);
-  text-shadow: 0 2px 10px rgba(0,0,0,.34);
-
-  white-space: normal;
-  position: relative;
-  z-index: 2;
-}
-#rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::before,
-#rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::before,
-#rlcChatList > * > p::before{
-  content:"";
-  position:absolute;
-  left:0; right:0; top:0;
-  height:2px;
-  border-radius: 16px 16px 0 0;
-  background: linear-gradient(90deg, rgba(255,53,90,.55), rgba(87,201,255,.45));
-  opacity:.82;
-  pointer-events:none;
-}
-#rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::after,
-#rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::after,
-#rlcChatList > * > p::after{
-  content:"";
-  position:absolute;
-  left: calc(-1 * (var(--chatTailSize) / 2));
-  bottom: var(--chatTailLift);
-  width: var(--chatTailSize);
-  height: var(--chatTailSize);
-  background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
-  border-left: 1px solid var(--chatBubbleStroke);
-  border-bottom: 1px solid var(--chatBubbleStroke);
-  transform: rotate(45deg);
-  border-bottom-left-radius: 3px;
-  box-shadow: -6px 10px 18px rgba(0,0,0,.18);
-}
-
-/* Tipografía interna + links/emotes */
-#rlcChatList b, #rlcChatList strong{
-  font-weight: 950;
-  color: rgba(255,255,255,.96);
-}
-#rlcChatList em{
-  font-style: normal;
-  color: rgba(87,201,255,.92);
-}
 #rlcChatList a{
   color: var(--chatLink);
   text-decoration: underline;
@@ -1267,15 +1118,7 @@ input[type="range"]{ accent-color: var(--accent); }
   text-underline-offset: 2px;
 }
 #rlcChatList a:hover{ text-decoration-color: rgba(87,201,255,.78); }
-#rlcChatList code{
-  font-family: var(--mono);
-  font-size: 12px;
-  color: rgba(255,255,255,.92);
-  background: rgba(0,0,0,.26);
-  border: 1px solid rgba(255,255,255,.10);
-  padding: 2px 6px;
-  border-radius: 8px;
-}
+
 #rlcChatList img{
   max-height: 1.35em;
   width: auto;
@@ -1283,49 +1126,46 @@ input[type="range"]{ accent-color: var(--accent); }
   vertical-align: -0.22em;
 }
 
-/* “Bot/System” (si tu JS mete clases) — no rompe si no existen */
-#rlcChatList > *.bot .msg,
-#rlcChatList > *.bot .message,
-#rlcChatList > *.bot .body{
-  border-color: rgba(71,215,155,.24);
-  box-shadow: var(--chatBubbleShadow), 0 0 0 1px rgba(71,215,155,.12) inset;
-}
-#rlcChatList > *.bot .msg::before,
-#rlcChatList > *.bot .message::before,
-#rlcChatList > *.bot .body::before{
-  background: linear-gradient(90deg, rgba(71,215,155,.55), rgba(87,201,255,.35));
-}
-
-/* ───────────────────────── OPTIONAL: CATALOG (si existe) ───────────────────────── */
-#rlcCatalog,
-.rlcCatalogRoot{
-  position:absolute;
-  inset:0;
-  z-index: 4;
+/* ───────────────────────── DIAG OVERLAY ───────────────────────── */
+#rlcDiag{
+  position:fixed; inset:14px;
+  z-index:2147483645;
   display:none;
+  pointer-events:auto;
 }
-body.catalog--on #rlcCatalog,
-body.catalog--on .rlcCatalogRoot{ display:block; }
-
-#rlcCatalog .catalogGrid,
-.rlcCatalogRoot .catalogGrid{
-  position:absolute;
-  inset:0;
-  padding: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-  display:grid;
-  gap: 8px;
-}
-#rlcCatalog .catalogCell,
-.rlcCatalogRoot .catalogCell{
-  border-radius: var(--r);
+#rlcDiag.on{ display:block; }
+#rlcDiag .card{
+  max-width:980px;
+  margin:0 auto;
+  background:rgba(10,14,22,.86);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:16px;
+  box-shadow:0 18px 60px rgba(0,0,0,.55);
   overflow:hidden;
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(0,0,0,.45);
-  box-shadow: 0 12px 30px rgba(0,0,0,.30);
-  position: relative;
+}
+#rlcDiag .hdr{
+  padding:12px 14px;
+  font:700 12px/1 var(--sans);
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  background:linear-gradient(90deg, rgba(255,59,59,.20), rgba(55,214,255,.12));
+  border-bottom:1px solid rgba(255,255,255,.12);
+}
+#rlcDiag pre{
+  margin:0;
+  padding:12px 14px;
+  white-space:pre-wrap;
+  font:600 12px/1.35 var(--mono);
+  color:rgba(255,255,255,.92);
+}
+#rlcDiag .tip{
+  padding:10px 14px 14px;
+  color:rgba(255,255,255,.70);
+  border-top:1px solid rgba(255,255,255,.10);
+  font:600 12px/1.3 var(--sans);
 }
 
-/* ───────────────────────── CONTROL ROOM ───────────────────────── */
+/* ───────────────────────── CONTROL ROOM (mantener compat) ───────────────────────── */
 body.mode-control{
   overflow:auto;
   overflow-x:hidden;
@@ -1343,186 +1183,16 @@ body.mode-control{
 .mode-control .layer-media,
 .mode-control .layer-ui{ display:none !important; }
 
-.controlWrap{ max-width: 1240px; margin: 0 auto; padding: 16px; }
-
-/* header NO sticky */
-.mode-control .controlHeader{ position: relative !important; top:auto !important; }
-
-.controlHeader{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255,255,255,.10);
-  position: relative;
-}
-.controlHeader::after{
-  content:"";
-  position:absolute;
-  left:0; right:0; bottom:-1px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.20), transparent);
-  opacity:.65;
-}
-
-.controlTitle .kicker{
-  font-size: 11px;
-  letter-spacing: .18em;
-  color: rgba(255,255,255,.54);
-  text-transform: uppercase;
-}
-.controlTitle .name{
-  font-weight: 950;
-  font-size: 16px;
-  letter-spacing: .02em;
-}
-
-.pill{
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.055);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  white-space: nowrap;
-}
-.pill--ok{ border-color: rgba(71,215,155,.25); background: rgba(71,215,155,.10); }
-.pill--bad{ border-color: rgba(255,77,109,.25); background: rgba(255,77,109,.10); }
-
-.controlGrid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-@media (max-width: 1180px){
-  .controlGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-.card{
-  border-radius: var(--r-lg);
-  border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(12,14,20,.86), rgba(9,11,16,.78));
-  box-shadow: 0 14px 44px rgba(0,0,0,.34);
-  padding: 12px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  overflow: visible;
-  position: relative;
-  transition: transform var(--dur-2) var(--ease-out), filter var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
-}
-.card::before{
-  content:"";
-  position:absolute;
-  left: 10px;
-  right: 10px;
-  top: 0;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255,255,255,.18), transparent);
-  opacity: .55;
-}
-.card::after{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  pointer-events:none;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent);
-  filter: blur(10px);
-  opacity: 0;
-  animation: rlcSheen 10s var(--ease-soft) infinite;
-}
-.card:hover{
-  transform: translate3d(0,-2px,0);
-  filter: brightness(1.02);
-  box-shadow: 0 18px 56px rgba(0,0,0,.38), 0 0 0 1px rgba(87,201,255,.06) inset;
-}
-
-.cardTitle{
-  font-weight: 950;
-  font-size: 12px;
-  letter-spacing: .08em;
-  margin: 0 0 10px;
-  color: rgba(255,255,255,.86);
-  text-transform: uppercase;
-}
-
-.nowTitle{ font-weight: 950; font-size: 14px; margin:0; line-height:1.22; }
-.nowMeta{ margin-top: 6px; font-size: 12px; color: rgba(255,255,255,.70); line-height:1.28; }
-
-.controls3{
-  display:grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 8px;
-}
-
-.row{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap: 10px;
-  margin: 10px 0;
-  flex-wrap: wrap;
-}
-.row > span{
-  min-width: 120px;
-  color: rgba(255,255,255,.74);
-  font-size: 12px;
-}
-.row2{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 10px;
-}
-.hint{
-  margin-top: 10px;
-  font-size: 11px;
-  color: rgba(255,255,255,.56);
-  line-height: 1.45;
-}
-
-.previewWrap{
-  margin-top: 10px;
-  border-radius: var(--r);
-  overflow:hidden;
-  border: 1px solid rgba(255,255,255,.10);
-  background: #000;
-}
-.previewFrame{ width:100%; aspect-ratio: 16 / 9; border:0; }
-@supports not (aspect-ratio: 16 / 9){
-  .previewWrap{ position:relative; height:0; padding-top:56.25%; }
-  .previewFrame{ position:absolute; inset:0; width:100%; height:100%; }
-}
-
-.controlFooter{
-  margin-top: 14px;
-  color: rgba(255,255,255,.56);
-  font-size: 11px;
-  display:flex;
-  gap: 8px;
-  align-items:center;
-  justify-content:center;
-  flex-wrap: wrap;
-}
-
 /* ───────────────────────── RESPONSIVE ───────────────────────── */
 @media (max-width: 980px){
-  .controlGrid{ grid-template-columns: 1fr; }
-  .row > span{ min-width: 108px; }
-  .controls3{ grid-template-columns: 1fr; }
   .hud{ width: min(720px, calc(100vw - 24px)); }
-  .vote, #voteBox{ width: min(360px, calc(100vw - 24px)); }
+  .vote, #voteBox{ width: min(380px, calc(100vw - 24px)); }
 }
 @media (max-width: 420px){
-  .hudRow{ grid-template-columns: 78px 1fr; }
   .hud{ left: max(10px, env(safe-area-inset-left)); bottom: max(10px, env(safe-area-inset-bottom)); }
   .hudBar{ padding-left: 10px; padding-right: 10px; }
   .progress{ margin-left: 10px; margin-right: 10px; }
 
-  /* nombre del chat: evita cortar en móvil */
   #rlcChatList > * .name,
   #rlcChatList > * .user,
   #rlcChatList > * .author,
@@ -1532,64 +1202,34 @@ body.mode-control{
   }
 }
 
-/* ───────────────────────── OPERA/SAFARI “NO-MASK” ───────────────────────── */
+/* ───────────────────────── NO-MASK FALLBACK ───────────────────────── */
 @supports not ((-webkit-mask-image: linear-gradient(#000,#000)) or (mask-image: linear-gradient(#000,#000))){
   .hudTitle{ -webkit-mask-image:none !important; mask-image:none !important; }
-  .hud.hud--collapsed .hudTitle[data-marquee="1"]{
-    -webkit-mask-image:none !important;
-    mask-image:none !important;
-    color: rgba(255,255,255,.92) !important;
-  }
-  /* Chat list fade: desactiva mask si no hay soporte */
   #rlcChatList{ -webkit-mask-image:none !important; mask-image:none !important; }
 }
 
-/* ───────────────────────── ACCESSIBILITY ───────────────────────── */
+/* ───────────────────────── REDUCED MOTION ───────────────────────── */
 @media (prefers-reduced-motion: reduce){
-  .btn, .hudToggle, .card, .pill{ transition:none !important; }
-  .badge::before, .progressBar::after, .card::after{ animation:none !important; }
+  .btn, .hud, .vote, #voteBox{ transition:none !important; }
+  .badge::before, .progressBar::after{ animation:none !important; }
   .fallbackCard, .hud, .vote, #voteBox, #rlcChatList > *{ animation:none !important; }
   #rlcNewsTicker[data-marquee="1"] .tickerMarquee,
   #rlcEconTicker[data-marquee="1"] .tickerMarquee{ animation:none !important; }
 }
 
-/* ───────────────────────── FALLBACK: sin backdrop-filter ───────────────────────── */
-/* ✅ FIX: NO pintamos #rlcChatList > * (fila). Solo las burbujas. */
+/* ───────────────────────── NO BACKDROP FILTER ───────────────────────── */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  .hud, .vote, #voteBox, .card, .pill, .fallbackCard, #rlcNewsTicker, #rlcEconTicker{
+  .hud, .vote, #voteBox, .fallbackCard, #rlcNewsTicker, #rlcEconTicker{
     backdrop-filter:none !important;
     -webkit-backdrop-filter:none !important;
-  }
-  .hud, .vote, #voteBox, #rlcNewsTicker, #rlcEconTicker{
     background: rgba(8,10,14,.92) !important;
   }
-  .card{
-    background: rgba(12,14,20,.88) !important;
-    border-color: rgba(255,255,255,.10) !important;
-  }
-
-  /* Chat: burbuja sólida limpia (sin “panel negro” detrás) */
-  #rlcChatList > *{ background: transparent !important; }
-
   #rlcChatList > * .msg,
   #rlcChatList > * .message,
-  #rlcChatList > * .body,
-  #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp),
-  #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick),
-  #rlcChatList > * > p{
+  #rlcChatList > * .body{
     backdrop-filter:none !important;
     -webkit-backdrop-filter:none !important;
     background: rgba(10,12,18,.92) !important;
   }
-
-  #rlcChatList > * .msg::after,
-  #rlcChatList > * .message::after,
-  #rlcChatList > * .body::after,
-  #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::after,
-  #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::after,
-  #rlcChatList > * > p::after{
-    background: rgba(10,12,18,.92) !important;
-  }
-
   .stage::before, .layer-media::after{ opacity: .16; }
 }
