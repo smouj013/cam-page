@@ -1,7 +1,8 @@
-/* music.js — RLC Music (BGM LIST) v2.3.8 (SAFE + COMPAT)
+/* music.js — RLC Music (BGM LIST) v2.3.9 (SAFE + COMPAT++)
    ✅ NO cambia tu API: window.BGM_LIST (mismos items/ids por defecto)
    ✅ Guard anti-doble-carga + cache-bust (APP_VERSION) + normalización + dedupe
    ✅ Si ya existe window.BGM_LIST (custom), lo respeta y lo sanea
+   ✅ Compat extra: acepta campos legacy (src/href/name/label) y genera id estable si falta
 */
 (() => {
   "use strict";
@@ -9,7 +10,7 @@
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
   // ✅ Guard anti doble carga (por SW/duplicados)
-  const LOAD_GUARD = "__RLC_MUSIC_LOADED_V238";
+  const LOAD_GUARD = "__RLC_MUSIC_LOADED_V239";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   const APPV = String((g && g.APP_VERSION) || "").trim();
@@ -43,7 +44,6 @@
     } catch (_) {
       // fallback ultra simple
       const join = base.includes("?") ? "&" : "?";
-      // si ya hay v=, intentamos reemplazo best-effort
       if (/[?&]v=/.test(base)) {
         return (base.replace(/([?&])v=[^&#]*/g, `$1v=${encodeURIComponent(APPV)}`)) + hash;
       }
@@ -51,7 +51,8 @@
     }
   };
 
-  // ✅ Lista por defecto (MISMO contenido que tu v2.3.4)
+  // ✅ Default list (mantiene tu set “ambient_*”)
+  // Nota: si tú ya pones tu BGM_LIST custom, esta no se usa.
   const DEFAULT_LIST = [
     { id: "ambient_01", title: "Ambient 01", url: "./assets/audio/ambient_01.mp3" },
     { id: "ambient_02", title: "Ambient 02", url: "./assets/audio/ambient_02.mp3" },
@@ -59,26 +60,80 @@
     { id: "ambient_04", title: "Ambient 04", url: "./assets/audio/ambient_04.mp3" }
   ];
 
+  // --- helpers compat ---
+  const pick = (obj, keys) => {
+    for (const k of keys) {
+      if (obj && Object.prototype.hasOwnProperty.call(obj, k)) return obj[k];
+    }
+    return undefined;
+  };
+
+  // id estable desde url (si falta id) — evita “perder” tracks
+  const stableIdFromUrl = (url) => {
+    const s = String(url || "").trim();
+    if (!s) return "";
+    // Hash simple y estable (djb2)
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+    // a positivo + base36
+    return "bgm_" + (h >>> 0).toString(36);
+  };
+
+  const normUrlKey = (url) => {
+    const s = String(url || "").trim();
+    if (!s) return "";
+    // para dedupe por url: quita el v=... (porque cambia por APPV)
+    return s.replace(/([?&])v=[^&#]*/g, "$1v=").replace(/[?&]$/, "");
+  };
+
   function normalizeList(listLike) {
-    const arr = Array.isArray(listLike) ? listLike : [];
+    // soporta array, o objeto-map {id:{...}} por compat
+    let arr = [];
+    if (Array.isArray(listLike)) {
+      arr = listLike;
+    } else if (listLike && typeof listLike === "object") {
+      arr = Object.keys(listLike).map((k) => {
+        const v = listLike[k];
+        if (v && typeof v === "object") return { id: k, ...v };
+        return { id: k, url: v };
+      });
+    }
+
     const out = [];
-    const seen = new Set();
+    const seenId = new Set();
+    const seenUrl = new Set();
 
     for (const t of arr) {
       if (!t || typeof t !== "object") continue;
 
-      const id = safeStr(t.id);
-      const title = safeStr(t.title);
-      const url = safeStr(t.url);
+      // compat: id puede venir en id/key
+      let id = safeStr(pick(t, ["id", "key"]));
+      const titleRaw = pick(t, ["title", "name", "label"]);
+      const urlRaw = pick(t, ["url", "src", "href", "file"]);
 
-      if (!id || !url) continue;
-      if (seen.has(id)) continue;
-      seen.add(id);
+      const title = safeStr(titleRaw);
+      const url0 = safeStr(urlRaw);
+
+      if (!url0) continue;
+
+      // genera id si falta
+      if (!id) id = stableIdFromUrl(url0);
+      if (!id) continue;
+
+      const url = withV(url0);
+      const urlKey = normUrlKey(url);
+
+      // dedupe robusto (id primero, luego url)
+      if (seenId.has(id)) continue;
+      if (urlKey && seenUrl.has(urlKey)) continue;
+
+      seenId.add(id);
+      if (urlKey) seenUrl.add(urlKey);
 
       out.push({
         id,
         title: title || id,
-        url: withV(url)
+        url
       });
     }
 
@@ -86,11 +141,13 @@
   }
 
   // ✅ Si ya hay una lista custom definida, la respetamos.
-  const base = (Array.isArray(g.BGM_LIST) && g.BGM_LIST.length) ? g.BGM_LIST : DEFAULT_LIST;
+  const base = (Array.isArray(g.BGM_LIST) && g.BGM_LIST.length) ? g.BGM_LIST
+             : (g.BGM_LIST && typeof g.BGM_LIST === "object" && Object.keys(g.BGM_LIST).length) ? g.BGM_LIST
+             : DEFAULT_LIST;
 
   // ✅ Publica EXACTAMENTE window.BGM_LIST (sin romper control.js)
   g.BGM_LIST = normalizeList(base);
 
   // Extra: debug suave (no obligatorio)
-  try { g.RLC_MUSIC_VERSION = "2.3.8"; } catch (_) {}
+  try { g.RLC_MUSIC_VERSION = "2.3.9"; } catch (_) {}
 })();

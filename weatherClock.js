@@ -1,11 +1,12 @@
-/* weatherClock.js — RLC Weather+LocalTime v1.0.5
-   ✅ NO KEY (Open-Meteo)
-   ✅ NO FLICKER (oculta hasta tener datos válidos)
+/* weatherClock.js — RLC Weather+LocalTime v1.0.6 (v2.3.9 COMPAT)
+   ✅ Open-Meteo (NO API key)
+   ✅ NO FLICKER: no muestra nada hasta tener datos válidos
    ✅ Se auto-desactiva cuando catálogo 2x2 está ON (solo WX por tile)
    ✅ window.RLCWx.getSummaryForCam() para catalogView.js
    ✅ Si timezone/hora/temp inválidos -> NO muestra contenedor (HUD) y devuelve null (tiles)
    ✅ NO fallback a hora local (evita horas incorrectas)
    ✅ Retry con backoff si falla API/geocode
+   ✅ Compat 2.3.9: KEY = URL ?key= | localStorage rlc_last_key_v1 | msg.key (adopta), legacy bus acepta msg sin key
 */
 
 (() => {
@@ -13,17 +14,20 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_WX_LOADED_V105";
+  const LOAD_GUARD = "__RLC_WX_LOADED_V106";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  const BUS_BASE = "rlc_bus_v1";
-  const STATE_KEY_BASE = "rlc_state_v1";
+  // ───────────────────────── Consts / Keys
+  const BUS_BASE        = "rlc_bus_v1";
+  const STATE_KEY_BASE  = "rlc_state_v1";
+  const LAST_KEY_STORE  = "rlc_last_key_v1";
 
   const GEO_CACHE_KEY_BASE = "rlc_geo_cache_v1";
   const WX_CACHE_KEY_BASE  = "rlc_wx_cache_v1";
 
   const qs = (s, r = document) => r.querySelector(s);
   const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
+  const isObj = (x) => !!x && typeof x === "object";
 
   function parseParams() {
     const u = new URL(location.href);
@@ -32,30 +36,98 @@
       wxDebug: safeStr(u.searchParams.get("wxDebug") || "")
     };
   }
+
   const P = parseParams();
-  const KEY = P.key;
-
-  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-  const BUS_LEGACY = BUS_BASE;
-
-  const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
-  const STATE_KEY_LEGACY = STATE_KEY_BASE;
-
-  const GEO_CACHE_KEY = KEY ? `${GEO_CACHE_KEY_BASE}:${KEY}` : GEO_CACHE_KEY_BASE;
-  const WX_CACHE_KEY  = KEY ? `${WX_CACHE_KEY_BASE}:${KEY}`  : WX_CACHE_KEY_BASE;
-
   const DEBUG = (P.wxDebug === "1" || P.wxDebug === "true");
   const log = (...a) => { if (DEBUG) console.log("[RLC:WX]", ...a); };
 
-  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
-  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+  function readLS(k) { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } }
+  function writeLS(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
 
-  function keyOk(msg, isMainChannel) {
-    if (!KEY) return true;
-    if (isMainChannel) return true;
-    return (msg && msg.key === KEY);
+  function getLastKey() {
+    return safeStr(readLS(LAST_KEY_STORE) || "");
   }
 
+  // KEY resolution: URL > lastKey
+  let KEY = P.key || getLastKey();
+
+  function computeKeyed(base, key) {
+    const k = safeStr(key || "");
+    return k ? `${base}:${k}` : base;
+  }
+
+  function getBusNames() {
+    return {
+      legacy: BUS_BASE,
+      main: computeKeyed(BUS_BASE, KEY)
+    };
+  }
+
+  function getStateKeys() {
+    return {
+      legacy: STATE_KEY_BASE,
+      main: computeKeyed(STATE_KEY_BASE, KEY)
+    };
+  }
+
+  function getCacheKeys() {
+    return {
+      geo: computeKeyed(GEO_CACHE_KEY_BASE, KEY),
+      wx:  computeKeyed(WX_CACHE_KEY_BASE, KEY),
+      geoLegacy: GEO_CACHE_KEY_BASE,
+      wxLegacy:  WX_CACHE_KEY_BASE
+    };
+  }
+
+  // ───────────────────────── BroadcastChannels (legacy + keyed)
+  const canBC = ("BroadcastChannel" in window);
+  let bcLegacy = canBC ? new BroadcastChannel(BUS_BASE) : null;
+  let bcMain   = (canBC && KEY) ? new BroadcastChannel(computeKeyed(BUS_BASE, KEY)) : null;
+
+  function closeBC(bc) { try { bc && bc.close && bc.close(); } catch (_) {} }
+
+  function ensureKey(maybeKey) {
+    const k = safeStr(maybeKey || "");
+    if (!k) return false;
+    if (KEY === k) return true;
+
+    KEY = k;
+    writeLS(LAST_KEY_STORE, KEY);
+
+    // recrea bcMain (keyed)
+    if (canBC) {
+      closeBC(bcMain);
+      bcMain = null;
+      try { bcMain = new BroadcastChannel(computeKeyed(BUS_BASE, KEY)); } catch (_) { bcMain = null; }
+      if (bcMain) {
+        try { bcMain.addEventListener("message", (ev) => onBusMessage(ev?.data, true)); } catch (_) {}
+      }
+    }
+
+    log("KEY adoptada:", KEY);
+    return true;
+  }
+
+  // Compat legacy:
+  // - si KEY existe: en canal legacy aceptamos msg.key vacío (control viejo) o msg.key === KEY
+  // - si KEY no existe: aceptamos todo; si msg.key viene, adoptamos.
+  function keyOk(msg, isMainChannel) {
+    if (!isObj(msg)) return false;
+
+    if (!KEY) {
+      const mk = safeStr(msg.key || "");
+      if (mk) ensureKey(mk);
+      return true;
+    }
+
+    if (isMainChannel) return true;
+
+    const mk = safeStr(msg.key || "");
+    if (!mk) return true; // legacy/control viejo sin key
+    return mk === KEY;
+  }
+
+  // ───────────────────────── JSON storage helpers
   function readJson(key) {
     try {
       const raw = localStorage.getItem(key);
@@ -68,11 +140,23 @@
     try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
 
-  function getGeoCache() { return readJson(GEO_CACHE_KEY) || {}; }
-  function setGeoCache(map) { writeJson(GEO_CACHE_KEY, map || {}); }
+  function getGeoCache() {
+    const K = getCacheKeys();
+    return readJson(K.geo) || readJson(K.geoLegacy) || {};
+  }
+  function setGeoCache(map) {
+    const K = getCacheKeys();
+    writeJson(K.geo, map || {});
+  }
 
-  function getWxCache() { return readJson(WX_CACHE_KEY) || {}; }
-  function setWxCache(map) { writeJson(WX_CACHE_KEY, map || {}); }
+  function getWxCache() {
+    const K = getCacheKeys();
+    return readJson(K.wx) || readJson(K.wxLegacy) || {};
+  }
+  function setWxCache(map) {
+    const K = getCacheKeys();
+    writeJson(K.wx, map || {});
+  }
 
   // ───────────────────────── Catalog mode detection
   function isCatalogOn() {
@@ -180,8 +264,7 @@
     if (!m) return "";
     const n = parseInt(m[0], 10);
     if (!Number.isFinite(n)) return "";
-    // rango razonable para evitar basura (sensores/parse raros)
-    if (n < -90 || n > 70) return "";
+    if (n < -90 || n > 70) return ""; // rango razonable
     return `${n}°C`;
   }
 
@@ -236,7 +319,12 @@
     return safeStr(place).toLowerCase().replace(/\s+/g, " ").slice(0, 140);
   }
 
-  async function geocodePlace(place, preferLang = "en") {
+  function preferLang() {
+    const lang = safeStr(document.documentElement.getAttribute("lang") || "en").toLowerCase();
+    return lang.startsWith("es") ? "es" : "en";
+  }
+
+  async function geocodePlace(place) {
     const p = cleanPlaceForGeocode(place);
     if (!p) return null;
 
@@ -253,7 +341,7 @@
       `https://geocoding-api.open-meteo.com/v1/search` +
       `?name=${encodeURIComponent(p)}` +
       `&count=1` +
-      `&language=${encodeURIComponent(preferLang)}` +
+      `&language=${encodeURIComponent(preferLang())}` +
       `&format=json`;
 
     const data = await fetchJson(url);
@@ -346,7 +434,7 @@
   function extractCoords(cam) {
     const lat = Number(cam?.lat ?? cam?.latitude);
     const lon = Number(cam?.lon ?? cam?.lng ?? cam?.longitude);
-    const tz = safeStr(cam?.timezone || cam?.tz || "");
+    const tz  = safeStr(cam?.timezone || cam?.tz || "");
     if (Number.isFinite(lat) && Number.isFinite(lon) && tz) return { lat, lon, timezone: tz };
     if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon, timezone: "" };
     return null;
@@ -357,9 +445,9 @@
     const coords = extractCoords(cam);
     const place = extractPlace(cam);
 
-    // ✅ si tengo coords, no necesito place
     if (!coords && !place) return null;
 
+    // ✅ coords directos
     if (coords) {
       const wx = await fetchCurrentWeather(coords.lat, coords.lon, coords.timezone || "auto");
       if (!wx) return null;
@@ -369,13 +457,12 @@
       const temp = normalizeTempText(`${Math.round(wx.tempC)}°C`);
       const time = formatTimeInTZ(tz);
 
-      // ✅ si algo no es válido, no devolvemos nada
       if (!tz || !temp || !time) return null;
-
       return { icon, temp, time, timezone: tz };
     }
 
-    const geo = await geocodePlace(place, "en");
+    // ✅ geocode por place
+    const geo = await geocodePlace(place);
     if (!geo) return null;
 
     const wx = await fetchCurrentWeather(geo.latitude, geo.longitude, geo.timezone || "auto");
@@ -387,7 +474,6 @@
     const time = formatTimeInTZ(tz);
 
     if (!tz || !temp || !time) return null;
-
     return { icon, temp, time, timezone: tz, approx: true };
   }
 
@@ -403,7 +489,7 @@
   let lastReqToken = 0;
   let clockTimer = null;
 
-  // ✅ retry/backoff
+  // retry/backoff
   let retryTimer = null;
   let retryMs = 0;
 
@@ -473,7 +559,6 @@
   }
 
   async function runUpdate(cam) {
-    // ✅ si catálogo ON, no hacemos nada
     if (isCatalogOn()) return;
 
     const camId = String(cam?.id || "");
@@ -489,10 +574,8 @@
       return;
     }
 
-    // si está en vuelo para la misma cam, no spamear
     if (inFlight && camId === lastCamId) return;
 
-    // misma cam y ya hay data -> solo refresca hora (valida)
     if (camId === lastCamId && hasData && activeTimezone) {
       const t = formatTimeInTZ(activeTimezone);
       if (!t) {
@@ -528,23 +611,16 @@
       if (isCatalogOn()) return;
 
       if (!sum) {
-        // ✅ no placeholders: oculto y reintento
-        hasData = false;
-        activeTimezone = "";
-        activeTempText = "";
         setHudChipVisible(false);
         scheduleRetry(camId);
         return;
       }
 
-      const tz = safeStr(sum.timezone);
+      const tz   = safeStr(sum.timezone);
       const temp = normalizeTempText(sum.temp);
       const time = normalizeTimeText(sum.time);
 
       if (!tz || !temp || !time) {
-        hasData = false;
-        activeTimezone = "";
-        activeTempText = "";
         setHudChipVisible(false);
         scheduleRetry(camId);
         return;
@@ -555,7 +631,7 @@
       activeTempText = temp;
       hasData = true;
 
-      retryMs = 0; // ✅ reset backoff
+      retryMs = 0;
       setHudChip(activeIcon, activeTempText, time);
       setHudChipVisible(true);
       startClock();
@@ -588,8 +664,20 @@
     }, 220);
   }
 
-  // ───────────────────────── State listeners
+  // ───────────────────────── State listeners (BC + LS)
   let lastState = null;
+  let lastStateSig = ""; // dedupe (por doble BC)
+
+  function stateSig(st) {
+    try {
+      const id = String(st?.cam?.id || "");
+      const ts = String(st?.ts || st?.t || "");
+      const idx = String(st?.index ?? st?.i ?? "");
+      return `${id}|${ts}|${idx}`;
+    } catch (_) {
+      return "";
+    }
+  }
 
   function onState(st) {
     lastState = st;
@@ -599,26 +687,46 @@
   }
 
   function onBusMessage(msg, isMain) {
-    if (!msg || typeof msg !== "object") return;
-    if (msg.type === "state") {
-      if (!keyOk(msg, isMain)) return;
-      onState(msg);
-    }
+    if (!isObj(msg)) return;
+    if (msg.type !== "state") return;
+    if (!keyOk(msg, isMain)) return;
+
+    // si viene key y aún no teníamos, adoptamos (para aislar caches + bcMain)
+    const mk = safeStr(msg.key || "");
+    if (mk && !KEY) ensureKey(mk);
+
+    const sig = stateSig(msg) || "";
+    if (sig && sig === lastStateSig) return;
+    lastStateSig = sig;
+
+    onState(msg);
   }
 
-  if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
-  if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
+  // listeners BC
+  try { if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onBusMessage(ev?.data, false)); } catch (_) {}
+  try { if (bcMain)   bcMain.addEventListener("message", (ev) => onBusMessage(ev?.data, true)); } catch (_) {}
 
   function readStateFromLS() {
     try {
-      const rawMain = localStorage.getItem(STATE_KEY);
-      const rawLegacy = rawMain ? null : localStorage.getItem(STATE_KEY_LEGACY);
+      const keys = getStateKeys();
+
+      // Prioriza keyed si existe; si no, legacy
+      const rawMain = readLS(keys.main);
+      const rawLegacy = rawMain ? "" : readLS(keys.legacy);
       const raw = rawMain || rawLegacy;
       if (!raw) return null;
+
       const st = JSON.parse(raw);
       if (!st || st.type !== "state") return null;
-      const isMain = !!rawMain;
+
+      // si trae key y aún no hay KEY, adoptamos
+      const mk = safeStr(st.key || "");
+      if (mk && !KEY) ensureKey(mk);
+
+      // valida por canal: si rawMain es keyed, lo tratamos como main
+      const isMain = !!rawMain && keys.main !== keys.legacy;
       if (!keyOk(st, isMain)) return null;
+
       return st;
     } catch (_) { return null; }
   }
@@ -628,22 +736,64 @@
     if (isCatalogOn()) return;
     const st = readStateFromLS();
     if (!st) return;
+
+    const sig = stateSig(st) || "";
+    if (sig && sig === lastStateSig) return;
+    lastStateSig = sig;
+
     const id = String(st?.cam?.id || "");
     const prev = String(lastState?.cam?.id || "");
     if (id && id !== prev) onState(st);
   }, 900);
 
+  // storage event (si state cambia en otra pestaña)
+  window.addEventListener("storage", (e) => {
+    if (!e || !e.key) return;
+    const keys = getStateKeys();
+    if (e.key !== keys.main && e.key !== keys.legacy) return;
+    if (isCatalogOn()) return;
+
+    const st = readStateFromLS();
+    if (!st) return;
+
+    const sig = stateSig(st) || "";
+    if (sig && sig === lastStateSig) return;
+    lastStateSig = sig;
+
+    onState(st);
+  });
+
   // ✅ escucha el modo catálogo que emite catalogView.js
   g.addEventListener?.("rlc_catalog_mode", (ev) => {
     const on = !!ev?.detail?.on;
-    if (on) {
-      hardDisableForCatalog();
-    } else {
-      // volver a single: intentar enganchar estado actual
+    if (on) hardDisableForCatalog();
+    else {
       const st = readStateFromLS() || lastState;
       if (st?.cam) onState(st);
     }
   });
+
+  // ✅ respaldo: observa cambios de clase en #rlcCatalog (por si no disparan el event)
+  function installCatalogObserver() {
+    const el = qs("#rlcCatalog");
+    if (!el || !("MutationObserver" in window)) return;
+
+    let last = isCatalogOn();
+    try {
+      const mo = new MutationObserver(() => {
+        const nowOn = isCatalogOn();
+        if (nowOn === last) return;
+        last = nowOn;
+
+        if (nowOn) hardDisableForCatalog();
+        else {
+          const st = readStateFromLS() || lastState;
+          if (st?.cam) onState(st);
+        }
+      });
+      mo.observe(el, { attributes: true, attributeFilter: ["class"] });
+    } catch (_) {}
+  }
 
   // ───────────────────────── Expose module
   g.RLCWx = g.RLCWx || {};
@@ -652,6 +802,8 @@
   function boot() {
     // si arranca ya en catálogo, no montamos chip
     if (!isCatalogOn()) ensureHudChip();
+
+    installCatalogObserver();
 
     const st = readStateFromLS();
     if (st) onState(st);

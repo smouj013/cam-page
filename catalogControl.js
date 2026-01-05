@@ -1,7 +1,7 @@
-/* catalogControl.js — RLC Catalog Control v1.3.8 (RLC 2.3.8 COMPAT / MULTI-TILES / HARDENED)
+/* catalogControl.js — RLC Catalog Control v1.3.9 (RLC 2.3.9 COMPAT / MULTI-TILES / HARDENED)
    ✅ Solo para control.html
-   ✅ Compat total con RLC v2.3.8:
-      - KEY auto: ?key=... o localStorage rlc_last_key_v1
+   ✅ Compat total con RLC v2.3.9:
+      - KEY auto: ?key=... o ?k=... o localStorage rlc_last_key_v1
       - BroadcastChannel keyed + legacy (sin quedarse sordo)
       - localStorage mirror (CFG keyed + legacy) + ping (keyed + legacy)
       - postMessage same-origin a parent/opener (preview/iframe) opcional
@@ -12,6 +12,7 @@
       - Singleton con destroy() (evita doble carga y listeners duplicados)
       - followSlot clamp a opciones reales del <select> y al nº de tiles
       - Dedupe por firma (ts + hash simple) para no spamear el bus
+      - Debounce sin fugas (limpia timers ejecutados)
 */
 
 (() => {
@@ -19,7 +20,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const VER = "1.3.8";
+  const VER = "1.3.9";
   const INST_KEY = "__RLC_CATALOG_CONTROL_INSTANCE__";
 
   // ───────────────────────── Singleton (evita doble carga)
@@ -57,11 +58,11 @@
   function parseParamsKey() {
     try {
       const u = new URL(location.href);
-      return safeStr(u.searchParams.get("key") || "");
+      return safeStr(u.searchParams.get("key") || u.searchParams.get("k") || "");
     } catch (_) { return ""; }
   }
 
-  // ✅ KEY auto (2.3.8): si no viene en URL, intenta inferir de rlc_last_key_v1 (lo guarda el player)
+  // ✅ KEY auto: URL (?key/?k) -> LS last_key
   const KEY = (() => {
     const kUrl = parseParamsKey();
     if (kUrl) return kUrl;
@@ -69,7 +70,7 @@
     return kLast || "";
   })();
 
-  // ───────────────────────── Bus/Keys (RLC 2.3.8)
+  // ───────────────────────── Bus/Keys (RLC 2.3.9)
   const BUS_BASE  = "rlc_bus_v1";
   const CFG_BASE  = "rlc_catalog_cfg_v1";
   const PING_BASE = "rlc_catalog_ping_v1";
@@ -156,7 +157,6 @@
       c.cols = clamp((parseInt(c.cols, 10) || g1.cols), 1, 6);
       c.rows = clamp((parseInt(c.rows, 10) || g1.rows), 1, 6);
 
-      // si cols*rows < tiles => ajusta rows o recalcula
       if ((c.cols * c.rows) < c.tiles) {
         c.rows = clamp(Math.ceil(c.tiles / c.cols), 1, 6);
         if ((c.cols * c.rows) < c.tiles) {
@@ -166,7 +166,6 @@
       }
     }
 
-    // followSlot clamp al rango de tiles (y luego se clampa a options del select en UI)
     c.followSlot = clamp((parseInt(c.followSlot, 10) || 0), 0, Math.max(0, (c.tiles | 0) - 1));
     c.clickCycle = (c.clickCycle !== false);
     c.ytCookies  = (c.ytCookies !== false);
@@ -198,7 +197,6 @@
   }
 
   function postToParentOrOpener(msg) {
-    // same-origin safety (best effort)
     try {
       if (canPostMessageTarget(window.parent) && window.parent !== window) {
         window.parent.postMessage(msg, location.origin);
@@ -216,7 +214,6 @@
   function sigOf(cfg) {
     try {
       const c = normalizeCfg(cfg);
-      // firma corta y estable
       return [
         c.enabled ? 1 : 0,
         c.layout, c.tiles, c.cols, c.rows,
@@ -239,14 +236,12 @@
     const c = normalizeCfg(cfg);
 
     const sig = sigOf(c);
-    if (reason !== "boot" && sig === lastSig) return; // no re-spam
+    if (reason !== "boot" && sig === lastSig) return;
     lastSig = sig;
 
-    // ✅ formato principal (lo normal en tu player/catalogView)
     const msg = { type: "CATALOG_CFG", cfg: c, ts: now() };
     if (KEY) msg.key = KEY;
 
-    // ✅ fallback para listeners que esperen "cmd"
     const cmd = { type: "cmd", cmd: "CATALOG_SET", payload: c, ts: msg.ts };
     if (KEY) cmd.key = KEY;
 
@@ -256,14 +251,12 @@
     safePostBC(bcMain, cmd);
     safePostBC(bcLegacy, cmd);
 
-    // mirror/ping por LS
     try { writeJson(CFG_KEY, c); } catch (_) {}
     try { writeJson(CFG_KEY_LEGACY, c); } catch (_) {}
 
     try { writeLS(PING_KEY, String(msg.ts)); } catch (_) {}
     try { writeLS(PING_KEY_LEGACY, String(msg.ts)); } catch (_) {}
 
-    // postMessage same-origin (preview iframe / otra pestaña)
     postToParentOrOpener(msg);
     postToParentOrOpener(cmd);
   }
@@ -350,14 +343,12 @@
 
     setSelectValueIfExists("#ctlCatalogLayout", c.layout);
 
-    // nuevos (si existen)
     setInputValueIfExists("#ctlCatalogTiles", c.tiles);
     setInputValueIfExists("#ctlCatalogCols", c.cols);
     setInputValueIfExists("#ctlCatalogRows", c.rows);
 
     setSelectValueIfExists("#ctlCatalogMode", c.mode);
 
-    // followSlot clamp UI
     setSelectIntClampedToOptions("#ctlCatalogFollowSlot", c.followSlot);
 
     writeOnOff("#ctlCatalogClickCycle", c.clickCycle);
@@ -396,7 +387,6 @@
     const wxTiles = readOnOff("#ctlCatalogWxTiles", base.wxTiles);
     const wxRefreshSec = num(qs("#ctlCatalogWxRefreshSec")?.value, base.wxRefreshSec);
 
-    // lógica multi-tiles: si layout preset => fuerza tiles/cols/rows
     const draft = normalizeCfg({
       enabled, layout, tiles, cols, rows,
       gapPx, labels, muted,
@@ -405,8 +395,6 @@
       wxTiles, wxRefreshSec
     });
 
-    // si usuario cambia tiles/cols/rows manualmente y layout no es custom => lo pasamos a custom
-    // (solo si existen esos inputs)
     const hasTilesCtl = !!qs("#ctlCatalogTiles") || !!qs("#ctlCatalogCols") || !!qs("#ctlCatalogRows");
     if (hasTilesCtl && draft.layout !== "custom") {
       const uiTiles = qs("#ctlCatalogTiles");
@@ -421,7 +409,6 @@
         draft.layout = "custom";
         const g0 = autoGridForTiles(draft.tiles);
         draft.tiles = g0.tiles;
-        // respeta cols/rows si vienen, pero garantiza capacidad
         draft.cols = clamp(draft.cols || g0.cols, 1, 6);
         draft.rows = clamp(draft.rows || g0.rows, 1, 6);
         if ((draft.cols * draft.rows) < draft.tiles) {
@@ -434,17 +421,21 @@
       }
     }
 
-    // followSlot clamp final al nº tiles
     draft.followSlot = clamp(draft.followSlot|0, 0, Math.max(0, (draft.tiles|0) - 1));
     return normalizeCfg(draft);
   }
 
-  // ───────────────────────── Debounce
+  // ───────────────────────── Debounce (sin fugas)
   function debounce(fn, waitMs = 140) {
     let t = null;
     return (...args) => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => { t = null; fn(...args); }, waitMs);
+      if (t) { try { clearTimeout(t); } catch (_) {} }
+      t = setTimeout(() => {
+        const tt = t;
+        t = null;
+        try { inst._timers.delete(tt); } catch (_) {}
+        fn(...args);
+      }, waitMs);
       inst._timers.add(t);
     };
   }
@@ -483,11 +474,10 @@
   function boot() {
     const saved = saveCfg(loadCfg());
 
-    // ✅ Boot sync doble (player puede cargar después)
+    // ✅ Boot sync doble
     try { setTimeout(() => sendCfg(saved, "boot"), 120); } catch (_) { try { sendCfg(saved, "boot"); } catch (_) {} }
     try { setTimeout(() => sendCfg(saveCfg(loadCfg()), "boot"), 1200); } catch (_) {}
 
-    // Si hay UI, sync UI
     const hasToggle = !!qs("#ctlCatalogOn");
     if (hasToggle) applyUIFromCfg(saved);
 
@@ -532,7 +522,6 @@
       on(el, "input", () => doApplyDebounced());
     }
 
-    // ✅ Si otro tab/escritura cambia CFG en LS, resinc UI
     on(window, "storage", (e) => {
       if (!e || !e.key) return;
       if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
@@ -541,8 +530,6 @@
       }
     });
 
-    // ✅ Seguridad extra: si tu control.html está dentro de iframe same-origin y recibe un "REQ_CATALOG_CFG"
-    // responde con la config actual
     on(window, "message", (ev) => {
       try {
         if (ev.origin && ev.origin !== location.origin) return;

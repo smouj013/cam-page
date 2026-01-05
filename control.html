@@ -1,6 +1,6 @@
-<!-- control.html — Random Live Cams (CONTROL) v2.3.8 — READY (Neo-Atlas / Newsroom)
-  ✅ Alineado con control.js v2.3.8 (IDs compatibles + aliases)
-  ✅ Version sentinel + cache-bust
+<!-- control.html — Random Live Cams (CONTROL) v2.3.9 — READY (Neo-Atlas / Newsroom)
+  ✅ Alineado con control.js v2.3.9 (IDs compatibles + aliases)
+  ✅ Version sentinel + cache-bust unificado
   ✅ REPAIR MODE: control.html?repair=1
   ✅ Diagnóstico on-screen (errores JS)
   ✅ Sección KEY/Sala para fijar el "key" sin tocar la URL (si tu control.js lo soporta por storage)
@@ -19,8 +19,8 @@
   <title>Random Live Cams — Control</title>
   <meta name="description" content="Random Live Cams — Control Room (votación, overlays, ticker, catálogo CCTV, ads notice, bot IRC, auto título Helix)." />
 
-  <!-- ✅ Mantener versión actual del control -->
-  <script>window.APP_VERSION = "2.3.8";</script>
+  <!-- ✅ Versión ACTUAL del control -->
+  <script>window.APP_VERSION = "2.3.9";</script>
 
   <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
   <script>
@@ -52,8 +52,8 @@
     })();
   </script>
 
-  <!-- ✅ Cache-bust ALINEADO con APP_VERSION (2.3.8) -->
-  <link rel="stylesheet" href="./styles.css?v=2.3.8" />
+  <!-- ✅ Cache-bust ALINEADO con APP_VERSION (2.3.9) -->
+  <link rel="stylesheet" href="./styles.css?v=2.3.9" />
 
   <!-- ✅ REPAIR MODE: control.html?repair=1 -->
   <script>
@@ -223,7 +223,6 @@
       padding:10px 12px
     }
 
-    /* Preview frame (si no está en styles.css) */
     .previewWrap{
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
@@ -239,7 +238,6 @@
       display:block;
     }
 
-    /* ✅ Fallback de layout (baja especificidad, no pisa tu styles.css) */
     :where(.controlWrap){
       max-width:1180px;
       margin:18px auto;
@@ -285,7 +283,6 @@
     :where(.nowTitle){font-weight:900; font-size:18px; margin-top:6px}
     :where(.nowMeta){opacity:.9; margin-top:6px}
 
-    /* Update / mismatch banner (si control.js lo usa) */
     #ctlUpdateBanner{
       display:none;
       margin-top:12px;
@@ -355,6 +352,12 @@
         <div class="hint" style="margin-top:10px">
           Consejo: si abres control y player en varias pestañas, usa siempre la misma KEY para que el bus vaya fino.
         </div>
+
+        <!-- Aliases “por si acaso” (ocultos) -->
+        <div style="display:none">
+          <input id="ctlRoomKey" type="text" />
+          <input id="ctlBusKey" type="text" />
+        </div>
       </div>
 
       <!-- NOW -->
@@ -371,7 +374,6 @@
           <button id="ctlCopyStreamUrl" class="btn" type="button">Copiar URL stream</button>
         </div>
 
-        <!-- Extras opcionales (si tu control.js los usa) -->
         <div class="row2" style="margin-top:10px">
           <button id="ctlCopyPlayerUrl" class="btn ghost full" type="button">Copiar URL Player</button>
           <button id="ctlCopyObsUrl" class="btn ghost full" type="button">Copiar URL OBS</button>
@@ -415,7 +417,6 @@
           </select>
         </label>
 
-        <!-- ✅ COMPAT: ON/OFF (control.js calcula hudDetails con != "off") -->
         <label class="row" for="ctlHudDetails">
           <span>Detalles HUD</span>
           <select id="ctlHudDetails" class="select">
@@ -634,13 +635,18 @@
           <select id="ctlPreviewOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
         </label>
 
-        <!-- ✅ FIX: sin class hidden; control.js controla display -->
         <div id="ctlPreviewWrap" class="previewWrap" style="display:none">
           <iframe id="ctlPreview" class="previewFrame" title="Preview stream"
             referrerpolicy="strict-origin-when-cross-origin"
             allow="autoplay; encrypted-media; picture-in-picture"></iframe>
         </div>
+
         <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
+
+        <!-- Alias oculto -->
+        <div style="display:none">
+          <select id="ctlPreview" aria-hidden="true"><option value="off">off</option><option value="on">on</option></select>
+        </div>
       </div>
 
       <!-- BGM -->
@@ -690,6 +696,11 @@
           </label>
         </div>
 
+        <!-- ✅ NUEVO/COMPAT: voteUi (lo usas en URL) -->
+        <label class="row" for="ctlVoteUi"><span>UI voto (s)</span>
+          <input id="ctlVoteUi" class="input" type="number" min="0" max="600" step="1" value="60" inputmode="numeric" />
+        </label>
+
         <label class="row" for="ctlAlertsOn"><span>Alerts Twitch</span>
           <select id="ctlAlertsOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
         </label>
@@ -724,6 +735,12 @@
         </div>
 
         <div class="hint">✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)</div>
+
+        <!-- Aliases ocultos (para control.js que busque otros IDs) -->
+        <div style="display:none">
+          <select id="ctlChatHideCommands"><option value="on">on</option><option value="off">off</option></select>
+          <input id="ctlVoteCommands" type="text" />
+        </div>
       </div>
 
       <!-- ADS OVERLAY -->
@@ -758,6 +775,34 @@
         <button id="ctlAdClearBtn" class="btn ghost full" type="button" style="margin-top:8px">✖️ Quitar (AD_CLEAR)</button>
 
         <div class="hint">Tip: cuando Twitch te avisa del ad, pulsa “Aviso”. Si quieres, el bot también escribe en chat.</div>
+
+        <!-- Alias oculto -->
+        <div style="display:none">
+          <select id="ctlAds"><option value="on">on</option><option value="off">off</option></select>
+        </div>
+      </div>
+
+      <!-- POINTS (placeholder compatible) -->
+      <div class="card">
+        <div class="cardTitle">Puntos (opcional)</div>
+        <div class="hint">Si tu v2.3.9 trae edición/overlay de puntos, aquí quedan anclajes para que no “falten” IDs.</div>
+
+        <label class="row" for="ctlPtsEditOn"><span>Editor puntos</span>
+          <select id="ctlPtsEditOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
+        </label>
+
+        <label class="row" for="ctlPtsBotName"><span>Nombre bot</span>
+          <input id="ctlPtsBotName" class="input" type="text" placeholder="auto / globaleyetv" autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlPtsApply" class="btn full" type="button">Aplicar</button>
+          <button id="ctlPtsReset" class="btn ghost full" type="button">Reset</button>
+        </div>
+
+        <div style="display:none">
+          <select id="ctlPtsEdit"><option value="off">off</option><option value="on">on</option></select>
+        </div>
       </div>
 
       <!-- BOT IRC -->
@@ -792,6 +837,7 @@
 
         <div class="hint">✅ Esto solo funciona en tu panel (no en el player). No se expone el token en la URL.</div>
       </div>
+
     </section>
 
     <footer class="controlFooter" aria-label="Ayuda rápida" style="margin-top:14px; opacity:.9">
@@ -837,16 +883,52 @@
     })();
   </script>
 
-  <!-- Scripts (cache-bust ALINEADO con APP_VERSION 2.3.8) -->
-  <script defer src="./cams.js?v=2.3.8"></script>
-  <script defer src="./music.js?v=2.3.8"></script>
+  <!-- ✅ Alias sync (para que no se rompa si control.js usa IDs alternativos) -->
+  <script>
+    (() => {
+      "use strict";
+      const byId = (id) => document.getElementById(id);
+
+      const mirror = (aId, bId) => {
+        const a = byId(aId), b = byId(bId);
+        if (!a || !b) return;
+
+        let lock = false;
+        const syncAtoB = () => { if(lock) return; lock = true; try{ b.value = a.value; } finally{ lock = false; } };
+        const syncBtoA = () => { if(lock) return; lock = true; try{ a.value = b.value; } finally{ lock = false; } };
+
+        // init
+        syncAtoB();
+
+        // live sync
+        a.addEventListener("change", syncAtoB, { passive: true });
+        a.addEventListener("input",  syncAtoB, { passive: true });
+        b.addEventListener("change", syncBtoA, { passive: true });
+        b.addEventListener("input",  syncBtoA, { passive: true });
+      };
+
+      // Chat hide commands
+      mirror("ctlChatHideCmd", "ctlChatHideCommands");
+      // Vote cmds
+      mirror("ctlVoteCmd", "ctlVoteCommands");
+      // Points edit toggle
+      mirror("ctlPtsEditOn", "ctlPtsEdit");
+      // KEY aliases
+      mirror("ctlKey", "ctlRoomKey");
+      mirror("ctlKey", "ctlBusKey");
+    })();
+  </script>
+
+  <!-- Scripts (cache-bust ALINEADO con APP_VERSION 2.3.9) -->
+  <script defer src="./cams.js?v=2.3.9"></script>
+  <script defer src="./music.js?v=2.3.9"></script>
 
   <!-- ✅ Control principal -->
   <script defer src="./control.js?v=2.3.9"></script>
 
   <!-- Opcionales -->
-  <script defer src="./catalogControl.js?v=2.3.8"></script>
-  <script defer src="./pointsControl.js?v=2.3.8"></script>
-  <script defer src="./rlcTickersControl.js?v=2.3.8"></script>
+  <script defer src="./catalogControl.js?v=2.3.9"></script>
+  <script defer src="./pointsControl.js?v=2.3.9"></script>
+  <script defer src="./rlcTickersControl.js?v=2.3.9"></script>
 </body>
 </html>

@@ -1,11 +1,11 @@
-/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.4 (NEWSROOM/BLACKCAST) — FULL
+/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.5 (RLC 2.3.9) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ NO rompe IDs/clases existentes (hud/vote/chat/control/tickers)
-   ✅ Look “TV broadcast” refinado (más contraste, tipografía más legible)
-   ✅ Chat bubbles MUCHO más sólidos: mejor lectura, mejor tail, mejor nombre, fade suave
+   ✅ Look “TV broadcast” refinado + legibilidad mejorada
+   ✅ Chat bubbles sólidos (sin “panel negro” en browsers sin backdrop-filter)
    ✅ 100% sin :has (compat/validadores)
-   ✅ FIX CLAVE mantenido: elimina “panel negro” detrás del chat en browsers sin backdrop-filter
-   ✅ Offset robusto: --ui-top-offset = --rlcTickerH
+   ✅ Offset robusto: --ui-top-offset = --rlcTickerH (lo setea rlcTickers.js)
+   ✅ Tickers clicables (links) sin afectar overlays
    ✅ Fallbacks Opera GX / Safari / sin backdrop / sin mask
 */
 
@@ -222,6 +222,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   box-shadow: 0 10px 26px rgba(0,0,0,.38);
   overflow:hidden;
   isolation:isolate;
+
+  /* ✅ Links clicables sin afectar la UI */
+  pointer-events: auto;
+  user-select: none;
 }
 
 /* “TV line” arriba + brillo */
@@ -310,6 +314,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   gap: 10px;
   position:relative;
   z-index:2;
+  pointer-events: auto;
 }
 
 /* Badge estilo TV */
@@ -379,6 +384,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   opacity: .95;
   font-weight: 850;
   text-decoration:none;
+  pointer-events: auto;
 }
 .tkItem:hover{ opacity:1; text-decoration: underline; }
 .tkSrc{ opacity:.72; font-weight: 950; letter-spacing:.04em; text-transform: uppercase; }

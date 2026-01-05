@@ -1,10 +1,15 @@
-/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.2.0 (NO RLCUiBars)
+/* rlcTickers.js — RLC Unified Tickers (NEWS + ECON) v2.3.9 (NO RLCUiBars)
    ✅ NEWS + ECON con MISMO markup + MISMA piel (Neo-Atlas)
    ✅ Siempre full-width y en stack: NEWS arriba, ECON abajo
    ✅ Calcula y aplica: --rlcNewsTop, --rlcEconTop, --rlcTickerH
-   ✅ Hide-on-vote ahora también ajusta layout (sin gap fantasma)
+   ✅ Hide-on-vote ajusta layout (sin gap fantasma)
    ✅ Robust fetch: direct -> AllOrigins -> (solo JSON) r.jina.ai
    ✅ No rompe IDs/clases existentes: #rlcNewsTicker #rlcEconTicker, .tickerInner/.tickerBadge/.tickerText/.tickerMarquee
+   ✅ v2.3.9:
+      - Update-aware singleton (no dupes)
+      - Escalado PRO (uiScale/barH/fontPx) sin glitches (layout mide alturas reales)
+      - Fallback CSS “noticiero” suave (sin pisar tu theme)
+      - Sources ampliadas (GDELT + RSS clásicos + GoogleNews search packs)
 */
 
 (() => {
@@ -12,8 +17,14 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_TICKERS_LOADED_V220";
-  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+  // ───────────────────────── Update-aware singleton
+  const INSTANCE_KEY = "__RLC_TICKERS_PLAYER_INSTANCE";
+  try {
+    if (g[INSTANCE_KEY] && typeof g[INSTANCE_KEY].destroy === "function") g[INSTANCE_KEY].destroy();
+  } catch (_) {}
+
+  const instance = { version: "2.3.9", destroy: () => {} };
+  try { g[INSTANCE_KEY] = instance; } catch (_) {}
 
   // ───────────────────────── Helpers
   const qs = (s, r = document) => r.querySelector(s);
@@ -36,6 +47,23 @@
     try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
 
+  function parseKey() {
+    try {
+      const u = new URL(location.href);
+      const k = safeStr(u.searchParams.get("key") || "");
+      if (k) return k;
+    } catch (_) {}
+    try {
+      const k = safeStr(localStorage.getItem("rlc_last_key_v1") || "");
+      if (k) return k;
+    } catch (_) {}
+    try {
+      const k = safeStr(g.RLC_KEY || "");
+      if (k) return k;
+    } catch (_) {}
+    return "";
+  }
+
   function parseParams() {
     const u = new URL(location.href);
     return {
@@ -54,6 +82,11 @@
       tickerSources: safeStr(u.searchParams.get("tickerSources") || ""),
       tickerDebug: safeStr(u.searchParams.get("tickerDebug") || ""),
 
+      // ✅ v2.3.9 visuals
+      tickerScale: safeStr(u.searchParams.get("tickerScale") || ""),
+      tickerBarH: safeStr(u.searchParams.get("tickerBarH") || ""),
+      tickerFontPx: safeStr(u.searchParams.get("tickerFontPx") || ""),
+
       // ECON
       econ: u.searchParams.get("econ") ?? "",
       econSpeed: safeStr(u.searchParams.get("econSpeed") || ""),
@@ -62,12 +95,17 @@
       econHideOnVote: safeStr(u.searchParams.get("econHideOnVote") || ""),
       econMode: safeStr(u.searchParams.get("econMode") || ""),
       econClocks: safeStr(u.searchParams.get("econClocks") || ""),
-      econDebug: safeStr(u.searchParams.get("econDebug") || "")
+      econDebug: safeStr(u.searchParams.get("econDebug") || ""),
+
+      // ✅ v2.3.9 visuals
+      econScale: safeStr(u.searchParams.get("econScale") || ""),
+      econBarH: safeStr(u.searchParams.get("econBarH") || ""),
+      econFontPx: safeStr(u.searchParams.get("econFontPx") || "")
     };
   }
 
   const P = parseParams();
-  const KEY = P.key;
+  const KEY = P.key || parseKey();
 
   // ───────────────────────── Bus + keys (namespaced + legacy)
   const BUS_BASE = "rlc_bus_v1";
@@ -81,6 +119,24 @@
     if (fromNamespacedChannel) return true;
     return !!(msg && msg.key === KEY);
   }
+
+  // ───────────────────────── Cleanup
+  const _cleanup = { listeners: [], intervals: [], observers: [] };
+  function on(el, ev, fn, opts) {
+    if (!el) return;
+    el.addEventListener(ev, fn, opts);
+    _cleanup.listeners.push(() => el.removeEventListener(ev, fn, opts));
+  }
+  function onWin(ev, fn, opts) { on(window, ev, fn, opts); }
+
+  instance.destroy = () => {
+    try { _cleanup.listeners.forEach(fn => fn()); } catch (_) {}
+    try { _cleanup.intervals.forEach(id => clearInterval(id)); } catch (_) {}
+    try { _cleanup.observers.forEach(o => { try { o.disconnect(); } catch (_) {} }); } catch (_) {}
+    try { if (bcMain) bcMain.close(); } catch (_) {}
+    try { if (bcLegacy) bcLegacy.close(); } catch (_) {}
+    try { if (g[INSTANCE_KEY] === instance) delete g[INSTANCE_KEY]; } catch (_) {}
+  };
 
   // ───────────────────────── Robust fetch
   async function fetchText(url, timeoutMs = 9000) {
@@ -100,7 +156,6 @@
     return `https://r.jina.ai/https://${u}`;
   };
 
-  // Text robust (para XML/CSV preferimos NO usar Jina porque puede “romper” el formato)
   async function fetchTextRobust(url, { allowJina = false } = {}) {
     const tries = [
       () => fetchText(url),
@@ -173,53 +228,137 @@
     return (r.width > 0 && r.height > 0);
   }
 
-  // ───────────────────────── Layout (NO RLCUiBars)
-  const LAYOUT = (() => {
-    function cssPx(varName, fb) {
-      try {
-        const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-        const n = parseFloat(String(v).replace("px", "").trim());
-        return Number.isFinite(n) ? n : fb;
-      } catch (_) { return fb; }
-    }
-    function setVar(name, val) {
-      try { document.documentElement.style.setProperty(name, val); } catch (_) {}
-    }
+  // ───────────────────────── Fallback CSS (noticiero suave, NO pisa tu theme)
+  function ensureTickerStyles() {
+    if (qs("#rlcTickersStyle_v239")) return;
+    const st = document.createElement("style");
+    st.id = "rlcTickersStyle_v239";
+    st.textContent = `
+:root{
+  --rlcTickerZ: 70;
+  --rlcTickerGap: 10px;
+  --rlcTickerPadX: 10px;
+  --rlcTickerRadius: 14px;
+  --rlcTickerStroke: rgba(255,255,255,.12);
+  --rlcTickerBg: rgba(8,10,14,.62);
+  --rlcTickerBg2: rgba(8,10,14,.82);
+  --rlcTickerGlow: rgba(42,170,255,.10);
+}
 
-    function apply({ newsVisible, econVisible, newsTopPx, econTopPx }) {
-      const barH = cssPx("--rlcBarH", 34);
-      const gap = cssPx("--rlcTickerGap", 12);
+#rlcNewsTicker, #rlcEconTicker{
+  position: fixed;
+  left: 10px; right: 10px;
+  z-index: var(--rlcTickerZ, 70);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+#rlcNewsTicker.hidden, #rlcEconTicker.hidden{ display:none !important; }
 
-      const onN = !!newsVisible;
-      const onE = !!econVisible;
+#rlcNewsTicker .tickerInner,
+#rlcEconTicker .tickerInner{
+  height: var(--rlcBarH, 34px);
+  border-radius: var(--rlcTickerRadius, 14px);
+  border: 1px solid var(--rlcTickerStroke, rgba(255,255,255,.12));
+  background:
+    radial-gradient(900px 80px at 10% 30%, var(--rlcTickerGlow, rgba(42,170,255,.10)), transparent 60%),
+    linear-gradient(180deg, var(--rlcTickerBg, rgba(8,10,14,.62)), var(--rlcTickerBg2, rgba(8,10,14,.82)));
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0,0,0,.28);
+  overflow: hidden;
+  display:flex; align-items:center; gap:10px;
+  padding: 0 var(--rlcTickerPadX, 10px);
+  transform-origin: left center;
+}
 
-      // baseTop: si ambos visibles -> el menor; si solo uno -> el suyo; si ninguno -> 0
-      const baseTop =
-        (onN && onE) ? Math.min(newsTopPx ?? 10, econTopPx ?? 10)
-        : (onN ? (newsTopPx ?? 10)
-        : (onE ? (econTopPx ?? 10) : 0));
+#rlcNewsTicker{ top: var(--rlcNewsTop, 10px); }
+#rlcEconTicker{ top: var(--rlcEconTop, 56px); }
 
-      const newsTop = baseTop;
-      const econTop = baseTop + (onN ? (barH + gap) : 0);
+#rlcNewsTicker .tickerBadge,
+#rlcEconTicker .tickerBadge{
+  display:flex; align-items:center; gap:8px;
+  font: 900 11px/1 ui-sans-serif,system-ui;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  opacity:.95;
+  white-space: nowrap;
+}
+#rlcNewsTicker .tickerBadge{ color: rgba(255,255,255,.96); }
+#rlcEconTicker .tickerBadge{ color: rgba(255,255,255,.96); }
 
-      const count = (onN ? 1 : 0) + (onE ? 1 : 0);
-      const totalH = (count === 0) ? 0 : (count * barH + ((count > 1) ? gap : 0));
+#rlcNewsTicker .tickerText,
+#rlcEconTicker .tickerText{
+  flex:1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--rlcTickerFontPx, 13px);
+  color: rgba(255,255,255,.94);
+}
 
-      setVar("--rlcTickerTop", `${baseTop}px`);
-      setVar("--rlcNewsTop", `${newsTop}px`);
-      setVar("--rlcEconTop", `${econTop}px`);
-      setVar("--rlcTickerH", `${totalH}px`);
+.tickerMarquee{
+  display:flex;
+  gap: 14px;
+  white-space: nowrap;
+  will-change: transform;
+}
 
-      try {
-        document.documentElement.dataset.rlcNewsOn = onN ? "1" : "0";
-        document.documentElement.dataset.rlcEconOn = onE ? "1" : "0";
-      } catch (_) {}
-    }
+[data-marquee="1"] .tickerMarquee{
+  animation: rlcTickerMarquee var(--rlcTickerDur, 40s) linear infinite;
+}
+@keyframes rlcTickerMarquee{
+  0%{ transform: translateX(0); }
+  100%{ transform: translateX(-50%); }
+}
 
-    return { apply };
-  })();
+/* Items */
+.tkItem{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  color: inherit;
+  text-decoration: none;
+  transition: background .12s ease, border-color .12s ease;
+}
+.tkItem:hover{ background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.16); }
+.tkSep{ opacity:.55; padding: 0 6px; }
+.tkTitle{ opacity:.95; }
+.tkSrc{
+  font: 900 10px/1 ui-sans-serif,system-ui;
+  letter-spacing: .10em;
+  text-transform: uppercase;
+  opacity: .75;
+  margin-left: 6px;
+}
+.tkMeta{ opacity:.80; font-variant-numeric: tabular-nums; }
+.tkNm{ font-weight: 800; opacity:.92; }
+.tkPx{ font-variant-numeric: tabular-nums; opacity:.95; }
+.tkChg{ font-variant-numeric: tabular-nums; font-weight: 900; }
+.tkChg.up{ color: rgba(25,226,138,.95); }
+.tkChg.down{ color: rgba(255,90,90,.95); }
 
-  // ───────────────────────── Layout sync scheduler
+.tkIco{ width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center; }
+.tkIco img{ width:18px; height:18px; display:block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+.tkGlyph{ font-size: 16px; line-height:1; }
+
+/* per-ticker scale hooks (si tu theme ya lo hace, esto NO rompe) */
+#rlcNewsTicker{ --_rlcScale: var(--rlcNewsUiScale, 1); --_rlcBarH: var(--rlcNewsBarH, var(--rlcBarH, 34px)); --_rlcFont: var(--rlcNewsFontPx, var(--rlcTickerFontPx, 13px)); }
+#rlcEconTicker{ --_rlcScale: var(--rlcEconUiScale, 1); --_rlcBarH: var(--rlcEconBarH, var(--rlcBarH, 34px)); --_rlcFont: var(--rlcEconFontPx, var(--rlcTickerFontPx, 13px)); }
+
+#rlcNewsTicker .tickerInner{ height: var(--_rlcBarH); transform: scale(var(--_rlcScale)); }
+#rlcEconTicker .tickerInner{ height: var(--_rlcBarH); transform: scale(var(--_rlcScale)); }
+
+#rlcNewsTicker .tickerText{ font-size: var(--_rlcFont); }
+#rlcEconTicker .tickerText{ font-size: var(--_rlcFont); }
+`.trim();
+    document.head.appendChild(st);
+  }
+
+  // ───────────────────────── Layout scheduler
   let _layoutQueued = false;
   function requestLayoutSync() {
     if (_layoutQueued) return;
@@ -228,6 +367,17 @@
       _layoutQueued = false;
       syncLayout();
     });
+  }
+
+  function cssPx(varName, fb) {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+      const n = parseFloat(String(v).replace("px", "").trim());
+      return Number.isFinite(n) ? n : fb;
+    } catch (_) { return fb; }
+  }
+  function setVar(name, val) {
+    try { document.documentElement.style.setProperty(name, val); } catch (_) {}
   }
 
   // ======================================================================
@@ -252,19 +402,7 @@
 
     const uiLangAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
 
-    const DEFAULTS = {
-      enabled: true,
-      lang: "auto",           // auto|es|en
-      speedPxPerSec: 55,      // 20..140
-      refreshMins: 12,        // 3..60
-      topPx: 10,              // 0..120
-      hideOnVote: true,
-      timespan: "1d",
-      bilingual: true,
-      translateMax: 10,
-      sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"]
-    };
-
+    // ✅ Sources ampliadas (ids)
     const API = {
       maxItems: 22,
       gdelt: {
@@ -272,11 +410,51 @@
         query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
       },
       rss: {
-        googlenews: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+        // clásicos
         bbc: "https://feeds.bbci.co.uk/news/world/rss.xml",
         dw: "https://rss.dw.com/rdf/rss-en-world",
-        guardian: "https://www.theguardian.com/world/rss"
+        guardian: "https://www.theguardian.com/world/rss",
+
+        // Google News RSS (search) — súper útil para ampliar sin depender de RSS privados
+        googlenews: "https://news.google.com/rss/search?q=world&hl=en-US&gl=US&ceid=US:en",
+        gnews_world: "https://news.google.com/rss/search?q=world&hl=en-US&gl=US&ceid=US:en",
+        gnews_us: "https://news.google.com/rss/search?q=US%20breaking%20news&hl=en-US&gl=US&ceid=US:en",
+        gnews_eu: "https://news.google.com/rss/search?q=Europe%20breaking%20news&hl=en-US&gl=US&ceid=US:en",
+        gnews_latam: "https://news.google.com/rss/search?q=Latin%20America%20breaking%20news&hl=en-US&gl=US&ceid=US:en",
+        gnews_business: "https://news.google.com/rss/search?q=business%20markets%20global&hl=en-US&gl=US&ceid=US:en",
+        gnews_markets: "https://news.google.com/rss/search?q=markets%20stocks%20bonds%20oil&hl=en-US&gl=US&ceid=US:en",
+        gnews_tech: "https://news.google.com/rss/search?q=technology%20AI%20cybersecurity&hl=en-US&gl=US&ceid=US:en",
+        gnews_science: "https://news.google.com/rss/search?q=science%20space%20research&hl=en-US&gl=US&ceid=US:en",
+        gnews_climate: "https://news.google.com/rss/search?q=climate%20weather%20extreme&hl=en-US&gl=US&ceid=US:en",
+        gnews_health: "https://news.google.com/rss/search?q=health%20WHO%20outbreak&hl=en-US&gl=US&ceid=US:en",
+
+        // site-based
+        gnews_reuters: "https://news.google.com/rss/search?q=site%3Areuters.com%20world&hl=en-US&gl=US&ceid=US:en",
+        gnews_ap: "https://news.google.com/rss/search?q=site%3Aapnews.com%20world&hl=en-US&gl=US&ceid=US:en",
+        gnews_cnn: "https://news.google.com/rss/search?q=site%3Acnn.com%20world&hl=en-US&gl=US&ceid=US:en",
+        gnews_bloomberg: "https://news.google.com/rss/search?q=site%3Abloomberg.com%20markets&hl=en-US&gl=US&ceid=US:en",
+        gnews_nyt: "https://news.google.com/rss/search?q=site%3Anytimes.com%20world&hl=en-US&gl=US&ceid=US:en",
+        gnews_ft: "https://news.google.com/rss/search?q=site%3Aft.com%20global%20economy&hl=en-US&gl=US&ceid=US:en",
+        gnews_aljazeera: "https://news.google.com/rss/search?q=site%3Aaljazeera.com%20world&hl=en-US&gl=US&ceid=US:en"
       }
+    };
+
+    const DEFAULTS = {
+      enabled: true,
+      lang: "auto",           // auto|es|en
+      speedPxPerSec: 55,      // 20..140
+      refreshMins: 12,        // 3..60
+      topPx: 10,              // 0..180
+      hideOnVote: true,
+      timespan: "1d",
+      bilingual: true,
+      translateMax: 10,
+      sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"],
+
+      // ✅ v2.3.9 visuals
+      uiScale: 1.0,
+      barH: 34,
+      fontPx: 13
     };
 
     function normalizeTimespan(s) {
@@ -287,13 +465,15 @@
     }
 
     function normalizeSources(list) {
-      const allowed = new Set(["gdelt","googlenews","bbc","dw","guardian"]);
-      const arr = Array.isArray(list) ? list : [];
+      const allowed = new Set(["gdelt", ...Object.keys(API.rss)]);
+      const arr = Array.isArray(list)
+        ? list
+        : String(list || "").split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
+
       const out = [];
       for (const s of arr) {
-        const id = safeStr(s).toLowerCase();
-        if (!id || !allowed.has(id)) continue;
-        if (!out.includes(id)) out.push(id);
+        if (!allowed.has(s)) continue;
+        if (!out.includes(s)) out.push(s);
       }
       return out.length ? out : DEFAULTS.sources.slice();
     }
@@ -304,7 +484,7 @@
       if (P.tickerLang === "es" || P.tickerLang === "en" || P.tickerLang === "auto") out.lang = P.tickerLang;
       if (P.tickerSpeed) out.speedPxPerSec = clamp(num(P.tickerSpeed, DEFAULTS.speedPxPerSec), 20, 140);
       if (P.tickerRefresh) out.refreshMins = clamp(num(P.tickerRefresh, DEFAULTS.refreshMins), 3, 60);
-      if (P.tickerTop) out.topPx = clamp(num(P.tickerTop, DEFAULTS.topPx), 0, 120);
+      if (P.tickerTop) out.topPx = clamp(num(P.tickerTop, DEFAULTS.topPx), 0, 180);
       if (P.tickerHideOnVote === "0") out.hideOnVote = false;
       if (P.tickerHideOnVote === "1") out.hideOnVote = true;
       if (P.tickerSpan) out.timespan = P.tickerSpan;
@@ -318,6 +498,12 @@
         const arr = P.tickerSources.split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
         if (arr.length) out.sources = arr;
       }
+
+      // ✅ v2.3.9 visuals
+      if (P.tickerScale) out.uiScale = clamp(num(P.tickerScale, DEFAULTS.uiScale), 0.75, 1.60);
+      if (P.tickerBarH) out.barH = clamp(num(P.tickerBarH, DEFAULTS.barH), 22, 72);
+      if (P.tickerFontPx) out.fontPx = clamp(num(P.tickerFontPx, DEFAULTS.fontPx), 10, 20);
+
       if (P.ticker === "0") out.enabled = false;
       return out;
     }
@@ -328,12 +514,18 @@
       c.lang = (c.lang === "es" || c.lang === "en" || c.lang === "auto") ? c.lang : "auto";
       c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
-      c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
+      c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 180);
       c.hideOnVote = (c.hideOnVote !== false);
       c.timespan = normalizeTimespan(c.timespan);
       c.bilingual = (c.bilingual !== false);
       c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
       c.sources = normalizeSources(c.sources);
+
+      // ✅ visuals
+      c.uiScale = clamp(num(c.uiScale, DEFAULTS.uiScale), 0.75, 1.60);
+      c.barH = clamp(num(c.barH, DEFAULTS.barH), 22, 72);
+      c.fontPx = clamp(num(c.fontPx, DEFAULTS.fontPx), 10, 20);
+
       return c;
     }
 
@@ -349,15 +541,12 @@
 
     function ensureUI() {
       let root = qs("#rlcNewsTicker");
-
-      // crea si no existe
       if (!root) {
         root = document.createElement("div");
         root.id = "rlcNewsTicker";
         document.body.appendChild(root);
       }
 
-      // ✅ repair: si existe pero no tiene markup, lo inyectamos
       const needs =
         !qs(".tickerInner", root) ||
         !qs("#rlcNewsMarquee", root) ||
@@ -379,14 +568,18 @@
       return root;
     }
 
+    function applyVisualVars() {
+      const root = ensureUI();
+      root.style.setProperty("--rlcNewsUiScale", String(CFG.uiScale));
+      root.style.setProperty("--rlcNewsBarH", `${CFG.barH}px`);
+      root.style.setProperty("--rlcNewsFontPx", `${CFG.fontPx}px`);
+    }
+
     function setVisible(on) {
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
-
-      // ✅ hard hide (por si tu CSS no define .hidden)
       root.style.display = on ? "" : "none";
-
       requestLayoutSync();
     }
 
@@ -423,7 +616,7 @@
       let t = safeStr(s).replace(/\s+/g, " ").trim();
       if (t.length < 14) return "";
       if (t.length > 140) t = t.slice(0, 137).trim() + "…";
-      // filtra scripts de feeds raros (árabe/chino/coreano) para no “romper” el look
+      // filtra scripts que suelen romper look
       if (/[\u0600-\u06FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) return "";
       return t;
     }
@@ -598,10 +791,26 @@
     }
 
     async function getHeadlinesFromRss(id, url) {
-      // XML: no Jina
       const xml = await fetchTextRobust(url, { allowJina: false });
       const source = ({
         googlenews: "GNEWS",
+        gnews_world: "GNEWS",
+        gnews_us: "GNEWS",
+        gnews_eu: "GNEWS",
+        gnews_latam: "GNEWS",
+        gnews_business: "GNEWS",
+        gnews_markets: "GNEWS",
+        gnews_tech: "GNEWS",
+        gnews_science: "GNEWS",
+        gnews_climate: "GNEWS",
+        gnews_health: "GNEWS",
+        gnews_reuters: "REUTERS",
+        gnews_ap: "AP",
+        gnews_cnn: "CNN",
+        gnews_bloomberg: "BLOOMBERG",
+        gnews_nyt: "NYT",
+        gnews_ft: "FT",
+        gnews_aljazeera: "ALJAZEERA",
         bbc: "BBC",
         dw: "DW",
         guardian: "GUARDIAN"
@@ -630,7 +839,7 @@
 
       const merged = [];
       let guard = 0;
-      while (merged.length < API.maxItems && guard < 600) {
+      while (merged.length < API.maxItems && guard < 800) {
         guard++;
         let pushed = false;
         for (const arr of chunks) {
@@ -668,12 +877,7 @@
     function buildSegment(items) {
       const uiLang = uiLangEffective();
       const list = (Array.isArray(items) && items.length) ? items : [
-        {
-          titleEn: (uiLang === "es") ? "No hay titulares ahora mismo… reintentando." : "No headlines right now… retrying.",
-          titleEs: "",
-          url: "",
-          source: "RLC"
-        }
+        { titleEn: (uiLang === "es") ? "No hay titulares ahora mismo… reintentando." : "No headlines right now… retrying.", titleEs: "", url: "", source: "RLC" }
       ];
 
       const seg = document.createElement("span");
@@ -725,23 +929,11 @@
       return seg;
     }
 
-    function setTickerItems(items) {
-      const root = ensureUI();
-      setLabel(root);
-
-      const marquee = qs("#rlcNewsMarquee", root);
-      if (!marquee) return;
-
-      marquee.innerHTML = "";
-      const seg1 = buildSegment(items);
-      const seg2 = seg1.cloneNode(true);
-
-      marquee.appendChild(seg1);
-      marquee.appendChild(seg2);
-
-      const textWrap = marquee.parentElement;
-      const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
-      const w = Math.max(300, seg1.scrollWidth || 300);
+    function applyMarqueeSpeed(root, seg1, marquee) {
+      // Medición REAL (incluye scale)
+      const wrap = marquee?.parentElement || null;
+      const vw = wrap ? (wrap.getBoundingClientRect().width || 800) : 800;
+      const w = Math.max(300, seg1.getBoundingClientRect().width || 300);
 
       if (w > vw * 1.05) {
         root.setAttribute("data-marquee", "1");
@@ -751,6 +943,29 @@
         root.setAttribute("data-marquee", "0");
         root.style.removeProperty("--rlcTickerDur");
       }
+    }
+
+    function setTickerItems(items) {
+      const root = ensureUI();
+      applyVisualVars();
+      setLabel(root);
+
+      const marquee = qs("#rlcNewsMarquee", root);
+      if (!marquee) return;
+
+      marquee.innerHTML = "";
+      const seg1 = buildSegment(items);
+      const seg2 = seg1.cloneNode(true);
+      marquee.appendChild(seg1);
+      marquee.appendChild(seg2);
+
+      // medir tras layout real
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try { applyMarqueeSpeed(root, seg1, marquee); } catch (_) {}
+          requestLayoutSync();
+        });
+      });
     }
 
     function cacheKey() {
@@ -792,6 +1007,7 @@
 
       voteObs = new MutationObserver(apply);
       voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
+      _cleanup.observers.push(voteObs);
     }
 
     function watchForVoteBox() {
@@ -803,6 +1019,7 @@
         if (vote) setupHideOnVote();
       });
       domObs.observe(document.documentElement, { childList: true, subtree: true });
+      _cleanup.observers.push(domObs);
     }
 
     // refresh loop
@@ -811,7 +1028,6 @@
 
     async function refresh(force = false) {
       if (!CFG.enabled) { setVisible(false); return; }
-      // visible real se decide en setupHideOnVote; aquí no forzamos ON “a lo loco”
       if (!CFG.hideOnVote) setVisible(true);
 
       const ck = cacheKey();
@@ -847,15 +1063,17 @@
       if (refreshTimer) clearInterval(refreshTimer);
       const every = Math.max(180000, CFG.refreshMins * 60 * 1000);
       refreshTimer = setInterval(() => refresh(false), every);
+      _cleanup.intervals.push(refreshTimer);
     }
 
     function applyCfg(nextCfg, persist = false) {
       CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
       if (persist) writeCfgCompat(CFG);
 
+      applyVisualVars();
+
       if (!CFG.enabled) setVisible(false);
       else {
-        // si hide-on-vote, setupHideOnVote decide; si no, mostramos
         if (!CFG.hideOnVote) setVisible(true);
       }
 
@@ -874,7 +1092,7 @@
     }
 
     function boot() {
-      if (P.ticker === "0") { CFG.enabled = false; }
+      if (P.ticker === "0") CFG.enabled = false;
       ensureUI();
       applyCfg(CFG, false);
 
@@ -885,7 +1103,6 @@
       if (cache?.items?.length) setTickerItems(cache.items);
 
       refresh(false);
-
       log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
     }
 
@@ -895,13 +1112,17 @@
       const root = qs("#rlcNewsTicker");
       return !!(CFG.enabled && root && !root.classList.contains("hidden") && isElementVisible(root));
     }
-    function getLayoutState() { return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10 }; }
+    function getLayoutState() {
+      const root = qs("#rlcNewsTicker");
+      const h = (root && isVisibleNow()) ? (root.getBoundingClientRect().height || 0) : 0;
+      return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10, heightPx: h };
+    }
 
     return { boot, onMessage, applyCfg, getCfg, isEnabled, isVisibleNow, getLayoutState };
   })();
 
   // ======================================================================
-  // ECON TICKER (mismo markup que NEWS)
+  // ECON TICKER
   // ======================================================================
   const ECON = (() => {
     const CFG_KEY_BASE = "rlc_econ_cfg_v1";
@@ -920,7 +1141,7 @@
       enabled: true,
       speedPxPerSec: 60,   // 20..140
       refreshMins: 2,      // 1..20
-      topPx: 10,           // 0..120
+      topPx: 10,           // 0..180
       hideOnVote: true,
       mode: "daily",       // daily|sinceLast
       showClocks: true,
@@ -938,7 +1159,12 @@
         { id:"tsla", label:"TSLA", stooq:"tsla.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"tesla", domain:"tesla.com" },
         { id:"spx",  label:"S&P 500", stooq:"^spx", kind:"index", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"📈" },
         { id:"gold", label:"GOLD", stooq:"gc.f", kind:"commodity", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"🪙" }
-      ]
+      ],
+
+      // ✅ v2.3.9 visuals
+      uiScale: 1.0,
+      barH: 34,
+      fontPx: 13
     };
 
     function normalizeClocks(list) {
@@ -983,12 +1209,17 @@
       c.enabled = (c.enabled !== false);
       c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 20);
-      c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 120);
+      c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 180);
       c.hideOnVote = (c.hideOnVote !== false);
       c.mode = (safeStr(c.mode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
       c.showClocks = (c.showClocks !== false);
       c.clocks = normalizeClocks(c.clocks);
       c.items = normalizeItems(c.items);
+
+      c.uiScale = clamp(num(c.uiScale, DEFAULTS.uiScale), 0.75, 1.60);
+      c.barH = clamp(num(c.barH, DEFAULTS.barH), 22, 72);
+      c.fontPx = clamp(num(c.fontPx, DEFAULTS.fontPx), 10, 20);
+
       return c;
     }
 
@@ -996,12 +1227,18 @@
       const out = {};
       if (P.econSpeed) out.speedPxPerSec = clamp(num(P.econSpeed, DEFAULTS.speedPxPerSec), 20, 140);
       if (P.econRefresh) out.refreshMins = clamp(num(P.econRefresh, DEFAULTS.refreshMins), 1, 20);
-      if (P.econTop) out.topPx = clamp(num(P.econTop, DEFAULTS.topPx), 0, 120);
+      if (P.econTop) out.topPx = clamp(num(P.econTop, DEFAULTS.topPx), 0, 180);
       if (P.econHideOnVote === "0") out.hideOnVote = false;
       if (P.econHideOnVote === "1") out.hideOnVote = true;
       if (P.econMode) out.mode = (safeStr(P.econMode).toLowerCase().includes("since")) ? "sinceLast" : "daily";
       if (P.econClocks === "0") out.showClocks = false;
       if (P.econClocks === "1") out.showClocks = true;
+
+      // ✅ v2.3.9 visuals
+      if (P.econScale) out.uiScale = clamp(num(P.econScale, DEFAULTS.uiScale), 0.75, 1.60);
+      if (P.econBarH) out.barH = clamp(num(P.econBarH, DEFAULTS.barH), 22, 72);
+      if (P.econFontPx) out.fontPx = clamp(num(P.econFontPx, DEFAULTS.fontPx), 10, 20);
+
       if (P.econ === "0") out.enabled = false;
       return out;
     }
@@ -1019,15 +1256,12 @@
 
     function ensureUI() {
       let root = qs("#rlcEconTicker");
-
-      // crea si no existe
       if (!root) {
         root = document.createElement("div");
         root.id = "rlcEconTicker";
         document.body.appendChild(root);
       }
 
-      // ✅ repair: si existe pero no tiene markup, lo inyectamos
       const needs =
         !qs(".tickerInner", root) ||
         !qs("#rlcEconMarquee", root) ||
@@ -1049,14 +1283,18 @@
       return root;
     }
 
+    function applyVisualVars() {
+      const root = ensureUI();
+      root.style.setProperty("--rlcEconUiScale", String(CFG.uiScale));
+      root.style.setProperty("--rlcEconBarH", `${CFG.barH}px`);
+      root.style.setProperty("--rlcEconFontPx", `${CFG.fontPx}px`);
+    }
+
     function setVisible(on) {
       const root = ensureUI();
       root.classList.toggle("hidden", !on);
       root.setAttribute("aria-hidden", on ? "false" : "true");
-
-      // ✅ hard hide (por si tu CSS no define .hidden)
       root.style.display = on ? "" : "none";
-
       requestLayoutSync();
     }
 
@@ -1146,7 +1384,6 @@
     };
 
     async function getLastClose(sym) {
-      // CSV: no Jina
       const txt = await fetchTextRobust(stooqLastUrl(sym), { allowJina: false });
       const lines = csvLineSplit(txt);
       if (lines.length < 2) throw new Error("CSV short");
@@ -1206,7 +1443,7 @@
       return t;
     }
 
-    // clocks live updater (no fetch)
+    // clocks live updater
     let clockTimer = null;
     function startClockTimer() {
       if (clockTimer) return;
@@ -1219,9 +1456,9 @@
           });
         } catch (_) {}
       }, 1000);
+      _cleanup.intervals.push(clockTimer);
     }
 
-    // Render (mismo estilo que NEWS)
     function buildSegment(model) {
       const seg = document.createElement("span");
       seg.className = "tkSeg";
@@ -1234,7 +1471,6 @@
         seg.appendChild(s);
       };
 
-      // clocks
       if (CFG.showClocks && Array.isArray(model.clocks) && model.clocks.length) {
         for (const c of model.clocks) {
           if (!first) addSep();
@@ -1259,7 +1495,6 @@
         }
       }
 
-      // assets
       for (const it of (model.items || [])) {
         if (!first) addSep();
         first = false;
@@ -1331,8 +1566,25 @@
       return seg;
     }
 
+    function applyMarqueeSpeed(root, seg1, marquee) {
+      const wrap = marquee?.parentElement || null;
+      const vw = wrap ? (wrap.getBoundingClientRect().width || 800) : 800;
+      const w = Math.max(300, seg1.getBoundingClientRect().width || 300);
+
+      if (w > vw * 1.05) {
+        root.setAttribute("data-marquee", "1");
+        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+        root.style.setProperty("--rlcTickerDur", `${durSec}s`);
+      } else {
+        root.setAttribute("data-marquee", "0");
+        root.style.removeProperty("--rlcTickerDur");
+      }
+    }
+
     function setTickerItems(model) {
       const root = ensureUI();
+      applyVisualVars();
+
       const marquee = qs("#rlcEconMarquee", root);
       if (!marquee) return;
 
@@ -1346,18 +1598,12 @@
 
       startClockTimer();
 
-      const textWrap = marquee.parentElement;
-      const vw = textWrap ? (textWrap.clientWidth || 800) : 800;
-      const w = Math.max(300, seg1.scrollWidth || 300);
-
-      if (w > vw * 1.05) {
-        root.setAttribute("data-marquee", "1");
-        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
-        root.style.setProperty("--rlcTickerDur", `${durSec}s`);
-      } else {
-        root.setAttribute("data-marquee", "0");
-        root.style.removeProperty("--rlcTickerDur");
-      }
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try { applyMarqueeSpeed(root, seg1, marquee); } catch (_) {}
+          requestLayoutSync();
+        });
+      });
     }
 
     // hide-on-vote
@@ -1382,6 +1628,7 @@
 
       voteObs = new MutationObserver(apply);
       voteObs.observe(vote, { attributes: true, attributeFilter: ["class", "style"] });
+      _cleanup.observers.push(voteObs);
     }
 
     function watchForVoteBox() {
@@ -1393,6 +1640,7 @@
         if (vote) setupHideOnVote();
       });
       domObs.observe(document.documentElement, { childList: true, subtree: true });
+      _cleanup.observers.push(domObs);
     }
 
     async function buildModel() {
@@ -1502,11 +1750,14 @@
       if (refreshTimer) clearInterval(refreshTimer);
       const every = Math.max(60000, CFG.refreshMins * 60 * 1000);
       refreshTimer = setInterval(refresh, every);
+      _cleanup.intervals.push(refreshTimer);
     }
 
     function applyCfg(nextCfg, persist = false) {
       CFG = normalizeCfg(Object.assign({}, CFG, nextCfg || {}));
       if (persist) writeCfgCompat(CFG);
+
+      applyVisualVars();
 
       if (!CFG.enabled) setVisible(false);
       else {
@@ -1528,7 +1779,7 @@
     }
 
     function boot() {
-      if (P.econ === "0") { CFG.enabled = false; }
+      if (P.econ === "0") CFG.enabled = false;
       ensureUI();
       applyCfg(CFG, false);
 
@@ -1536,7 +1787,6 @@
       watchForVoteBox();
 
       refresh();
-
       log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
     }
 
@@ -1546,29 +1796,50 @@
       const root = qs("#rlcEconTicker");
       return !!(CFG.enabled && root && !root.classList.contains("hidden") && isElementVisible(root));
     }
-    function getLayoutState() { return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10 }; }
+    function getLayoutState() {
+      const root = qs("#rlcEconTicker");
+      const h = (root && isVisibleNow()) ? (root.getBoundingClientRect().height || 0) : 0;
+      return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10, heightPx: h };
+    }
 
     return { boot, onMessage, applyCfg, getCfg, isEnabled, isVisibleNow, getLayoutState };
   })();
 
-  // ───────────────────────── Layout sync (stack always)
+  // ───────────────────────── Layout sync (stack always, mide alturas reales)
   function syncLayout() {
-    const n = NEWS.getLayoutState ? NEWS.getLayoutState() : { visible: false, topPx: 10 };
-    const e = ECON.getLayoutState ? ECON.getLayoutState() : { visible: false, topPx: 10 };
+    const n = NEWS.getLayoutState ? NEWS.getLayoutState() : { visible: false, topPx: 10, heightPx: 0 };
+    const e = ECON.getLayoutState ? ECON.getLayoutState() : { visible: false, topPx: 10, heightPx: 0 };
 
-    LAYOUT.apply({
-      newsVisible: !!n.visible,
-      econVisible: !!e.visible,
-      newsTopPx: n.topPx ?? 10,
-      econTopPx: e.topPx ?? 10
-    });
+    const gap = cssPx("--rlcTickerGap", 10);
 
-    // fallback top: si tu CSS no usa --rlcNewsTop/--rlcEconTop, aquí lo garantizamos
+    const onN = !!n.visible;
+    const onE = !!e.visible;
+
+    const baseTop =
+      (onN && onE) ? Math.min(n.topPx ?? 10, e.topPx ?? 10)
+      : (onN ? (n.topPx ?? 10)
+      : (onE ? (e.topPx ?? 10) : 0));
+
+    const newsTop = baseTop;
+    const econTop = baseTop + (onN ? ((n.heightPx || 34) + gap) : 0);
+
+    const count = (onN ? 1 : 0) + (onE ? 1 : 0);
+    const totalH = (count === 0) ? 0 : ((onN ? (n.heightPx || 34) : 0) + (onE ? (e.heightPx || 34) : 0) + ((count > 1) ? gap : 0));
+
+    setVar("--rlcTickerTop", `${baseTop}px`);
+    setVar("--rlcNewsTop", `${newsTop}px`);
+    setVar("--rlcEconTop", `${econTop}px`);
+    setVar("--rlcTickerH", `${totalH}px`);
+
     const nEl = qs("#rlcNewsTicker");
     if (nEl) nEl.style.top = "var(--rlcNewsTop, 10px)";
     const eEl = qs("#rlcEconTicker");
     if (eEl) eEl.style.top = "var(--rlcEconTop, 56px)";
-    
+
+    try {
+      document.documentElement.dataset.rlcNewsOn = onN ? "1" : "0";
+      document.documentElement.dataset.rlcEconOn = onE ? "1" : "0";
+    } catch (_) {}
   }
 
   // ───────────────────────── Message routing
@@ -1579,10 +1850,11 @@
   }
 
   function boot() {
+    ensureTickerStyles();
+
     NEWS.boot();
     ECON.boot();
 
-    // primer layout
     requestLayoutSync();
 
     // Bus listeners
@@ -1592,14 +1864,14 @@
     } catch (_) {}
 
     // postMessage fallback
-    window.addEventListener("message", (ev) => {
+    onWin("message", (ev) => {
       const msg = ev?.data;
       if (!msg || typeof msg !== "object") return;
       onBusMessage(msg, false);
     });
 
     // storage sync (cfg)
-    window.addEventListener("storage", (e) => {
+    onWin("storage", (e) => {
       if (!e || !e.key) return;
 
       if (e.key.startsWith("rlc_ticker_cfg_v1")) {
@@ -1619,15 +1891,17 @@
       }
     });
 
-    // por si cambia el tamaño/zoom (Opera GX…)
-    window.addEventListener("resize", () => {
-      requestLayoutSync();
-    }, { passive: true });
+    // resize/zoom
+    onWin("resize", () => requestLayoutSync(), { passive: true });
+
+    // fonts (cuando cargan cambia ancho/alto -> recalcular)
+    try {
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => requestLayoutSync()).catch(() => {});
+      }
+    } catch (_) {}
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
-  } else {
-    boot();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+  else boot();
 })();

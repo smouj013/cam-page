@@ -1,19 +1,36 @@
-/* pointsControl.js — RLC Points v2.3.8 (FIXED)
-   ✅ Control card auto-inject: ahora RE-QUERY refs tras inyectar (antes eran null)
+/* pointsControl.js — RLC Points v2.3.9 (HARDENED + TICKET THEME)
+   ✅ 2.3.9 COMPAT (sin romper 2.3.8):
+      - KEY auto: window.RLC_KEY / ?key= / localStorage rlc_last_key_v1
+      - BUS auto: window.RLC_BUS / window.RLC_BUS_BASE / rlc_bus_v1:{key}
+      - Legacy bridge breve al arrancar (keyless grace)
+      - postMessage same-origin (cfg/state) por si BC/storage fallan
+   ✅ Control card auto-inject: RE-QUERY refs tras inyectar (fix null refs)
    ✅ Drag: guarda offsets sin “doble sumar” --ui-top-offset / extras (evita drift)
-   ✅ Anti-solape: incluye IDs reales (#voteBox, #rlcChatRoot, etc.)
+   ✅ Anti-solape: incluye IDs reales (#voteBox, #rlcChatRoot, #rlcAlerts…)
    ✅ Copy URL: genera overlay en index.html (no en control.html)
    ✅ ptsOnly: funciona también en index.html (overlay transparente para OBS)
+   ✅ UI “Billetes/Pases de embarque” (🎫✈️) para tu sistema de cams:
+      - “Billetes” = puntos del canal
+      - Úsalos para votar / saltar de cámara / perks de subs (texto hint)
 */
+
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const LOAD_GUARD = "__RLC_POINTS_LOADED_V238";
-  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
+  const VERSION = "2.3.9";
+  const INST_KEY = "__RLC_POINTS_INSTANCE__";
+  const LOAD_GUARD = "__RLC_POINTS_LOADED_V239";
 
-  const VERSION = "2.3.8";
+  // Singleton/destroy (evita dobles timers si actualizas scripts)
+  try {
+    const prev = g[INST_KEY];
+    if (prev && prev.__ver === VERSION) return;
+    if (prev && typeof prev.destroy === "function") prev.destroy();
+  } catch (_) {}
+
+  try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── helpers
   const qs = (s, r = document) => r.querySelector(s);
@@ -32,6 +49,7 @@
     if (s === "0" || s === "false" || s === "no" || s === "off") return false;
     return def;
   };
+
   const fmtK = (n) => {
     const x = +n || 0;
     const ax = Math.abs(x);
@@ -53,47 +71,74 @@
 
   function parseParams() {
     const u = new URL(location.href);
+
     const overlay = parseBool(
-      u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"),
+      u.searchParams.get("pts") ??
+      u.searchParams.get("points") ??
+      u.searchParams.get("pointsOverlay"),
       false
     );
+
     const edit = parseBool(u.searchParams.get("ptsEdit") ?? u.searchParams.get("ptsDrag"), false);
     const avoid = parseBool(u.searchParams.get("ptsAvoid"), true);
 
     return {
       key: safeStr(u.searchParams.get("key") || ""),
+
       overlay,
       overlayOnly: overlay ? parseBool(u.searchParams.get("ptsOnly"), true) : false,
 
       // defaults opcionales
       name: safeStr(u.searchParams.get("ptsName") || u.searchParams.get("pointsName") || ""),
       icon: safeStr(u.searchParams.get("ptsIcon") || u.searchParams.get("pointsIcon") || ""),
+      hint: safeStr(u.searchParams.get("ptsHint") || u.searchParams.get("pointsHint") || ""),
+
       goal: num(u.searchParams.get("ptsGoal") ?? u.searchParams.get("pointsGoal"), NaN),
       value: num(u.searchParams.get("ptsValue") ?? u.searchParams.get("pointsValue"), NaN),
+
       showGoal: parseBool(u.searchParams.get("ptsShowGoal"), true),
       showDelta: parseBool(u.searchParams.get("ptsShowDelta"), true),
+
       pos: safeStr(u.searchParams.get("ptsPos") || ""), // tl,tr,bl,br
       scale: clamp(num(u.searchParams.get("ptsScale"), 1), 0.6, 1.8),
 
       // pos libre
       x: clamp(num(u.searchParams.get("ptsX"), 12), 0, 360),
       y: clamp(num(u.searchParams.get("ptsY"), 12), 0, 360),
+
       avoid,
       edit,
     };
   }
 
   const P = parseParams();
-  const KEY = String(P.key || "").trim();
 
-  // ───────────────────────── BUS + keys (compat RLC)
-  const BUS_BASE = "rlc_bus_v1";
+  // KEY auto (2.3.8/2.3.9)
+  const KEY = (() => {
+    const k1 = safeStr(g.RLC_KEY || "");
+    if (k1) return k1;
+
+    const k2 = safeStr(P.key || "");
+    if (k2) return k2;
+
+    const k3 = safeStr(lsGet("rlc_last_key_v1") || "");
+    return k3 || "";
+  })();
+
+  // ───────────────────────── BUS + keys (compat RLC 2.3.9)
+  const BUS_BASE_FALLBACK = "rlc_bus_v1";
+  const BUS_BASE = safeStr(g.RLC_BUS_BASE || "") || BUS_BASE_FALLBACK;
+
+  const BUS = (() => {
+    const b = safeStr(g.RLC_BUS || "");
+    if (b) return b;
+    return KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+  })();
+
+  const BUS_LEGACY = BUS_BASE;
 
   const PTS_STATE_KEY_BASE = "rlc_points_state_v1";
   const PTS_CFG_KEY_BASE = "rlc_points_cfg_v1";
-
-  const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
-  const BUS_LEGACY = BUS_BASE;
 
   const PTS_STATE_KEY = KEY ? `${PTS_STATE_KEY_BASE}:${KEY}` : PTS_STATE_KEY_BASE;
   const PTS_CFG_KEY = KEY ? `${PTS_CFG_KEY_BASE}:${KEY}` : PTS_CFG_KEY_BASE;
@@ -105,17 +150,20 @@
   let allowLegacyNoKey = true;
   const allowLegacyNoKeyUntil = Date.now() + 6500;
 
-  function keyOk(msg, isMainChannel) {
+  function keyOk(msg, transportTag) {
     if (!KEY) return true;
 
-    if (isMainChannel) {
+    // key explícita siempre manda
+    const mk = msg && typeof msg.key === "string" ? String(msg.key).trim() : "";
+    if (mk) return mk === KEY;
+
+    // si viene por bcMain y el canal es keyed, aceptamos y cerramos grace
+    if (transportTag === "bcMain" && String(BUS).includes(`:${KEY}`)) {
       allowLegacyNoKey = false;
       return true;
     }
 
-    const mk = msg && typeof msg.key === "string" ? String(msg.key).trim() : "";
-    if (mk) return mk === KEY;
-
+    // grace window
     if (!allowLegacyNoKey) return false;
     if (Date.now() > allowLegacyNoKeyUntil) return false;
     return true;
@@ -124,6 +172,8 @@
   function busPost(msg) {
     try { if (bcMain) bcMain.postMessage(msg); } catch (_) {}
     try { if (bcLegacy) bcLegacy.postMessage(msg); } catch (_) {}
+    // postMessage same-origin (fallback extra)
+    try { window.postMessage(msg, location.origin); } catch (_) {}
   }
 
   // ───────────────────────── defaults + normalize
@@ -131,13 +181,21 @@
     enabled: true,
     showGoal: true,
     showDelta: true,
+
     pos: "tl",
     scale: 1,
-    name: "Crystal",
-    icon: "💎",
-    theme: "neo",
+
+    // ✅ Tema “ticket / boarding pass”
+    name: "Billetes",
+    icon: "🎫✈️",
+    hint: "VOTA · CAMBIO CAM · PERKS SUB",
+
+    theme: "ticket",
+
+    // pos libre
     x: 12,
     y: 12,
+
     avoid: true,
   };
 
@@ -160,9 +218,10 @@
     c.scale = clamp(num(c.scale, 1), 0.6, 1.8);
 
     c.name = String(c.name || CFG_DEFAULTS.name).trim().slice(0, 24) || CFG_DEFAULTS.name;
-    c.icon = String(c.icon || CFG_DEFAULTS.icon).trim().slice(0, 6) || CFG_DEFAULTS.icon;
+    c.icon = String(c.icon || CFG_DEFAULTS.icon).trim().slice(0, 8) || CFG_DEFAULTS.icon;
+    c.hint = String(c.hint || CFG_DEFAULTS.hint).trim().slice(0, 48) || CFG_DEFAULTS.hint;
 
-    c.theme = String(c.theme || "neo").trim().toLowerCase() || "neo";
+    c.theme = String(c.theme || "ticket").trim().toLowerCase() || "ticket";
 
     c.x = clamp(num(c.x, CFG_DEFAULTS.x), 0, 360);
     c.y = clamp(num(c.y, CFG_DEFAULTS.y), 0, 360);
@@ -186,11 +245,15 @@
     const b = safeJson(lsGet(PTS_CFG_KEY_BASE), null);
     if (b && typeof b === "object") return normalizeCfg(b);
 
+    // fallback: defaults + URL overrides
     const c = normalizeCfg(CFG_DEFAULTS);
     if (P.name) c.name = P.name;
     if (P.icon) c.icon = P.icon;
+    if (P.hint) c.hint = P.hint;
+
     if (P.pos) c.pos = P.pos.toLowerCase();
     if (Number.isFinite(P.scale)) c.scale = P.scale;
+
     c.showGoal = !!P.showGoal;
     c.showDelta = !!P.showDelta;
 
@@ -205,7 +268,7 @@
     const c = normalizeCfg(cfg);
     const raw = JSON.stringify(c);
     lsSet(PTS_CFG_KEY, raw);
-    lsSet(PTS_CFG_KEY_BASE, raw);
+    lsSet(PTS_CFG_KEY_BASE, raw); // legacy mirror
     return c;
   }
 
@@ -226,7 +289,7 @@
     const s = normalizeState(st);
     const raw = JSON.stringify(s);
     lsSet(PTS_STATE_KEY, raw);
-    lsSet(PTS_STATE_KEY_BASE, raw);
+    lsSet(PTS_STATE_KEY_BASE, raw); // legacy mirror
     return s;
   }
 
@@ -282,6 +345,7 @@
 #ctlPtsCard .rlcPtsBtns{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
 #ctlPtsCard .rlcPtsBtns button{min-height:38px}
 #ctlPtsCard .rlcPtsMini{opacity:.75;font-size:12px;line-height:1.35;margin-top:8px}
+#ctlPtsCard .rlcPtsMini .mono{opacity:.92}
 `.trim();
     document.head.appendChild(st);
   }
@@ -289,6 +353,7 @@
   function ensureControlCard() {
     if (!IS_CONTROL_PAGE) return false;
 
+    // si ya existe UI de puntos de otra versión, no duplicar
     if (qs("#ctlPtsApply") || qs("#ctlPointsApply") || qs("#ctlPtsValue") || qs("#ctlPtsName")) return true;
 
     const grid = qs(".controlGrid") || qs("section.controlGrid") || qs("#controlGrid") || null;
@@ -304,8 +369,8 @@
     card.innerHTML = `
       <div class="rlcPtsHead">
         <div class="rlcPtsTitle">
-          <div class="rlcPtsKicker">OVERLAY</div>
-          <div class="rlcPtsNameBig">POINTS</div>
+          <div class="rlcPtsKicker">🎫✈️ OVERLAY</div>
+          <div class="rlcPtsNameBig">BILLETES / PASES</div>
         </div>
         <div class="pill mono" id="ctlPtsStatus">—</div>
       </div>
@@ -331,12 +396,17 @@
 
         <label class="rlcFld">
           <span>Name</span>
-          <input id="ctlPtsName" class="input" type="text" placeholder="Crystal" maxlength="24" />
+          <input id="ctlPtsName" class="input" type="text" placeholder="Billetes" maxlength="24" />
         </label>
 
         <label class="rlcFld">
           <span>Icon</span>
-          <input id="ctlPtsIcon" class="input" type="text" placeholder="💎" maxlength="6" />
+          <input id="ctlPtsIcon" class="input" type="text" placeholder="🎫✈️" maxlength="8" />
+        </label>
+
+        <label class="rlcFld" style="grid-column:1/-1">
+          <span>Hint (uso)</span>
+          <input id="ctlPtsHint" class="input" type="text" placeholder="VOTA · CAMBIO CAM · PERKS SUB" maxlength="48" />
         </label>
 
         <label class="rlcFld">
@@ -381,7 +451,7 @@
         <button id="ctlPtsAdd" class="btn ghost" type="button">+ Sumar</button>
         <button id="ctlPtsApply" class="btn" type="button">Aplicar</button>
         <button id="ctlPtsReset" class="btn ghost" type="button">Reset</button>
-        <button id="ctlPtsCopyUrl" class="btn ghost" type="button">Copiar URL overlay</button>
+        <button id="ctlPtsCopyUrl" class="btn ghost" type="button">Copiar URL overlay (OBS)</button>
       </div>
 
       <div class="rlcPtsMini">
@@ -400,7 +470,7 @@
     !!P.overlay ||
     !!document.getElementById("rlcPtsRoot");
 
-  // ✅ FIX: ptsOnly también puede aplicarse en player (para OBS)
+  // ✅ ptsOnly también puede aplicarse en player (para OBS)
   const overlayOnlyMode = !!(P.overlay && P.overlayOnly);
 
   // ───────────────────────── Overlay UI
@@ -421,6 +491,7 @@
   --rlcPtsTopExtra:0px;
   --rlcPtsBottomExtra:0px;
 
+  /* hereda Neo-Atlas si existe */
   --rlcPts_panel: var(--panel, rgba(10,14,20,.62));
   --rlcPts_panel2: var(--panel2, rgba(10,14,20,.76));
   --rlcPts_stroke: var(--stroke, rgba(255,255,255,.12));
@@ -429,6 +500,7 @@
   --rlcPts_acc: var(--acc, #37d6ff);
   --rlcPts_ok: var(--ok, #19e28a);
   --rlcPts_bad: var(--bad, #ff5a5a);
+  --rlcPts_gold: #ffce57;
 }
 
 .rlcPtsRoot{
@@ -468,12 +540,14 @@
   transform-origin:bottom right
 }
 
+/* ───── Ticket card */
 .rlcPtsCard{
-  min-width:240px;
-  max-width:min(460px,calc(100vw - 24px));
+  min-width:260px;
+  max-width:min(480px,calc(100vw - 24px));
   padding:12px 14px;
   border-radius:18px;
-  background:linear-gradient(180deg, var(--rlcPts_panel), var(--rlcPts_panel2));
+  background:
+    linear-gradient(180deg, var(--rlcPts_panel), var(--rlcPts_panel2));
   border:1px solid var(--rlcPts_stroke);
   box-shadow: 0 18px 55px rgba(0,0,0,.48), 0 1px 0 rgba(255,255,255,.06) inset;
   backdrop-filter:blur(12px);
@@ -481,17 +555,46 @@
   overflow:hidden;
   position:relative;
 }
+
+/* brillo “boarding pass” */
 .rlcPtsCard::before{
   content:"";
-  position:absolute; inset:0;
+  position:absolute; inset:-2px;
   background:
-    radial-gradient(600px 160px at 10% 0%, rgba(55,214,255,.16), transparent 60%),
-    radial-gradient(560px 160px at 100% 0%, rgba(255,206,87,.10), transparent 60%);
+    radial-gradient(520px 160px at 12% 0%, rgba(55,214,255,.18), transparent 62%),
+    radial-gradient(560px 160px at 100% 0%, rgba(255,206,87,.12), transparent 62%),
+    radial-gradient(420px 140px at 35% 120%, rgba(25,226,138,.08), transparent 60%);
   pointer-events:none;
 }
+
+/* perforación (look ticket) */
+.rlcPtsPunch{
+  position:absolute;
+  top:50%;
+  width:14px;height:14px;
+  border-radius:999px;
+  background:rgba(0,0,0,.35);
+  border:1px solid rgba(255,255,255,.10);
+  transform:translateY(-50%);
+  filter:blur(.1px);
+  pointer-events:none;
+}
+.rlcPtsPunch.left{ left:-7px; }
+.rlcPtsPunch.right{ right:-7px; }
+
+.rlcPtsDash{
+  position:absolute;
+  left:46px; right:14px;
+  top:54px;
+  height:0;
+  border-top:1px dashed rgba(255,255,255,.18);
+  opacity:.8;
+  pointer-events:none;
+}
+
 .rlcPtsTop{ position:relative; display:flex; align-items:center; gap:10px; }
 .rlcPtsIcon{
-  width:36px;height:36px;border-radius:14px;
+  width:38px;height:38px;border-radius:14px;
   display:grid;place-items:center;
   font-size:18px;
   background:rgba(55,214,255,.14);
@@ -499,6 +602,9 @@
   box-shadow:0 10px 26px rgba(0,0,0,.22), 0 0 0 1px rgba(55,214,255,.10) inset;
 }
 .rlcPtsMeta{min-width:0;flex:1 1 auto}
+.rlcPtsNameRow{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+}
 .rlcPtsName{
   font-weight:950;
   font-size:11px;
@@ -507,14 +613,27 @@
   text-transform:uppercase;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.rlcPtsStamp{
+  font: 950 10px/1 ui-sans-serif,system-ui;
+  letter-spacing:.22em;
+  opacity:.85;
+  color: rgba(255,255,255,.75);
+  border:1px solid rgba(255,255,255,.12);
+  padding:4px 8px;
+  border-radius:999px;
+  background:rgba(255,255,255,.06);
+  white-space:nowrap;
+}
+
 .rlcPtsVal{
-  margin-top:2px;
+  margin-top:4px;
   font-weight:980;
-  font-size:22px;
+  font-size:24px;
   line-height:1.05;
   color:var(--rlcPts_text);
   display:flex;align-items:baseline;gap:8px
 }
+
 .rlcPtsDelta{
   font-weight:950;
   font-size:12px;
@@ -530,6 +649,17 @@
 .rlcPtsDelta.on{opacity:1;transform:translateY(0)}
 .rlcPtsDelta.plus{background:rgba(25,226,138,.14);border-color:rgba(25,226,138,.22)}
 .rlcPtsDelta.minus{background:rgba(255,90,90,.14);border-color:rgba(255,90,90,.22)}
+
+.rlcPtsHint{
+  margin-top:8px;
+  font: 900 10px/1 ui-sans-serif,system-ui;
+  letter-spacing:.20em;
+  color: rgba(255,255,255,.65);
+  text-transform:uppercase;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
 
 .rlcPtsBar{
   position:relative;
@@ -586,7 +716,8 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     document.head.appendChild(st);
   }
 
-  let elRoot = null, elIcon = null, elName = null, elVal = null, elDelta = null, elBar = null, elGoalL = null, elGoalR = null;
+  let elRoot = null, elIcon = null, elName = null, elStamp = null, elHint = null;
+  let elVal = null, elDelta = null, elBar = null, elGoalL = null, elGoalR = null;
   let lastRenderValue = null;
   let deltaTimer = null;
 
@@ -630,15 +761,21 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
       elRoot.setAttribute("aria-hidden", "true");
       elRoot.innerHTML =
         '<div class="rlcPtsCard" id="rlcPtsCard">' +
+          '<i class="rlcPtsPunch left"></i><i class="rlcPtsPunch right"></i>' +
+          '<i class="rlcPtsDash"></i>' +
           '<div class="rlcPtsTop">' +
-            '<div class="rlcPtsIcon" id="rlcPtsIcon">💎</div>' +
+            '<div class="rlcPtsIcon" id="rlcPtsIcon">🎫✈️</div>' +
             '<div class="rlcPtsMeta">' +
-              '<div class="rlcPtsName" id="rlcPtsName">CRYSTAL</div>' +
+              '<div class="rlcPtsNameRow">' +
+                '<div class="rlcPtsName" id="rlcPtsName">BILLETES</div>' +
+                '<div class="rlcPtsStamp" id="rlcPtsStamp">GLOBAL</div>' +
+              '</div>' +
               '<div class="rlcPtsVal"><span id="rlcPtsVal">0</span><span class="rlcPtsDelta" id="rlcPtsDelta">+1</span></div>' +
+              '<div class="rlcPtsHint" id="rlcPtsHint">VOTA · CAMBIO CAM · PERKS SUB</div>' +
             '</div>' +
           '</div>' +
           '<div class="rlcPtsBar" id="rlcPtsBarWrap"><i id="rlcPtsBarFill"></i></div>' +
-          '<div class="rlcPtsGoalRow" id="rlcPtsGoalRow"><span id="rlcPtsGoalL">0</span><span id="rlcPtsGoalR">Goal 0</span></div>' +
+          '<div class="rlcPtsGoalRow" id="rlcPtsGoalRow"><span id="rlcPtsGoalL">0</span><span id="rlcPtsGoalR">Meta 0</span></div>' +
         '</div>';
 
       document.body.appendChild(elRoot);
@@ -646,6 +783,9 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
 
     elIcon = qs("#rlcPtsIcon");
     elName = qs("#rlcPtsName");
+    elStamp = qs("#rlcPtsStamp");
+    elHint = qs("#rlcPtsHint");
+
     elVal = qs("#rlcPtsVal");
     elDelta = qs("#rlcPtsDelta");
     elBar = qs("#rlcPtsBarFill");
@@ -653,7 +793,6 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     elGoalR = qs("#rlcPtsGoalR");
 
     setEditMode(editPersistent || editHeld);
-
     return true;
   }
 
@@ -688,12 +827,17 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     }, 1500);
   }
 
-  // ───────────────────────── Anti-solape best-effort (FIX IDs)
+  // ───────────────────────── Anti-solape (IDs reales + best effort)
   const AVOID_SELECTORS = [
     "#rlcAlerts", "#alerts", "#alertsOverlay", "#rlcAlertStack", ".rlcAlerts", ".alertsOverlay", ".alerts",
     "#rlcToastWrap", ".rlcToastWrap", ".rlcToast", ".toast",
+
     "#voteOverlay", "#rlcVoteOverlay", "#rlcVote", ".voteOverlay", "#voteBox",
-    "#chatOverlay", "#rlcChatOverlay", "#rlcChat", ".chatOverlay", "#rlcChatRoot", "#rlcChatList",
+
+    "#chatOverlay", "#rlcChatOverlay", "#rlcChat", ".chatOverlay",
+    "#rlcChatRoot", "#rlcChatList", "#chatRoot", "#chatList",
+
+    "#hud", ".hud", "#rlcHud",
   ];
   const EXCLUDE_SELECTORS = ["#rlcNewsTicker", "#rlcEconTicker", "#rlcPtsRoot"];
 
@@ -910,8 +1054,13 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
 
     applyPosVars(cfg.x ?? 12, cfg.y ?? 12);
 
-    if (elIcon) elIcon.textContent = cfg.icon || "💎";
-    if (elName) elName.textContent = String(cfg.name || "Crystal").toUpperCase();
+    if (elIcon) elIcon.textContent = cfg.icon || "🎫✈️";
+    if (elName) elName.textContent = String(cfg.name || "Billetes").toUpperCase();
+
+    // stamp: si hay key, marca “KEYED”; si no, “GLOBAL”
+    if (elStamp) elStamp.textContent = KEY ? "KEYED" : "GLOBAL";
+
+    if (elHint) elHint.textContent = String(cfg.hint || CFG_DEFAULTS.hint).toUpperCase();
 
     const v = state.value | 0;
     const goal = state.goal | 0;
@@ -928,7 +1077,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
       const pct = clamp(goal > 0 ? (100 * v / goal) : 0, 0, 100);
       if (elBar) elBar.style.width = `${pct.toFixed(1)}%`;
       if (elGoalL) elGoalL.innerHTML = `<b>${fmtK(v)}</b>`;
-      if (elGoalR) elGoalR.textContent = `Goal ${fmtK(goal)}`;
+      if (elGoalR) elGoalR.textContent = `Meta ${fmtK(goal)}`;
     }
 
     if (cfg.showDelta) {
@@ -948,7 +1097,8 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
 
   // ───────────────────────── CONTROL UI (FIX: refs dinámicas)
   const ctl = {
-    on: null, name: null, icon: null, value: null, goal: null, delta: null,
+    on: null, name: null, icon: null, hint: null,
+    value: null, goal: null, delta: null,
     showGoal: null, showDelta: null, pos: null, scale: null,
     add: null, sub: null, apply: null, reset: null, copyUrl: null,
     status: null, url: null
@@ -958,6 +1108,8 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     ctl.on = qs("#ctlPtsOn") || qs("#ctlPointsOn");
     ctl.name = qs("#ctlPtsName") || qs("#ctlPointsName");
     ctl.icon = qs("#ctlPtsIcon") || qs("#ctlPointsIcon");
+    ctl.hint = qs("#ctlPtsHint");
+
     ctl.value = qs("#ctlPtsValue") || qs("#ctlPointsValue");
     ctl.goal = qs("#ctlPtsGoal") || qs("#ctlPointsGoal");
     ctl.delta = qs("#ctlPtsDelta") || qs("#ctlPointsDelta");
@@ -972,8 +1124,9 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     ctl.apply = qs("#ctlPtsApply") || qs("#ctlPointsApply");
     ctl.reset = qs("#ctlPtsReset") || qs("#ctlPointsReset");
     ctl.copyUrl = qs("#ctlPtsCopyUrl") || qs("#ctlPointsCopyUrl");
+
     ctl.status = qs("#ctlPtsStatus");
-    ctl.url = qs("#ctlPtsUrl");
+    ctl.url = qs("#ctlPtsUrl"); // opcional si tu HTML lo trae
   }
 
   function setCtlStatus(text, ok = true) {
@@ -994,15 +1147,19 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
   function buildOverlayUrl() {
     const base = new URL(location.href);
 
-    // ✅ Si estás en control.html, genera URL para index.html
-    base.pathname = base.pathname
-      .replace(/control\.html?$/i, "index.html")
-      .replace(/\/control$/i, "/index.html");
+    // si estás en control.html → index.html
+    const p = base.pathname || "";
+    if (/control\.html?$/i.test(p)) {
+      base.pathname = p.replace(/control\.html?$/i, "index.html");
+    } else if (/\/control$/i.test(p)) {
+      base.pathname = p.replace(/\/control$/i, "/index.html");
+    } else if (!/\.html$/i.test(p)) {
+      // si es una ruta tipo /cam-page/ o /cam-page
+      base.pathname = p.replace(/\/?$/, "/index.html");
+    }
 
-    // limpia params y construye overlay points-only
     base.search = "";
 
-    // conserva cache-bust si tienes APP_VERSION
     const appV = String(g.APP_VERSION || "").trim();
     if (appV) base.searchParams.set("v", appV);
 
@@ -1020,6 +1177,8 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     if (ctl.on && !isEditing(ctl.on)) ctl.on.value = cfg.enabled ? "on" : "off";
     if (ctl.name && !isEditing(ctl.name)) ctl.name.value = cfg.name || "";
     if (ctl.icon && !isEditing(ctl.icon)) ctl.icon.value = cfg.icon || "";
+    if (ctl.hint && !isEditing(ctl.hint)) ctl.hint.value = cfg.hint || "";
+
     if (ctl.showGoal && !isEditing(ctl.showGoal)) ctl.showGoal.value = cfg.showGoal ? "on" : "off";
     if (ctl.showDelta && !isEditing(ctl.showDelta)) ctl.showDelta.value = cfg.showDelta ? "on" : "off";
     if (ctl.pos && !isEditing(ctl.pos)) ctl.pos.value = cfg.pos || "tl";
@@ -1039,6 +1198,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     if (ctl.on) out.enabled = (ctl.on.value !== "off");
     if (ctl.name) out.name = String(ctl.name.value || out.name || CFG_DEFAULTS.name).trim();
     if (ctl.icon) out.icon = String(ctl.icon.value || out.icon || CFG_DEFAULTS.icon).trim();
+    if (ctl.hint) out.hint = String(ctl.hint.value || out.hint || CFG_DEFAULTS.hint).trim();
 
     if (ctl.showGoal) out.showGoal = (ctl.showGoal.value !== "off");
     if (ctl.showDelta) out.showDelta = (ctl.showDelta.value !== "off");
@@ -1140,7 +1300,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     try { ctl.sub?.addEventListener?.("click", () => applyDelta(-1)); } catch (_) {}
     try { ctl.reset?.addEventListener?.("click", resetAll); } catch (_) {}
 
-    const live = [ctl.on, ctl.name, ctl.icon, ctl.showGoal, ctl.showDelta, ctl.pos, ctl.scale, ctl.value, ctl.goal];
+    const live = [ctl.on, ctl.name, ctl.icon, ctl.hint, ctl.showGoal, ctl.showDelta, ctl.pos, ctl.scale, ctl.value, ctl.goal];
     for (const el of live) {
       if (!el) continue;
       try { el.addEventListener("change", doApply); } catch (_) {}
@@ -1152,7 +1312,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
         const url = buildOverlayUrl();
         const ok = await copyToClipboard(url);
         try { ctl.copyUrl.textContent = ok ? "Copiado ✅" : "Error ❌"; } catch (_) {}
-        setTimeout(() => { try { ctl.copyUrl.textContent = "Copiar URL overlay"; } catch (_) {} }, 1200);
+        setTimeout(() => { try { ctl.copyUrl.textContent = "Copiar URL overlay (OBS)"; } catch (_) {} }, 1200);
       });
     } catch (_) {}
 
@@ -1170,23 +1330,49 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     syncControlUI();
   }
 
-  // ───────────────────────── Receive bus messages (DEDUP simple)
-  const lastSeenByType = { PTS_CFG: 0, PTS_STATE: 0 };
+  // ───────────────────────── Receive messages (DEDUP robust: ts + firma)
+  const lastSeen = {
+    PTS_CFG: { ts: 0, sig: "" },
+    PTS_STATE: { ts: 0, sig: "" }
+  };
+
+  function stableSig(obj) {
+    try {
+      // firma corta: JSON ordenado “suficiente”
+      const t = obj?.type || "";
+      const ts = obj?.ts || 0;
+      const payload = obj?.cfg || obj?.state || obj || {};
+      return `${t}|${ts}|${JSON.stringify(payload)}`;
+    } catch (_) {
+      return `${obj?.type || ""}|${obj?.ts || 0}|x`;
+    }
+  }
 
   function shouldAcceptMsg(msg) {
     const type = String(msg?.type || "");
+    if (!type || !lastSeen[type]) return false;
+
     const ts = (msg?.ts | 0) || 0;
-    if (!type) return false;
+    const sig = stableSig(msg);
+
+    const prev = lastSeen[type];
     if (!ts) return true;
-    const last = lastSeenByType[type] || 0;
-    if (ts <= last) return false;
-    lastSeenByType[type] = ts;
-    return true;
+
+    // acepta ts mayor, o ts igual con payload diferente
+    if (ts > prev.ts) {
+      prev.ts = ts; prev.sig = sig;
+      return true;
+    }
+    if (ts === prev.ts && sig && sig !== prev.sig) {
+      prev.sig = sig;
+      return true;
+    }
+    return false;
   }
 
-  function handleMsg(msg, isMainChannel) {
+  function handleMsg(msg, transportTag) {
     if (!msg || typeof msg !== "object") return;
-    if (!keyOk(msg, !!isMainChannel)) return;
+    if (!keyOk(msg, transportTag)) return;
     if (!shouldAcceptMsg(msg)) return;
 
     if (msg.type === "PTS_CFG" && msg.cfg) {
@@ -1206,8 +1392,19 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     }
   }
 
-  try { if (bcMain) bcMain.onmessage = (ev) => handleMsg(ev?.data, true); } catch (_) {}
-  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleMsg(ev?.data, false); } catch (_) {}
+  try { if (bcMain) bcMain.onmessage = (ev) => handleMsg(ev?.data, "bcMain"); } catch (_) {}
+  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleMsg(ev?.data, "bcLegacy"); } catch (_) {}
+
+  // postMessage same-origin (fallback)
+  try {
+    window.addEventListener("message", (ev) => {
+      try { if (ev.origin && ev.origin !== location.origin) return; } catch (_) {}
+      const msg = ev?.data;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type !== "PTS_CFG" && msg.type !== "PTS_STATE") return;
+      handleMsg(msg, "postMessage");
+    }, { passive: true });
+  } catch (_) {}
 
   window.addEventListener("storage", (e) => {
     const k = String(e.key || "");
@@ -1232,8 +1429,17 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     getCfg: () => normalizeCfg(cfg),
     getState: () => normalizeState(state),
 
-    setCfg: (partial) => { cfg = publishCfg(Object.assign({}, cfg, partial || {})); renderOverlay(); syncControlUI(); return cfg; },
-    setState: (partial) => { state = publishState(Object.assign({}, state, partial || {}, { updatedAt: Date.now() })); renderOverlay(); syncControlUI(); return state; },
+    setCfg: (partial) => {
+      cfg = publishCfg(Object.assign({}, cfg, partial || {}));
+      renderOverlay(); syncControlUI();
+      return cfg;
+    },
+
+    setState: (partial) => {
+      state = publishState(Object.assign({}, state, partial || {}, { updatedAt: Date.now() }));
+      renderOverlay(); syncControlUI();
+      return state;
+    },
 
     setValue: (v) => {
       const next = Math.max(0, (parseInt(String(v ?? "0"), 10) || 0));
@@ -1242,6 +1448,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
       renderOverlay(); syncControlUI();
       return state;
     },
+
     add: (delta) => {
       const d = (parseInt(String(delta ?? "0"), 10) || 0);
       const next = Math.max(0, (state.value | 0) + d);
@@ -1249,11 +1456,28 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
       renderOverlay(); syncControlUI();
       return state;
     },
+
     reset: () => resetAll(),
-    clearStorage: () => { lsDel(PTS_CFG_KEY); lsDel(PTS_CFG_KEY_BASE); lsDel(PTS_STATE_KEY); lsDel(PTS_STATE_KEY_BASE); }
+
+    clearStorage: () => {
+      lsDel(PTS_CFG_KEY); lsDel(PTS_CFG_KEY_BASE);
+      lsDel(PTS_STATE_KEY); lsDel(PTS_STATE_KEY_BASE);
+    }
   };
 
   // ───────────────────────── Boot
+  const inst = {
+    __ver: VERSION,
+    destroy() {
+      try { if (bcMain?.close) bcMain.close(); } catch (_) {}
+      try { if (bcLegacy?.close) bcLegacy.close(); } catch (_) {}
+      try { if (avoidTimer) clearInterval(avoidTimer); } catch (_) {}
+      try { if (deltaTimer) clearTimeout(deltaTimer); } catch (_) {}
+      try { if (avoidRAF) cancelAnimationFrame(avoidRAF); } catch (_) {}
+    }
+  };
+  try { g[INST_KEY] = inst; } catch (_) {}
+
   onReady(() => {
     ensureControlCard();
 
@@ -1275,6 +1499,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
     const hadCfg = !!lsGet(PTS_CFG_KEY) || !!lsGet(PTS_CFG_KEY_BASE);
     const hadSt = !!lsGet(PTS_STATE_KEY) || !!lsGet(PTS_STATE_KEY_BASE);
 
+    // seed inicial (sin machacar si ya existe)
     if (!hadCfg) cfg = publishCfg(cfg);
     if (!hadSt) {
       state.updatedAt = Date.now();
@@ -1300,6 +1525,7 @@ body.rlcPtsOnly .controlWrap{ display:none!important; }
         });
       } catch (_) {}
 
+      ensureOverlayUI();
       bindDrag();
       startAvoidLoop();
 

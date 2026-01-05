@@ -1,4 +1,4 @@
-/* catalogView.js — RLC Catalog View v1.2.8 (RLC 2.3.8 COMPAT / MULTI-TILES / SINGLETON HARDEN)
+/* catalogView.js — RLC Catalog View v1.2.9 (RLC 2.3.9 COMPAT / MULTI-TILES / SINGLETON HARDEN)
    ✅ Catálogo en rejilla configurable (N tiles)
    ✅ Modo "follow": SOLO 1 tile (followSlot) sigue al state (los demás sticky)
    ✅ Modo "sync": rotan TODOS los tiles a la vez
@@ -9,9 +9,10 @@
    ✅ WX por tile si existe window.RLCWx.getSummaryForCam()
       - sin placeholders ("…"), solo visible con datos válidos
       - refresh suave sin flicker
-   ✅ Compat total con RLC v2.3.8:
+   ✅ Compat total con RLC v2.3.9 (sin romper 2.3.8):
       - KEY auto: window.RLC_KEY / ?key= / localStorage rlc_last_key_v1
-      - BUS auto: window.RLC_BUS / rlc_bus_v1:{key}
+      - BUS auto: window.RLC_BUS / window.RLC_BUS_BASE / rlc_bus_v1:{key}
+      - STATE key auto (si 2.3.9 cambia base): intenta detectar rlc_state_v* más reciente
       - Acepta CFG por:
           * {type:"CATALOG_CFG", cfg:{...}}
           * {type:"cmd", cmd:"CATALOG_SET", payload:{...}}
@@ -27,7 +28,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const VER = "1.2.8";
+  const VER = "1.2.9";
   const INST_KEY = "__RLC_CATALOG_VIEW_INSTANCE__";
 
   try {
@@ -43,6 +44,8 @@
   const now = () => Date.now();
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+
   function readJson(key) {
     try {
       const raw = lsGet(key);
@@ -52,7 +55,7 @@
     } catch (_) { return null; }
   }
   function writeJson(key, obj) {
-    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
+    try { lsSet(key, JSON.stringify(obj)); } catch (_) {}
   }
 
   function parseParams() {
@@ -64,7 +67,7 @@
     }
   }
 
-  // ───────────────────────── KEY auto (RLC 2.3.8)
+  // ───────────────────────── KEY auto (RLC 2.3.8/2.3.9)
   const KEY = (() => {
     const k1 = safeStr(g.RLC_KEY || "");
     if (k1) return k1;
@@ -76,13 +79,13 @@
     return k3 || "";
   })();
 
-  // ───────────────────────── Keys / Bus
-  const BUS_BASE = "rlc_bus_v1";
-  const STATE_KEY_BASE = "rlc_state_v1";
-  const CFG_BASE = "rlc_catalog_cfg_v1";
-  const SLOTS_BASE = "rlc_catalog_slots_v1";
+  // ───────────────────────── Bus / Keys (2.3.9 hardened: allow discovery)
+  const BUS_BASE_FALLBACK = "rlc_bus_v1";
+  const BUS_BASE = (() => {
+    const b = safeStr(g.RLC_BUS_BASE || "");
+    return b || BUS_BASE_FALLBACK;
+  })();
 
-  // BUS main: usa el que expone index 2.3.8 si está
   const BUS_MAIN = (() => {
     const b = safeStr(g.RLC_BUS || "");
     if (b) return b;
@@ -90,33 +93,89 @@
   })();
   const BUS_LEGACY = BUS_BASE;
 
-  const STATE_KEY = KEY ? `${STATE_KEY_BASE}:${KEY}` : STATE_KEY_BASE;
-  const STATE_KEY_LEGACY = STATE_KEY_BASE;
+  const BUS_MAIN_LOOKS_KEYED = (() => {
+    if (!KEY) return false;
+    const s = String(BUS_MAIN || "");
+    return s.includes(`:${KEY}`);
+  })();
+
+  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_MAIN) : null;
+  // bcLegacy solo tiene sentido si estamos en modo keyed
+  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+  // ───────────────────────── State/CFG/SLOTS keys (2.3.9 compatible: detect newest state key)
+  const CFG_BASE = "rlc_catalog_cfg_v1";
+  const SLOTS_BASE = "rlc_catalog_slots_v1";
 
   const CFG_KEY = KEY ? `${CFG_BASE}:${KEY}` : CFG_BASE;
   const CFG_KEY_LEGACY = CFG_BASE;
 
   const SLOTS_KEY = KEY ? `${SLOTS_BASE}:${KEY}` : SLOTS_BASE;
 
-  const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_MAIN) : null;
-  // bcLegacy solo tiene sentido si estamos en modo keyed
-  const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+  const STATE_KEY_BASE_CANDIDATES = [
+    // por si 2.3.9 cambia base (no rompe 2.3.8)
+    "rlc_state_v9",
+    "rlc_state_v8",
+    "rlc_state_v7",
+    "rlc_state_v6",
+    "rlc_state_v5",
+    "rlc_state_v4",
+    "rlc_state_v3",
+    "rlc_state_v2",
+    "rlc_state_v1"
+  ];
 
-  // Compat keyless unos segundos (como tu points/control)
+  function detectStateKeyCandidates() {
+    // 1) si el player expone una key exacta, úsala
+    const exposed = safeStr(g.RLC_STATE_KEY || "");
+    if (exposed) {
+      const leg = safeStr(g.RLC_STATE_KEY_LEGACY || "");
+      return {
+        primary: exposed,
+        legacy: leg || "rlc_state_v1"
+      };
+    }
+
+    // 2) intenta encontrar la base más reciente que exista en LS
+    if (KEY) {
+      for (const base of STATE_KEY_BASE_CANDIDATES) {
+        const k = `${base}:${KEY}`;
+        if (lsGet(k)) return { primary: k, legacy: base };
+      }
+      // fallback: keyless base si existe (por si el player aún no keyea)
+      for (const base of STATE_KEY_BASE_CANDIDATES) {
+        if (lsGet(base)) return { primary: base, legacy: base };
+      }
+      // default
+      return { primary: `rlc_state_v1:${KEY}`, legacy: "rlc_state_v1" };
+    } else {
+      for (const base of STATE_KEY_BASE_CANDIDATES) {
+        if (lsGet(base)) return { primary: base, legacy: base };
+      }
+      return { primary: "rlc_state_v1", legacy: "rlc_state_v1" };
+    }
+  }
+
+  let STATE_KEYS = detectStateKeyCandidates();
+
+  // Compat keyless unos segundos (como tu stack)
   let allowLegacyNoKey = true;
   const allowLegacyNoKeyUntil = now() + 6500;
 
-  function keyOk(msg, isMainChannel) {
+  function keyOk(msg, transportTag) {
     if (!KEY) return true;
 
-    if (isMainChannel) {
+    // Si trae key explícita, es ley
+    const mk = (msg && typeof msg.key === "string") ? String(msg.key).trim() : "";
+    if (mk) return mk === KEY;
+
+    // Si llega por el canal "main" y ese canal parece keyed => aceptamos
+    if (transportTag === "bcMain" && BUS_MAIN_LOOKS_KEYED) {
       allowLegacyNoKey = false;
       return true;
     }
 
-    const mk = msg && typeof msg.key === "string" ? String(msg.key).trim() : "";
-    if (mk) return mk === KEY;
-
+    // si todavía estamos en ventana de arranque, permitimos legacy sin key
     if (!allowLegacyNoKey) return false;
     if (now() > allowLegacyNoKeyUntil) return false;
     return true;
@@ -209,6 +268,7 @@
   }
 
   function loadCfg() {
+    // (no rompe nada): prioriza keyed, luego legacy
     return normalizeCfg(readJson(CFG_KEY) || readJson(CFG_KEY_LEGACY) || DEFAULTS);
   }
 
@@ -219,8 +279,14 @@
   function normalizeStateMaybe(st) {
     if (!st || typeof st !== "object") return null;
 
+    // unwrap si viene anidado
+    if (st.state && typeof st.state === "object") st = st.state;
+
+    // tolera type variant
+    const t = safeStr(st.type || st.kind || st.name || "").toLowerCase();
+
     // estado típico: {type:"state", index, cam:{id,...}}
-    if (st.type === "state") return st;
+    if (t === "state") return Object.assign({ type: "state" }, st);
 
     // tolera shapes raros si vienen por postMessage/legacy
     const hasCam = !!st.cam && typeof st.cam === "object";
@@ -232,8 +298,9 @@
 
   function readStateFromLS() {
     try {
-      const rawMain = lsGet(STATE_KEY);
-      const rawLegacy = rawMain ? null : lsGet(STATE_KEY_LEGACY);
+      const rawMain = lsGet(STATE_KEYS.primary);
+      const rawLegacy = rawMain ? null : lsGet(STATE_KEYS.legacy);
+
       const raw = rawMain || rawLegacy;
       if (!raw) return null;
 
@@ -242,10 +309,13 @@
       if (!st) return null;
 
       const isMain = !!rawMain;
-      if (!keyOk(st, isMain)) return null;
+      // Para LS, tratamos primary como "main"
+      if (!keyOk(st, isMain ? "bcMain" : "bcLegacy")) return null;
 
       return st;
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
   }
 
   function stateSig(st) {
@@ -415,8 +485,16 @@
     const count = clamp((parseInt(countWanted, 10) || 4), 1, 25);
 
     let root = qs("#rlcCatalog");
-    const stage = qs("#stage") || document.body;
-    const mediaLayer = qs("#stage .layer.layer-media") || stage;
+    const stage =
+      qs("#stage") ||
+      qs("#app") ||
+      qs("#root") ||
+      document.body;
+
+    const mediaLayer =
+      qs("#stage .layer.layer-media") ||
+      qs(".layer.layer-media") ||
+      stage;
 
     if (!root) {
       root = document.createElement("div");
@@ -448,9 +526,9 @@
   }
 
   function setSingleMediaVisible(on) {
-    const frame = qs("#frame");
-    const video = qs("#video");
-    const img = qs("#img");
+    const frame = qs("#frame") || qs("#rlcFrame") || qs("#playerFrame");
+    const video = qs("#video") || qs("#rlcVideo") || qs("#playerVideo");
+    const img = qs("#img") || qs("#rlcImg") || qs("#playerImg");
     if (frame) frame.style.display = on ? "" : "none";
     if (video) video.style.display = on ? "" : "none";
     if (img) img.style.display = on ? "" : "none";
@@ -481,7 +559,6 @@
 
   // ───────────────────────── Catalog data helpers
   function getCamList() {
-    // compat: distintas convenciones
     if (Array.isArray(g.CAM_LIST)) return g.CAM_LIST;
     if (Array.isArray(g.CAMS)) return g.CAMS;
     if (Array.isArray(g.cams)) return g.cams;
@@ -906,12 +983,20 @@
   }
 
   function setCatalogEnabled(on) {
-    root.classList.toggle("on", !!on);
+    const want = !!on;
+    const isOn = root.classList.contains("on");
+    if (want === isOn) {
+      // aún así, mantén layout/refresh correcto en cambios de cfg
+      if (want) applyCfgToUI();
+      return;
+    }
 
-    setSingleHudVisible(!on);
-    signalCatalogMode(!!on);
+    root.classList.toggle("on", want);
 
-    if (on) {
+    setSingleHudVisible(!want);
+    signalCatalogMode(want);
+
+    if (want) {
       syncDomToCfg();
       setSingleMediaVisible(false);
       startWxRefresh();
@@ -968,6 +1053,7 @@
 
   function updateCatalog() {
     if (!CFG.enabled) return;
+    if (!root.classList.contains("on")) return;
 
     const list = getCamList();
     if (!list.length) return;
@@ -981,7 +1067,6 @@
     }
 
     const nTiles = clamp((CFG.tiles | 0), 1, 25);
-
     let ids = loadSlotIds(nTiles);
 
     if (CFG.mode === "sync") {
@@ -1087,12 +1172,17 @@
     updateCatalog();
   }
 
-  function onBusMessage(msg, isMain) {
+  function isStateMessage(msg) {
+    const t = safeStr(msg?.type || msg?.kind || msg?.name || "").toLowerCase();
+    return t === "state";
+  }
+
+  function onBusMessage(msg, transportTag) {
     if (!msg || typeof msg !== "object") return;
 
     // CATALOG_CFG estándar
     if (msg.type === "CATALOG_CFG" && msg.cfg && typeof msg.cfg === "object") {
-      if (!keyOk(msg, !!isMain)) return;
+      if (!keyOk(msg, transportTag)) return;
       applyCfgAny(msg.cfg);
       return;
     }
@@ -1101,7 +1191,7 @@
     if (msg.type === "cmd") {
       const cmd = safeStr(msg.cmd || msg.name || "").toUpperCase();
       if (cmd === "CATALOG_SET") {
-        if (!keyOk(msg, !!isMain)) return;
+        if (!keyOk(msg, transportTag)) return;
         const payload = (msg.payload && typeof msg.payload === "object") ? msg.payload : (msg.cfg || null);
         if (payload) applyCfgAny(payload);
         return;
@@ -1109,19 +1199,19 @@
     }
 
     // estado
-    if (msg.type === "state") {
-      if (!keyOk(msg, !!isMain)) return;
+    if (isStateMessage(msg)) {
+      if (!keyOk(msg, transportTag)) return;
       const sig = stateSig(msg);
       if (sig && sig === _lastStateSig) return;
       _lastStateSig = sig;
-      lastState = msg;
+      lastState = normalizeStateMaybe(msg) || msg;
       if (CFG.enabled) updateCatalog();
       return;
     }
   }
 
-  if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, true);
-  if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, false);
+  if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, "bcMain");
+  if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, "bcLegacy");
 
   // postMessage same-origin (por si llega directo desde control/preview)
   on(window, "message", (ev) => {
@@ -1131,17 +1221,29 @@
     const msg = ev && ev.data;
     if (!msg || typeof msg !== "object") return;
 
-    // Aceptamos los mismos formatos
-    if (msg.type === "CATALOG_CFG" || msg.type === "cmd" || msg.type === "state") {
-      // si viene sin canal, tratamos como "main"
-      onBusMessage(msg, true);
+    if (msg.type === "CATALOG_CFG" || msg.type === "cmd" || isStateMessage(msg)) {
+      onBusMessage(msg, "postMessage");
     }
   }, { passive: true });
 
-  // polling suave (optimizado)
+  // polling suave (optimizado) + redetección de STATE key si cambia en caliente
+  let miss = 0;
+  let lastDetect = 0;
+
   const poll = setInterval(() => {
     const st = readStateFromLS();
-    if (!st) return;
+    if (!st) {
+      miss++;
+      // cada ~10s, re-detecta por si cambió la base de state en 2.3.9 o recargó el player
+      const t = now();
+      if ((miss % 12) === 0 && (t - lastDetect) > 9000) {
+        lastDetect = t;
+        STATE_KEYS = detectStateKeyCandidates();
+      }
+      return;
+    }
+
+    miss = 0;
     const sig = stateSig(st);
     if (sig && sig === _lastStateSig) return;
     _lastStateSig = sig;

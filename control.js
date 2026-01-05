@@ -20,6 +20,11 @@
       - Catalog mode acepta "sync" (y "fixed" como alias legacy)
    ✅ EXTRA FIX (TU CASO REAL):
       - Soporta URL “doble ?” (ej: ?index.html?key=XXX&mins=5) -> parsea key/params y base URL bien
+   ✅ PATCH 2.3.9 (TU PEDIDO):
+      - Autorrellena la KEY en la sección UI si existe (ctlKey*)
+      - Autorrellena canal/bot user (ctlTwitchChannel/ctlBotUser) desde state del player
+      - Auto-connect bot si está ON y hay creds guardadas
+      - HUD scale SOLO para el player (ctlHudScale) + cmd + URL param
 */
 
 (() => {
@@ -186,6 +191,7 @@
   const HELIX_CFG_KEY_BASE  = "rlc_helix_cfg_v1";
   const COUNTDOWN_CFG_KEY_BASE = "rlc_countdown_cfg_v1";
   const BGM_CFG_KEY_BASE = "rlc_bgm_cfg_v1";
+  const HUD_CFG_KEY_BASE = "rlc_hud_cfg_v1"; // ✅ nuevo (solo HUD del player)
 
   function _extractParamsFromWeirdSearch() {
     // Soporta: ?index.html?key=XXX&mins=5  (doble ?)
@@ -309,6 +315,7 @@
   const HELIX_CFG_KEY  = KEY ? `${HELIX_CFG_KEY_BASE}:${KEY}` : HELIX_CFG_KEY_BASE;
   const COUNTDOWN_CFG_KEY = KEY ? `${COUNTDOWN_CFG_KEY_BASE}:${KEY}` : COUNTDOWN_CFG_KEY_BASE;
   const BGM_CFG_KEY = KEY ? `${BGM_CFG_KEY_BASE}:${KEY}` : BGM_CFG_KEY_BASE;
+  const HUD_CFG_KEY = KEY ? `${HUD_CFG_KEY_BASE}:${KEY}` : HUD_CFG_KEY_BASE;
 
   // BroadcastChannels
   let bcMain = null;
@@ -440,9 +447,16 @@
 
   // ───────────────────────── DOM cache
   let
+    // ✅ KEY UI (opcionales)
+    ctlKey, ctlKeyApply,
+
     ctlStatus, ctlNowTitle, ctlNowPlace, ctlNowTimer, ctlOrigin,
     ctlPrev, ctlPlay, ctlNext, ctlShuffle,
     ctlMins, ctlApplyMins, ctlApplySettings, ctlFit, ctlHud, ctlHudDetails, ctlAutoskip, ctlAdfree, ctlReset,
+
+    // ✅ HUD scale (solo player, opcional)
+    ctlHudScale, ctlHudScaleApply,
+
     ctlSearch, ctlSelect, ctlGo, ctlBan,
     ctlPreviewOn, ctlPreviewWrap, ctlPreview,
     ctlCopyStreamUrl,
@@ -463,6 +477,10 @@
     ctlBusName;
 
   function cacheDom() {
+    // ✅ KEY UI
+    ctlKey = qs("#ctlKey") || qs("#ctlKeyInput") || qs("#ctlKeyField");
+    ctlKeyApply = qs("#ctlKeyApply") || qs("#ctlApplyKey") || qs("#ctlKeyBtn");
+
     ctlStatus = qs("#ctlStatus");
     ctlNowTitle = qs("#ctlNowTitle");
     ctlNowPlace = qs("#ctlNowPlace");
@@ -483,6 +501,10 @@
     ctlAutoskip = qs("#ctlAutoskip");
     ctlAdfree = qs("#ctlAdfree");
     ctlReset = qs("#ctlReset");
+
+    // ✅ HUD scale
+    ctlHudScale = qs("#ctlHudScale") || qs("#ctlHudScaleRange") || qs("#ctlHudScaleInput");
+    ctlHudScaleApply = qs("#ctlHudScaleApply") || qs("#ctlApplyHudScale");
 
     ctlSearch = qs("#ctlSearch");
     ctlSelect = qs("#ctlSelect");
@@ -604,6 +626,27 @@
   const setStatus = (t, ok = true) => setPill(ctlStatus, t, ok);
   const setBotStatus = (t, ok = true) => setPill(ctlBotStatus, t, ok);
   const setTitleStatus = (t, ok = true) => setPill(ctlTitleStatus, t, ok);
+
+  // ✅ KEY UI sync
+  function syncKeyUI() {
+    if (!ctlKey) return;
+    if (KEY && !isEditing(ctlKey)) {
+      try { ctlKey.value = KEY; } catch (_) {}
+    }
+  }
+  function applyKeyFromUI() {
+    if (!ctlKey) return;
+    const nk = String(ctlKey.value || "").trim();
+    if (!nk || nk === KEY) return;
+    try { lsSet("rlc_last_key_v1", nk); } catch (_) {}
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set("key", nk);
+      location.href = u.toString(); // reinicia todo (bus/keys) de forma segura
+    } catch (_) {
+      try { location.search = `?key=${encodeURIComponent(nk)}`; } catch (_) {}
+    }
+  }
 
   function label(cam) {
     const t = cam?.title || "Live Cam";
@@ -842,6 +885,50 @@
 
     return { totalSec, voteAtSec, windowSec, leadSec, uiSec };
   }
+
+  // ───────────────────────── HUD CFG (solo player) — ✅ nuevo
+  const HUD_DEFAULTS = { scale: 1 };
+  function normalizeHudCfg(inCfg) {
+    const c = Object.assign({}, HUD_DEFAULTS, (inCfg || {}));
+    c.scale = clamp(num(c.scale, 1), 0.5, 2.5);
+    return c;
+  }
+  function loadHudCfg() {
+    try { const raw = lsGet(HUD_CFG_KEY); if (raw) return normalizeHudCfg(JSON.parse(raw)); } catch (_) {}
+    try { const raw = lsGet(HUD_CFG_KEY_BASE); if (raw) return normalizeHudCfg(JSON.parse(raw)); } catch (_) {}
+    return normalizeHudCfg(HUD_DEFAULTS);
+  }
+  function saveHudCfg(cfg) {
+    const c = normalizeHudCfg(cfg);
+    const raw = JSON.stringify(c);
+    lsSet(HUD_CFG_KEY, raw);
+    lsSet(HUD_CFG_KEY_BASE, raw);
+    return c;
+  }
+  let hudCfg = loadHudCfg();
+
+  function syncHudUIFromStore() {
+    hudCfg = loadHudCfg();
+    if (ctlHudScale && !isEditing(ctlHudScale)) {
+      try { ctlHudScale.value = String(hudCfg.scale ?? 1); } catch (_) {}
+    }
+  }
+  function readHudUI() {
+    const base = hudCfg || loadHudCfg();
+    const scale = ctlHudScale ? clamp(num(ctlHudScale.value, base.scale ?? 1), 0.5, 2.5) : (base.scale ?? 1);
+    return normalizeHudCfg({ scale });
+  }
+  function sendHudCfg(cfg, persist = true) {
+    const c = persist ? saveHudCfg(cfg) : normalizeHudCfg(cfg);
+    // cmd para el player (solo HUD, NO control panel)
+    sendCmdAliases("HUD_SCALE", { scale: c.scale }, ["SET_HUD_SCALE", "HUDSCALE", "HUD_UI_SCALE", "SET_OVERLAY_SCALE", "OVERLAY_SCALE"]);
+    // param bundle para players que acepten SET_PARAMS
+    sendCmdAliases("SET_PARAMS", { hudScale: c.scale }, ["APPLY_SETTINGS", "UI_SET"]);
+    return c;
+  }
+  const applyHudNow = debounce(() => {
+    hudCfg = sendHudCfg(readHudUI(), true);
+  }, 80);
 
   // ───────────────────────── Ticker cfg (opcional)
   const TICKER_DEFAULTS = {
@@ -1190,7 +1277,7 @@
     clientId: "",
     token: "",
     broadcasterId: "",
-    template: "📍: {title}{placeSep}{place} | GlobalEye TV",
+    template: "📍: {title}{placeSep}{place} | {channel} | GlobalEye TV",
     cooldownSec: 20
   };
   function normalizeHelixCfg(inCfg) {
@@ -1248,11 +1335,14 @@
       : (base.cooldownSec || 20);
     return normalizeHelixCfg({ enabled, clientId, token, broadcasterId, template, cooldownSec });
   }
+
   function buildTitleFromState(st, template) {
     const cam = st?.cam || st?.currentCam || {};
     const t = String(cam?.title || "Live Cam").trim();
     const p = String(cam?.place || "").trim();
     const s = String(cam?.source || "").trim();
+    const ch = String(ctlTwitchChannel?.value || st?.vote?.channel || st?.twitch || "").trim().replace(/^@/, "");
+    const botUser = String((loadBotCfg()?.user) || "").trim();
     const placeSep = p ? " — " : "";
     const repl = (k) => {
       const kk = String(k || "").toLowerCase();
@@ -1261,6 +1351,8 @@
       if (kk === "source") return s;
       if (kk === "label") return p ? `${t} — ${p}` : t;
       if (kk === "placesep") return placeSep;
+      if (kk === "channel") return ch;
+      if (kk === "bot") return botUser;
       return "";
     };
     let out = String(template || HELIX_DEFAULTS.template);
@@ -1270,6 +1362,7 @@
     if (out.length > 140) out = out.slice(0, 140).trim();
     return out;
   }
+
   function _parseHelixRetryMs(headers) {
     try {
       const ra = parseInt(headers?.get?.("Retry-After") || "", 10);
@@ -1282,6 +1375,7 @@
     } catch (_) {}
     return 15000;
   }
+
   async function helixFetch(path, { method = "GET", clientId, token, body = null, timeoutMs = 20000 } = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -1329,6 +1423,7 @@
       clearTimeout(t);
     }
   }
+
   async function helixGetBroadcasterId(login, clientId, token) {
     const ch = String(login || "").trim().replace(/^@/, "").toLowerCase();
     if (!ch) return "";
@@ -1336,6 +1431,7 @@
     const user = Array.isArray(res?.data?.data) ? res.data.data[0] : null;
     return String(user?.id || "").trim();
   }
+
   async function helixSetTitle(broadcasterId, title, clientId, token) {
     const bid = String(broadcasterId || "").trim();
     const t = String(title || "").trim();
@@ -1349,6 +1445,7 @@
     });
     return { ok: true };
   }
+
   function setHelixBackoff(err) {
     const now = Date.now();
     if (err && (err.status === 429) && err.retryMs) {
@@ -1360,6 +1457,7 @@
       setTitleStatus(String(err?.message || "Helix error"), false);
     }
   }
+
   async function helixEnsureBroadcasterId(login, cfg) {
     const c = cfg || helixCfg || loadHelixCfg();
     if (c.broadcasterId) return c.broadcasterId;
@@ -1376,13 +1474,15 @@
     if (ctlTitleBroadcasterId && bid) safeSetValue(ctlTitleBroadcasterId, bid);
     return bid || "";
   }
+
   function helixCanRun(c) {
     const cfg = c || helixCfg;
     if (!cfg?.enabled) return false;
     if (!cfg.clientId || !cfg.token) return false;
-    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || "").trim();
+    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || lastState?.twitch || "").trim();
     return !!login;
   }
+
   async function helixTick(force = false) {
     const cfg = helixCfg || loadHelixCfg();
     if (!helixCanRun(cfg)) return;
@@ -1394,7 +1494,7 @@
     }
     if (!lastState) return;
 
-    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || "").trim().replace(/^@/, "");
+    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || lastState?.twitch || "").trim().replace(/^@/, "");
     if (!login) return;
 
     const title = buildTitleFromState(lastState, cfg.template);
@@ -1420,6 +1520,7 @@
       setHelixBackoff(e);
     }
   }
+
   function helixApplyFromUI() {
     helixCfg = saveHelixCfg(readHelixUI());
     syncHelixUIFromStore();
@@ -1615,6 +1716,48 @@
     return true;
   }
 
+  // ✅ Auto-fill canal/bot user desde state/player
+  function extractTwitchChannelFromState(st) {
+    try {
+      const ch =
+        st?.twitch ||
+        st?.vote?.channel ||
+        st?.chat?.twitch ||
+        st?.cfg?.twitch ||
+        st?.settings?.twitch ||
+        "";
+      return String(ch || "").trim().replace(/^@/, "");
+    } catch (_) { return ""; }
+  }
+
+  function maybeAutoFillChannelEverywhere(channel) {
+    const ch = String(channel || "").trim().replace(/^@/, "");
+    if (!ch) return;
+
+    // UI: TwitchChannel
+    if (ctlTwitchChannel && !isEditing(ctlTwitchChannel) && !String(ctlTwitchChannel.value || "").trim()) {
+      try { ctlTwitchChannel.value = ch; } catch (_) {}
+    }
+
+    // UI: Bot user (solo si está vacío)
+    if (ctlBotUser && !isEditing(ctlBotUser) && !String(ctlBotUser.value || "").trim()) {
+      try { ctlBotUser.value = ch; } catch (_) {}
+    }
+
+    // Persist: bot cfg user/channel si estaban vacíos
+    try {
+      const cur = loadBotCfg();
+      let changed = false;
+      if (!cur.user) { cur.user = ch; changed = true; }
+      if (!cur.channel) { cur.channel = ch; changed = true; }
+      if (changed) {
+        saveBotCfg(cur);
+        syncBotUIFromStore();
+        botApplyCfgAndMaybeConnect(); // si estaba ON -> conecta ya
+      }
+    } catch (_) {}
+  }
+
   // ───────────────────────── URL builder (player)
   function boolParam(v) { return v ? "1" : "0"; }
 
@@ -1715,6 +1858,7 @@
     const ccfg = readCountdownUI();
     const cat = readCatalogUIForUrl();
     const bgm = readBgmUIForUrl();
+    const hudc = readHudUI();
 
     u.searchParams.set("mins", String(mins));
     u.searchParams.set("fit", fit);
@@ -1775,6 +1919,9 @@
     u.searchParams.set("bgmVol", String(bgm.vol ?? 0.25));
     if (bgm.trackId) u.searchParams.set("bgmTrack", String(bgm.trackId));
 
+    // ✅ HUD scale param (solo player)
+    u.searchParams.set("hudScale", String(hudc.scale ?? 1));
+
     return u.toString();
   }
 
@@ -1815,6 +1962,20 @@
     } catch (_) { return null; }
   }
 
+  function _hudScaleFromState(st) {
+    try {
+      const v =
+        st?.hudScale ??
+        st?.ui?.hudScale ??
+        st?.hud?.scale ??
+        st?.uiScaleHud ??
+        null;
+      if (v == null) return null;
+      const scale = clamp(num(v, 1), 0.5, 2.5);
+      return scale;
+    } catch (_) { return null; }
+  }
+
   function stateSignature(st) {
     try {
       const cam = st?.cam || st?.currentCam || {};
@@ -1824,7 +1985,9 @@
       const id = String(cam?.id || "");
       const bgm = _bgmFromState(st);
       const bgmSig = bgm ? `${bgm.enabled ? 1 : 0}|${Math.round((bgm.vol ?? 0) * 100)}|${bgm.trackId || ""}|${bgm.playing ? 1 : 0}` : "0";
-      return sigOf(`${getStateTs(st)}|${ver}|${id}|${rem}|${mins}|${st?.autoskip ? 1 : 0}|${st?.adfree ? 1 : 0}|${bgmSig}`);
+      const hs = _hudScaleFromState(st);
+      const hudSig = (hs != null) ? String(Math.round(hs * 100)) : "na";
+      return sigOf(`${getStateTs(st)}|${ver}|${id}|${rem}|${mins}|${st?.autoskip ? 1 : 0}|${st?.adfree ? 1 : 0}|${bgmSig}|${hudSig}`);
     } catch (_) { return ""; }
   }
 
@@ -1877,6 +2040,15 @@
     lastState = st;
     lastSeenAt = Date.now();
 
+    // ✅ canal/twitch auto fill
+    try {
+      const ch = extractTwitchChannelFromState(st);
+      if (ch) maybeAutoFillChannelEverywhere(ch);
+    } catch (_) {}
+
+    // ✅ key UI (si existe)
+    syncKeyUI();
+
     try {
       const fromState = stateCamListFallback(st);
       if (fromState && fromState.length) setCamList(fromState, "state");
@@ -1901,6 +2073,15 @@
       const curId = String(cam.id || "");
       const tag = ctlSelect ? String(ctlSelect.tagName || "").toLowerCase() : "";
       if (curId && ctlSelect && tag === "select" && !isEditing(ctlSelect)) ctlSelect.value = curId;
+    } catch (_) {}
+
+    // ✅ hudScale: si viene del player, refresca UI y store
+    try {
+      const hs = _hudScaleFromState(st);
+      if (hs != null) {
+        hudCfg = saveHudCfg({ scale: hs });
+        syncHudUIFromStore();
+      }
     } catch (_) {}
 
     try {
@@ -1992,6 +2173,14 @@
         syncBgmUIFromStore();
       } catch (_) {}
     }
+
+    if (cmd === "HUD_SCALE" || cmd === "SET_HUD_SCALE" || cmd === "HUDSCALE") {
+      try {
+        const s = clamp(num(payload.scale ?? payload.value, 1), 0.5, 2.5);
+        hudCfg = saveHudCfg({ scale: s });
+        syncHudUIFromStore();
+      } catch (_) {}
+    }
   }
 
   function readStateFromLS() {
@@ -2057,6 +2246,12 @@
     if (ctlAdfree) sendCmdAliases("SET_MODE", { mode: (ctlAdfree.value !== "off") ? "adfree" : "" }, ["MODE"]);
     if (ctlYtCookies) sendCmdAliases("YT_COOKIES", { enabled: (ctlYtCookies.value !== "off") }, ["SET_YT_COOKIES"]);
 
+    // ✅ HUD SCALE (solo player)
+    if (ctlHudScale) {
+      hudCfg = saveHudCfg(readHudUI());
+      sendHudCfg(hudCfg, true);
+    }
+
     sendCmdAliases("SET_PARAMS", {
       mins,
       fit,
@@ -2064,7 +2259,8 @@
       hudDetails: (ctlHudDetails ? (ctlHudDetails.value !== "off") : true),
       autoskip: (ctlAutoskip ? (ctlAutoskip.value !== "off") : true),
       mode: (ctlAdfree ? ((ctlAdfree.value !== "off") ? "adfree" : "") : ""),
-      ytCookies: (ctlYtCookies ? (ctlYtCookies.value !== "off") : true)
+      ytCookies: (ctlYtCookies ? (ctlYtCookies.value !== "off") : true),
+      hudScale: (ctlHudScale ? (readHudUI().scale) : (loadHudCfg().scale))
     }, ["APPLY_SETTINGS"]);
 
     syncPreviewUrl();
@@ -2361,6 +2557,12 @@
 
     safeOn(ctlSearch, "input", debounce(() => syncList(ctlSearch.value), 120));
 
+    // ✅ Key UI
+    safeOn(ctlKeyApply, "click", applyKeyFromUI);
+    safeOn(ctlKey, "keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); applyKeyFromUI(); }
+    });
+
     // Transporte
     safeOn(ctlPrev, "click", doPrev);
     safeOn(ctlPlay, "click", doTogglePlay);
@@ -2374,6 +2576,11 @@
     });
 
     safeOn(ctlApplySettings, "click", applyBasicSettings);
+
+    // ✅ HUD scale
+    safeOn(ctlHudScale, "input", applyHudNow);
+    safeOn(ctlHudScale, "change", applyHudNow);
+    safeOn(ctlHudScaleApply, "click", () => { applyHudNow(); });
 
     // Lista cams
     safeOn(ctlGo, "click", doGoSelected);
@@ -2460,6 +2667,7 @@
     const autoSync = debounce(syncPreviewUrl, 160);
     [
       ctlMins, ctlFit, ctlHud, ctlHudDetails, ctlAutoskip, ctlAdfree, ctlTwitchChannel,
+      ctlHudScale,
       ctlCatalogOn, ctlCatalogLayout, ctlCatalogGap, ctlCatalogLabels, ctlCatalogMode,
       ctlCatalogFollowSlot, ctlCatalogClickCycle, ctlCatalogYtCookies, ctlCatalogWxTiles,
       ctlCatalogWxRefreshSec, ctlCatalogMuted,
@@ -2532,6 +2740,7 @@
       if (k === HELIX_CFG_KEY || k === HELIX_CFG_KEY_BASE) syncHelixUIFromStore();
       if (k === BOT_STORE_KEY || k === BOT_STORE_KEY_BASE) { syncBotUIFromStore(); botApplyCfgAndMaybeConnect(); }
       if (k === BGM_CFG_KEY || k === BGM_CFG_KEY_BASE) syncBgmUIFromStore();
+      if (k === HUD_CFG_KEY || k === HUD_CFG_KEY_BASE) syncHudUIFromStore();
     });
   }
 
@@ -2580,6 +2789,7 @@
 
     if (!allCams.length) refreshGlobalLists(false);
     ensureBgmTrackOptions();
+    syncKeyUI();
 
     if (!updateAvailable) {
       if (age > 3500) {
@@ -2607,6 +2817,9 @@
       cacheDom();
       ensureControlMode();
 
+      // ✅ key en UI
+      syncKeyUI();
+
       if (ctlBusName) {
         try { ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS; } catch (_) {}
       }
@@ -2617,6 +2830,9 @@
         }
       } catch (_) {}
 
+      // ✅ HUD cfg
+      syncHudUIFromStore();
+
       syncBgmUIFromStore();
       ensureBgmTrackOptions();
 
@@ -2624,6 +2840,14 @@
       syncCountdownUIFromStore();
       syncHelixUIFromStore();
       syncBotUIFromStore();
+
+      // ✅ si ya hay canal en UI, úsalo para auto-fill bot si vacío
+      try {
+        const chUi = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
+        if (chUi) maybeAutoFillChannelEverywhere(chUi);
+      } catch (_) {}
+
+      // ✅ auto connect bot si está ON y hay creds guardadas
       botApplyCfgAndMaybeConnect();
 
       bindDelegatedActions();
@@ -2647,7 +2871,7 @@
 
       heartbeatId = setInterval(heartbeat, 900);
       setStatus(`Control listo · v${APP_VERSION}${KEY ? ` · key OK` : " · (sin key)"}`, true);
-      log("boot OK", { KEY, BUS, CMD_KEY, STATE_KEY, EVT_KEY, CAMLIST_KEY, BGM_CFG_KEY });
+      log("boot OK", { KEY, BUS, CMD_KEY, STATE_KEY, EVT_KEY, CAMLIST_KEY, BGM_CFG_KEY, HUD_CFG_KEY });
     } catch (e) {
       console.error(e);
       setStatus(`ERROR init: ${String(e?.message || e)}`, false);
