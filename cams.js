@@ -1,7 +1,7 @@
-/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY + CATALOG 4-UP) v2.3.8
+/* cams.js — Lista de cámaras (VIDEO ONLY + AUTO-DISCOVERY + CATALOG 4-UP + OPTIONAL NEWS) v2.3.8
    ✅ Integrado para RLC v2.3.8 (Player + Control/Admin)
    ✅ Mantiene tus cams existentes (mismos ids) como "seed"
-   ✅ VIDEO ONLY: NO exporta cams "image" (solo "youtube" y "hls")
+   ✅ VIDEO ONLY: exporta SOLO "youtube" y "hls" (descarta "image")
    ✅ Sanitizador (no rompe compat):
       - evita ids duplicados (se queda con la primera => tus existentes ganan)
       - completa originUrl si falta (YouTube/HLS)
@@ -9,15 +9,18 @@
       - descarta entradas rotas (sin id/kind o sin youtubeId/url)
       - añade thumb para YouTube (para catálogo)
       - FILTRO EXTRA (catalog/discovery): elimina “walk/tour/recorded/timelapse/replay/loops” (solo webcams LIVE)
-   ✅ OBJETIVO: 500 cams “reales” (auto-discovery)
-      - Carga cache (si existe) y la usa inmediatamente
+
+   ✅ OBJETIVO: +500 cams reales por defecto
+      - DEFAULT: 650 (override: ?camsTarget=500/800/1200...)
+      - Cache (si existe) se usa INMEDIATAMENTE
       - Auto-discovery: busca LIVE webcams en Invidious (/api/v1/search?features=live)
       - Filtra “no-webcam” (música/lofi/radio/juegos/noticias/walk tours/recorded)
       - Validación embed (best-effort; no invalida por fallos de CORS)
-      - Se queda solo con las que funcionan (cuando se puede validar)
-   ✅ Failsafe (solo si tu player necesita SÍ o SÍ 500):
-      - si no llega a 500 tras discovery, rellena con ALT duplicando válidas
-        (NO inventa fuentes nuevas). Desactiva con HARD_FAILSAFE_ALT_FILL=false.
+      - Se queda solo con las que “parecen” webcams live (cuando se puede validar)
+
+   ✅ Failsafe (si tu player necesita SÍ o SÍ llenar el objetivo):
+      - si no llega a TARGET tras discovery, rellena con ALT duplicando válidas
+        (NO inventa fuentes nuevas). Desactiva con HARD_FAILSAFE_ALT_FILL=false (?camsAltFill=0)
 
    🧩 CATÁLOGO (4 a la vez):
       - window.CAM_CATALOG_LIST (sin alts)
@@ -26,8 +29,19 @@
       - window.RLCCams.onUpdate(cb) => unsubscribe
       - window.RLCCams.refresh()/clearCache()/setTarget()/setAutoDiscovery()
 
+   📰 NOTICIEROS ONLINE (OPCIONAL, OFF por defecto):
+      - Activa: ?camsNews=1
+      - Mezcla en CAM_LIST: ?camsNewsMix=1
+      - Mete en catálogo: ?camsNewsCatalog=1
+      - Objetivo news: ?camsNewsTarget=60
+      - Exporta:
+         - window.CAM_NEWS_LIST (lista news limpia, sin alts)
+         - window.RLCCams.getNewsList()
+         - window.RLCCams.setNewsEnabled(v) / setNewsMix(v) / setNewsInCatalog(v)
+      - Discovery news usa queries propias SOLO cuando camsNews=1
+
    📣 Evento:
-      - window.dispatchEvent("rlc_cam_list_updated") con {detail:{list,catalog,total,catalogTotal}}
+      - window.dispatchEvent("rlc_cam_list_updated") con {detail:{list,catalog,news,newsCatalog,...}}
 
    kind:
    - "youtube"  -> usa youtubeId (11 chars)
@@ -50,7 +64,7 @@
   // ─────────────────────────────────────────────────────────────
   // Guard anti doble carga + destroy() (update-safe)
   // ─────────────────────────────────────────────────────────────
-  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V238_VIDEOONLY_AUTODISCOVERY_CATALOG4";
+  const LOAD_GUARD = "__RLC_CAMSJS_LOADED_V238_VIDEOONLY_AUTODISCOVERY_CATALOG4_NEWSOPT";
   try {
     if (g[LOAD_GUARD] && typeof g[LOAD_GUARD].destroy === "function") {
       g[LOAD_GUARD].destroy();
@@ -59,7 +73,6 @@
   if (!g[LOAD_GUARD]) g[LOAD_GUARD] = {};
   const MOD = g[LOAD_GUARD];
 
-  // State interno para poder "destroy"
   MOD._timers = MOD._timers || [];
   MOD._abort = MOD._abort || new AbortController();
   MOD._bc = null;
@@ -78,7 +91,6 @@
   // ─────────────────────────────────────────────────────────────
   const VERSION = "2.3.8";
 
-  // Lee params una vez (no dependemos de app.js)
   function getParam(name) {
     try {
       const u = new URL(location.href);
@@ -99,53 +111,62 @@
     return Number.isFinite(n) ? n : def;
   }
 
-  // Objetivo por defecto: 500 (tu spec). Override: ?camsTarget=600
-  const TARGET_CAMS_DEFAULT = 500;
-  let TARGET_CAMS = Math.max(50, Math.min(2000, parseIntSafe(getParam("camsTarget"), TARGET_CAMS_DEFAULT)));
+  // Objetivo por defecto: >500
+  const TARGET_CAMS_DEFAULT = 650;
+  let TARGET_CAMS = Math.max(50, Math.min(2500, parseIntSafe(getParam("camsTarget"), TARGET_CAMS_DEFAULT)));
 
   // Catálogo
   const CATALOG_PAGE_SIZE = 4;
 
-  // Namespace (si usas “rooms/keys” en tu sistema)
+  // Namespace (rooms/keys)
   const ROOM_KEY = (getParam("key") || getParam("k") || "").trim();
   const NS = ROOM_KEY ? `:${ROOM_KEY}` : "";
 
   // Cache: mantenemos legacy y añadimos namespaced
-  const CACHE_KEY_LEGACY = "rlc_cam_cache_v1_500";         // compat
-  const CACHE_KEY_V238 = `rlc_bus_v1:cams_cache_v1${NS}`;  // nuevo
+  const CACHE_KEY_LEGACY = "rlc_cam_cache_v1_500";            // compat
+  const CACHE_KEY_V238 = `rlc_bus_v1:cams_cache_v1${NS}`;     // nuevo
+  const CACHE_NEWS_KEY_V238 = `rlc_bus_v1:news_cache_v1${NS}`;// news
   const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12h
 
-  // Auto discovery ON/OFF (override: ?camsDiscovery=0/1)
+  // Auto discovery webcams ON/OFF (override: ?camsDiscovery=0/1)
   let AUTO_DISCOVERY = parseBool(getParam("camsDiscovery"), true);
 
   // Validación embed (si da problemas en tu hosting: ?camsValidate=0)
   let VALIDATE_EMBED = parseBool(getParam("camsValidate"), true);
 
+  // Presupuesto de validaciones “caras” (embed/oembed/live check)
+  const VALIDATE_BUDGET = Math.max(0, Math.min(2000, parseIntSafe(getParam("camsValidateBudget"), 220)));
+  let __validateUsed = 0;
+
   // “Solo lives” (best-effort)
   let BEST_EFFORT_LIVE_CHECK = parseBool(getParam("camsLiveCheck"), true);
 
-  // Concurrencia (no lo subas mucho o te rate-limitean)
-  const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(12, parseIntSafe(getParam("camsPages"), 5)));
-  const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(600, parseIntSafe(getParam("camsMaxPerQuery"), 180)));
+  // Concurrencia
+  const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(16, parseIntSafe(getParam("camsPages"), 6)));
+  const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(900, parseIntSafe(getParam("camsMaxPerQuery"), 260)));
   const DISCOVERY_CONCURRENCY = Math.max(1, Math.min(8, parseIntSafe(getParam("camsConc"), 4)));
-
-  // Limita instancias
-  const DISCOVERY_MAX_INSTANCES = Math.max(3, Math.min(14, parseIntSafe(getParam("camsInstances"), 10)));
+  const DISCOVERY_MAX_INSTANCES = Math.max(3, Math.min(18, parseIntSafe(getParam("camsInstances"), 12)));
 
   // Presupuesto global de requests (corta infinito si algo va mal)
-  const DISCOVERY_REQUEST_BUDGET = Math.max(120, Math.min(2000, parseIntSafe(getParam("camsBudget"), 520)));
+  const DISCOVERY_REQUEST_BUDGET = Math.max(160, Math.min(2600, parseIntSafe(getParam("camsBudget"), 780)));
 
-  // Failsafe: relleno ALT si el player exige 500 sí o sí
+  // Failsafe: relleno ALT si el player exige llenar objetivo sí o sí
   let HARD_FAILSAFE_ALT_FILL = parseBool(getParam("camsAltFill"), true);
 
-  // Query pack
+  // News (OPCIONAL)
+  let NEWS_ENABLED = parseBool(getParam("camsNews"), false);
+  let NEWS_MIX_IN_MAIN = parseBool(getParam("camsNewsMix"), false);
+  let NEWS_IN_CATALOG = parseBool(getParam("camsNewsCatalog"), false);
+  let NEWS_DISCOVERY = parseBool(getParam("camsNewsDiscovery"), true);
+  let NEWS_TARGET = Math.max(10, Math.min(300, parseIntSafe(getParam("camsNewsTarget"), 60)));
+
+  // Query pack (webcams)
   const DISCOVERY_QUERIES = [
     // --- Prioridad USA (White House / DC) ---
     "white house live cam",
     "white house webcam live",
     "washington dc live cam",
     "washington dc webcam live",
-    "the white house live camera",
     "pennsylvania avenue live cam",
     // --- Prioridad Venezuela ---
     "venezuela live webcam",
@@ -156,19 +177,27 @@
     "margarita island webcam en vivo",
     "porlamar live webcam",
     "playa el yaque live webcam",
-    // --- Genéricas ---
+    // --- Genéricas multi-idioma ---
     "live webcam",
     "webcam live",
     "webcam en vivo",
     "cámara en vivo",
+    "camara en vivo",
+    "caméra en direct",
+    "kamera na żywo",
+    "telecamera live",
+    "webkamera canlı",
+    "kamera live",
     "live cam",
     "cctv live cam",
-    "traffic camera live",
+    // --- Categorías típicas webcams ---
     "traffic cam live",
+    "traffic camera live",
     "airport webcam live",
     "harbor webcam live",
     "harbour webcam live",
     "port webcam live",
+    "marina live cam",
     "beach webcam live",
     "pier webcam live",
     "downtown live cam",
@@ -178,21 +207,45 @@
     "ski webcam live",
     "mountain webcam live",
     "volcano webcam live",
+    "crater cam live",
+    // --- Marcas / hubs ---
     "earthcam live webcam",
     "skylinewebcams live webcam",
-    "webcams live 24/7"
+    "ozolio live webcam",
+    "webcams live 24/7",
+    "live webcam 24/7"
+  ];
+
+  // Queries NEWS (solo si camsNews=1)
+  const NEWS_QUERIES = [
+    "live news",
+    "breaking news live",
+    "world news live",
+    "noticias en directo",
+    "noticias en vivo",
+    "canal de noticias en vivo",
+    "directo noticias",
+    "última hora en directo",
+    "cnn live",
+    "bbc news live",
+    "al jazeera live",
+    "euronews live",
+    "france 24 live",
+    "dw news live",
+    "sky news live",
+    "teleSUR en vivo",
+    "noticiero en vivo"
   ];
 
   // ─────────────────────────────────────────────────────────────
-  // Filtro: permitidos vs bloqueados (evita streams que NO son cámaras)
+  // Filtro: permitidos vs bloqueados (WEBCAMS)
   // ─────────────────────────────────────────────────────────────
   const BLOCK_WORDS = [
     // Música / radio / etc
     "lofi","lo-fi","radio","music","música","mix","playlist","beats",
     "podcast","audiobook","audiolibro",
-    // Gaming / noticias / religión / crypto
+    // Gaming / religión / crypto
     "gameplay","gaming","walkthrough","speedrun",
-    "news","noticias","cnn","bbc","aljazeera","fox",
     "sermon","church","iglesia","prayer","oración",
     "crypto","trading","forex",
     // walk / grabaciones / loops / tours
@@ -201,7 +254,9 @@
     "recorded","replay","rerun","repeat","loop","timelapse","time-lapse","time lapse",
     "ambience","ambient","study","sleep","relax","asmr",
     "dashcam","driving","drive","ride","train ride","bus ride","metro ride",
-    "vlog","vlogger","behind the scenes"
+    "vlog","vlogger","behind the scenes",
+    // NOTICIAS (bloqueadas en modo webcam)
+    "news","noticias","cnn","bbc","aljazeera","fox","euronews","france 24","dw news","sky news"
   ];
 
   const ALLOW_HINTS = [
@@ -210,14 +265,28 @@
     "downtown","street cam","street camera","square","plaza",
     "railcam","rail cam","train cam","station cam","train station",
     "ski cam","snow cam","mountain cam","volcano cam","crater cam",
-    "earthcam","skylinewebcams","ozolio","webcams",
+    "earthcam","skylinewebcams","ozolio","webcams","ipcamlive","ip cam",
     "cámara","camara","en directo","en vivo","directo",
     "telecamera","kamera","kamera na żywo","webkamera","caméra"
   ];
 
   const KNOWN_WEBCAM_BRANDS = [
-    "earthcam","skylinewebcams","ozolio","webcams","railcam",
+    "earthcam","skylinewebcams","ozolio","railcam","webcams",
     "earthtv","earth tv","ip cam","ipcamlive","ipcam"
+  ];
+
+  // News filter (solo si activas camsNews=1)
+  const NEWS_BLOCK_WORDS = [
+    "lofi","lo-fi","music","música","beats","playlist","mix",
+    "gaming","gameplay","walkthrough","speedrun",
+    "walk","walking","walking tour","tour","travel","viaje",
+    "recorded","replay","rerun","loop","timelapse","time lapse","time-lapse",
+    "asmr","study","sleep","relax",
+    "podcast","audiobook","audiolibro"
+  ];
+  const NEWS_ALLOW_HINTS = [
+    "news","noticias","breaking","última hora","live news","en directo","en vivo","directo",
+    "channel","canal","noticiero","world news","24/7"
   ];
 
   // ─────────────────────────────────────────────────────────────
@@ -287,6 +356,18 @@
     }
 
     return false;
+  }
+
+  function newsTitleOk(title, author) {
+    const t = safeStr(title).toLowerCase();
+    const a = safeStr(author).toLowerCase();
+    const full = (t + " " + a).trim();
+    if (!full) return false;
+
+    for (let i = 0; i < NEWS_BLOCK_WORDS.length; i++) {
+      if (full.includes(NEWS_BLOCK_WORDS[i])) return false;
+    }
+    return includesAny(full, NEWS_ALLOW_HINTS);
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -451,7 +532,7 @@
       kind: "youtube",
       youtubeId: "ph1vpnYIxJk",
       originUrl: "https://www.youtube.com/watch?v=ph1vpnYIxJk",
-      tags: ["italy","city","tour"]
+      tags: ["italy","city"]
     },
     {
       id: "zurich_webcam",
@@ -569,7 +650,6 @@
     { id:"us_tamarin_monkey_cam", title:"Tamarin Monkey Cam — Live", place:"Utica, New York, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"1B0uwxfEYCA", originUrl:"https://www.youtube.com/watch?v=1B0uwxfEYCA", tags:["usa","wildlife"] },
     { id:"us_halloween_earthcam", title:"EarthCam Seasonal Cam — Live", place:"USA (varios puntos)", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"mBr1dGev8qM", originUrl:"https://www.youtube.com/watch?v=mBr1dGev8qM", tags:["usa"] },
     { id:"us_storm_idalia", title:"Storm Coverage — Live Cam", place:"USA (cobertura)", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"t40VpDs9J9c", originUrl:"https://www.youtube.com/watch?v=t40VpDs9J9c", tags:["weather","usa"] },
-    { id:"us_rolling_tour", title:"USA Live Cam — Rolling Tour", place:"USA (tour rolling)", source:"YouTube", kind:"youtube", youtubeId:"fa8iGVeri_I", originUrl:"https://www.youtube.com/watch?v=fa8iGVeri_I", tags:["tour","usa"] },
     { id:"us_times_square_4k_alt", title:"Times Square in 4K (Alt) — Live Cam", place:"New York, USA", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"SW1vpWZq9-w", originUrl:"https://www.youtube.com/watch?v=SW1vpWZq9-w", tags:["nyc","4k"] },
     { id:"us_nyc_xmas_4k", title:"NYC Holiday — Live Cam", place:"New York, USA", source:"YouTube", kind:"youtube", youtubeId:"5_vrqwsKXEQ", originUrl:"https://www.youtube.com/watch?v=5_vrqwsKXEQ", tags:["nyc","seasonal"] },
     { id:"es_tamariu_earthcam", title:"Tamariu — Live Cam", place:"Tamariu, España", source:"EarthCam (YouTube)", kind:"youtube", youtubeId:"ld87T3g_nyg", originUrl:"https://www.youtube.com/watch?v=ld87T3g_nyg", tags:["spain","beach"] },
@@ -578,7 +658,6 @@
     { id:"it_venice_grand_canal_caangeli", title:"Grand Canal (Ca'Angeli) — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"P393gTj527k", originUrl:"https://www.youtube.com/watch?v=P393gTj527k", tags:["italy","canal"] },
     { id:"it_venice_ponte_guglie_4k", title:"Ponte delle Guglie — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"HpZAez2oYsA", originUrl:"https://www.youtube.com/watch?v=HpZAez2oYsA", tags:["italy","bridge"] },
     { id:"it_venice_san_cassiano", title:"Grand Canal (Hotel San Cassiano) — Live Cam", place:"Venecia, Italia", source:"YouTube", kind:"youtube", youtubeId:"lFQ_BvxIcnI", originUrl:"https://www.youtube.com/watch?v=lFQ_BvxIcnI", tags:["italy","canal"] },
-    { id:"it_venice_top_mix", title:"TOP Venice Live Cams (mix)", place:"Venecia, Italia (mix)", source:"YouTube", kind:"youtube", youtubeId:"CwhHltwJdhc", originUrl:"https://www.youtube.com/watch?v=CwhHltwJdhc", tags:["mix","italy"] },
     { id:"it_trevi_fountain", title:"Trevi Fountain — Live Cam", place:"Roma, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"j39vIidsIJI", originUrl:"https://www.youtube.com/watch?v=j39vIidsIJI", tags:["italy","rome","landmark"] },
     { id:"it_pozzuoli_campi_flegrei", title:"Campi Flegrei (Pozzuoli) — Live Cam", place:"Pozzuoli, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"-sNafHFByDI", originUrl:"https://www.youtube.com/watch?v=-sNafHFByDI", tags:["italy","volcano"] },
     { id:"it_etna_eruption_live", title:"Etna Eruption — Live Cam", place:"Sicilia, Italia", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"plYtw4DSf5I", originUrl:"https://www.youtube.com/watch?v=plYtw4DSf5I", tags:["italy","volcano"] },
@@ -591,7 +670,6 @@
     { id:"cz_prague_live", title:"Prague — Live Cam", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"0FvTdT3EJY4", originUrl:"https://www.youtube.com/watch?v=0FvTdT3EJY4", tags:["czech","city"] },
     { id:"cz_prague_snowfall", title:"Prague Snowfall — Live Cam", place:"Praga, República Checa", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"B6FDKqfJ6M4", originUrl:"https://www.youtube.com/watch?v=B6FDKqfJ6M4", tags:["czech","snow"] },
     { id:"cz_prague_trainspotting", title:"Prague Main Station — Live Cam", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"AttVS4KM8tY", originUrl:"https://www.youtube.com/watch?v=AttVS4KM8tY", tags:["train","czech"] },
-    { id:"cz_prague_timelapse", title:"Prague Time-Lapse (live view link)", place:"Praga, República Checa", source:"YouTube", kind:"youtube", youtubeId:"jbN6czYv0os", originUrl:"https://www.youtube.com/watch?v=jbN6czYv0os", tags:["czech","timelapse"] },
 
     { id:"nl_amsterdam_dam_ptz", title:"Amsterdam — De Dam (PTZ) — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"Gd9d4q6WvUY", originUrl:"https://www.youtube.com/watch?v=Gd9d4q6WvUY", tags:["netherlands","ptz"] },
     { id:"nl_amsterdam_singel_hotel", title:"Singel Hotel — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"ZnOoxCd7BGU", originUrl:"https://www.youtube.com/watch?v=ZnOoxCd7BGU", tags:["netherlands","city"] },
@@ -600,19 +678,14 @@
     { id:"nl_amsterdam_live_stream", title:"Amsterdam — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"RmiTd0J5qDg", originUrl:"https://www.youtube.com/watch?v=RmiTd0J5qDg", tags:["netherlands","city"] },
     { id:"nl_amsterdam_stationseiland", title:"Amsterdam — Station Area — Live Cam", place:"Ámsterdam, Países Bajos", source:"YouTube", kind:"youtube", youtubeId:"1phWWCgzXgM", originUrl:"https://www.youtube.com/watch?v=1phWWCgzXgM", tags:["netherlands","station"] },
 
-    { id:"fr_paris_walk_live", title:"Paris Eiffel Tower Walk Live", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"wCgNhsNjuPs", originUrl:"https://www.youtube.com/watch?v=wCgNhsNjuPs", tags:["france","tour"] },
     { id:"fr_paris_pont_iena", title:"Paris — Pont de Iéna (Eiffel Tower) — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"7-OFVJ8hKFc", originUrl:"https://www.youtube.com/watch?v=7-OFVJ8hKFc", tags:["france","landmark"] },
     { id:"fr_paris_live_hd", title:"Paris — Eiffel — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"iZipA1LL_sU", originUrl:"https://www.youtube.com/watch?v=iZipA1LL_sU", tags:["france","landmark"] },
     { id:"fr_paris_stream_alt", title:"Paris (Eiffel area) — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"xzMYdVo-3Bs", originUrl:"https://www.youtube.com/watch?v=xzMYdVo-3Bs", tags:["france","city"] },
-    { id:"fr_paris_earth_hour", title:"Eiffel Tower — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"NrMFAkTeuVw", originUrl:"https://www.youtube.com/watch?v=NrMFAkTeuVw", tags:["france","eiffel"] },
     { id:"fr_paris_angles_4k", title:"Paris — Eiffel Tower — Live Cam", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"mvcL9--pvHw", originUrl:"https://www.youtube.com/watch?v=mvcL9--pvHw&vl=en", tags:["france","multi"] },
-    { id:"fr_paris_virtual_live", title:"Eiffel Tower Virtual Tour (Live)", place:"París, Francia", source:"YouTube", kind:"youtube", youtubeId:"O8Ha_pAqYcY", originUrl:"https://www.youtube.com/watch?v=O8Ha_pAqYcY", tags:["france","tour"] },
 
     { id:"es_barcelona_rough_morning", title:"Barcelona — Live Cam", place:"Barcelona, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"XL1hRO8EYa0", originUrl:"https://www.youtube.com/watch?v=XL1hRO8EYa0", tags:["spain","barcelona"] },
-    { id:"es_barcelona_recorded", title:"Barcelona (Recorded live)", place:"Barcelona, España", source:"YouTube", kind:"youtube", youtubeId:"-rADshzms8U", originUrl:"https://www.youtube.com/watch?v=-rADshzms8U", tags:["spain","barcelona"] },
     { id:"es_tenerife_santa_cruz", title:"Santa Cruz de Tenerife — Live Cam", place:"Tenerife, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"RJbiqyQ4BlY", originUrl:"https://www.youtube.com/watch?v=RJbiqyQ4BlY", tags:["spain","canary"] },
     { id:"es_tenerife_las_vistas", title:"Playa Las Vistas — Live Cam", place:"Tenerife, España", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"gsTMAwBl-5E", originUrl:"https://www.youtube.com/watch?v=gsTMAwBl-5E", tags:["spain","canary","beach"] },
-    { id:"es_tenerife_recorded", title:"Tenerife (Recorded live)", place:"Tenerife, España", source:"YouTube", kind:"youtube", youtubeId:"lLdp3VjZ2K4", originUrl:"https://www.youtube.com/watch?v=lLdp3VjZ2K4", tags:["spain","canary"] },
 
     { id:"ar_buenos_aires_live", title:"Buenos Aires — Live Cam", place:"Buenos Aires, Argentina", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"reShHDyLGbc", originUrl:"https://www.youtube.com/watch?v=reShHDyLGbc", tags:["argentina","city"] },
     { id:"ar_ushuaia_snowfall", title:"Ushuaia Snowfall — Live Cam", place:"Ushuaia, Argentina", source:"SkylineWebcams (YouTube)", kind:"youtube", youtubeId:"9cYa8Ssf0rI", originUrl:"https://www.youtube.com/watch?v=9cYa8Ssf0rI", tags:["argentina","snow"] },
@@ -620,25 +693,16 @@
     { id:"fo_faroe_islands_live", title:"Faroe Islands — Live Cam", place:"Islas Feroe", source:"YouTube", kind:"youtube", youtubeId:"9NpCVV25j_4", originUrl:"https://www.youtube.com/watch?v=9NpCVV25j_4", tags:["faroe","nature"] },
     { id:"it_canazei_snowfall", title:"Canazei Snowfall — Live Cam", place:"Canazei, Italia", source:"YouTube", kind:"youtube", youtubeId:"hIKpX489KCI", originUrl:"https://www.youtube.com/watch?v=hIKpX489KCI", tags:["italy","snow","alps"] },
 
-    { id:"jp_shibuya_alt_timelapse", title:"Shibuya (Alt / Time-lapse)", place:"Tokio, Japón", source:"YouTube", kind:"youtube", youtubeId:"KiXaAGqD99I", originUrl:"https://www.youtube.com/watch?v=KiXaAGqD99I", tags:["japan","timelapse"] },
     { id:"th_phuket_new_year_live", title:"Night Cam — Live", place:"Phuket, Tailandia", source:"YouTube", kind:"youtube", youtubeId:"AQMaw6OAeHY", originUrl:"https://www.youtube.com/watch?v=AQMaw6OAeHY", tags:["thailand","night"] },
-    { id:"us_hawaii_volcano_cam_alt", title:"Volcano Cam (Big Island) — Live", place:"Hawái, USA", source:"YouTube", kind:"youtube", youtubeId:"u4UZ4UvZXrg", originUrl:"https://www.youtube.com/watch?v=u4UZ4UvZXrg", tags:["usa","hawaii","volcano"] },
+    { id:"us_hawaii_volcano_cam_alt", title:"Volcano Cam (Big Island) — Live", place:"Hawái, USA", source:"YouTube", kind:"youtube", youtubeId:"u4UZ4UvZXrg", originUrl:"https://www.youtube.com/watch?v=u4UZ4UvZXrg", tags:["usa","hawaii","volcano"] }
+  ];
 
-    { id:"mix_1200_top_webcams", title:"1200 TOP LIVE WEBCAMS (mix)", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"EFum1rGUdkk", originUrl:"https://www.youtube.com/watch?v=EFum1rGUdkk", tags:["mix","world"] },
-    { id:"mix_50_greece_webcams", title:"50 TOP LIVE CAMS (Greece mix)", place:"Grecia (mix)", source:"YouTube", kind:"youtube", youtubeId:"QswsqbCmkjE", originUrl:"https://www.youtube.com/watch?v=QswsqbCmkjE", tags:["mix","greece"] },
-    { id:"mix_us_webcams_oct", title:"LIVE WEBCAMS around the USA (mix)", place:"USA (mix)", source:"YouTube", kind:"youtube", youtubeId:"59D6sy6wjdI", originUrl:"https://www.youtube.com/watch?v=59D6sy6wjdI", tags:["mix","usa"] },
-
-    // Placeholders (se quedan como seed; pueden ser filtrados si no pasan heurística)
-    { id:"es_madrid_puerta_sol", title:"Puerta del Sol — Live Cam", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"k7m5Jc2QYqA", originUrl:"https://www.youtube.com/watch?v=k7m5Jc2QYqA", tags:["spain","madrid","city"] },
-    { id:"es_madrid_gran_via", title:"Gran Vía — Live Cam", place:"Madrid, España", source:"YouTube", kind:"youtube", youtubeId:"xjG8h3u4b8o", originUrl:"https://www.youtube.com/watch?v=xjG8h3u4b8o", tags:["spain","madrid","street"] },
-    { id:"es_valencia_city", title:"Valencia — Live Cam", place:"Valencia, España", source:"YouTube", kind:"youtube", youtubeId:"wXxQm2n3p1s", originUrl:"https://www.youtube.com/watch?v=wXxQm2n3p1s", tags:["spain","valencia"] },
-    { id:"es_sevilla_city", title:"Sevilla — Live Cam", place:"Sevilla, España", source:"YouTube", kind:"youtube", youtubeId:"5mQpZQm9JqY", originUrl:"https://www.youtube.com/watch?v=5mQpZQm9JqY", tags:["spain","sevilla"] },
-    { id:"es_bilbao_ria", title:"Bilbao (Ría) — Live Cam", place:"Bilbao, España", source:"YouTube", kind:"youtube", youtubeId:"b2GQY8x1r1Q", originUrl:"https://www.youtube.com/watch?v=b2GQY8x1r1Q", tags:["spain","bilbao"] },
-    { id:"es_mallorca_beach", title:"Mallorca Beach — Live Cam", place:"Mallorca, España", source:"YouTube", kind:"youtube", youtubeId:"Z0H1y1b2v3c", originUrl:"https://www.youtube.com/watch?v=Z0H1y1b2v3c", tags:["spain","mallorca","beach"] },
-    { id:"es_gran_canaria_playa", title:"Gran Canaria Beach — Live Cam", place:"Gran Canaria, España", source:"YouTube", kind:"youtube", youtubeId:"Qq3a1n2m3p0", originUrl:"https://www.youtube.com/watch?v=Qq3a1n2m3p0", tags:["spain","canary","beach"] },
-
-    { id:"mix_world_live_cities", title:"WORLD Live Cams — Cities Mix", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"w0rLdC1t13s0", originUrl:"https://www.youtube.com/watch?v=w0rLdC1t13s0", tags:["mix","world","cities"] },
-    { id:"mix_world_nature", title:"WORLD Live Cams — Nature Mix", place:"Mundo (mix)", source:"YouTube", kind:"youtube", youtubeId:"n4tur3M1x000", originUrl:"https://www.youtube.com/watch?v=n4tur3M1x000", tags:["mix","world","nature"] }
+  // NEWS seeds (solo si activas camsNews=1). Son pocos a propósito: discovery hace el “gordo”.
+  // Puedes añadir tus propios canales aquí cuando quieras.
+  const NEWS_RAW = [
+    // Ejemplos genéricos (si alguno cae, el discovery lo compensa):
+    { id:"news_world_generic_1", title:"World News — Live", place:"", source:"YouTube Live", kind:"youtube", youtubeId:"", originUrl:"", tags:["news"] },
+    { id:"news_world_generic_2", title:"Breaking News — Live", place:"", source:"YouTube Live", kind:"youtube", youtubeId:"", originUrl:"", tags:["news"] }
   ];
 
   // ─────────────────────────────────────────────────────────────
@@ -646,8 +710,15 @@
   // ─────────────────────────────────────────────────────────────
   const seenIds = new Set();
   const seenYouTube = new Set(); // youtubeId
-  const OUT = [];               // lista para player (puede contener alts)
-  const OUT_CATALOG = [];       // lista para catálogo (sin alts)
+
+  const OUT = [];               // lista principal (webcams + alts)
+  const OUT_CATALOG = [];       // catálogo principal (sin alts)
+
+  // News (separado)
+  const NEWS_SEEN_IDS = new Set();
+  const NEWS_SEEN_YT = new Set();
+  const OUT_NEWS = [];
+  const OUT_NEWS_CATALOG = [];
 
   function pushCam(cam) {
     if (!cam || !cam.id || seenIds.has(cam.id)) return false;
@@ -658,11 +729,18 @@
     return true;
   }
 
+  function pushNews(cam) {
+    if (!cam || !cam.id || NEWS_SEEN_IDS.has(cam.id)) return false;
+    NEWS_SEEN_IDS.add(cam.id);
+    if (cam.kind === "youtube" && cam.youtubeId) NEWS_SEEN_YT.add(cam.youtubeId);
+    OUT_NEWS.push(cam);
+    OUT_NEWS_CATALOG.push(cam);
+    return true;
+  }
+
   function normalizeKind(cam) {
     let kind = safeStr(cam.kind).toLowerCase();
-
-    // VIDEO ONLY
-    if (kind === "image") return "";
+    if (kind === "image") return ""; // VIDEO ONLY
 
     if (!ALLOWED_KINDS.has(kind)) {
       if (safeStr(cam.youtubeId) || extractYouTubeIdFromUrl(cam.originUrl) || extractYouTubeIdFromUrl(cam.url)) {
@@ -676,8 +754,7 @@
     return kind;
   }
 
-  // Seeds: aplicamos el filtro “webcam live” tal y como estabas usando
-  // (si no pasa, se descarta para mantener tu intención “solo webcams live”)
+  // Seeds webcams
   for (let i = 0; i < RAW.length; i++) {
     const cam = RAW[i];
     if (!cam || typeof cam !== "object") continue;
@@ -689,8 +766,7 @@
     const kind = normalizeKind(cam);
     if (!kind) continue;
 
-    // Filtro webcam LIVE (heurístico) — descarta tours/recorded/etc en seeds
-    // HLS se deja pasar si es .m3u8 aunque no haya título usable
+    // Filtro webcam LIVE (heurístico)
     const tOk = camTitleOk(cam.title, cam.source);
     if (!tOk) {
       if (!(kind === "hls" && looksLikeM3U8(cam.url))) continue;
@@ -712,7 +788,6 @@
         youtubeId = extractYouTubeIdFromUrl(cam.originUrl) || extractYouTubeIdFromUrl(cam.url);
       }
       if (!isValidYouTubeId(youtubeId)) continue;
-
       if (seenYouTube.has(youtubeId)) continue;
 
       base.youtubeId = youtubeId;
@@ -737,11 +812,47 @@
     }
   }
 
+  // Seeds news (solo si activas)
+  if (NEWS_ENABLED) {
+    for (let i = 0; i < NEWS_RAW.length; i++) {
+      const cam = NEWS_RAW[i];
+      if (!cam || typeof cam !== "object") continue;
+      if (cam.disabled === true) continue;
+
+      const kind = normalizeKind(cam);
+      if (!kind) continue;
+
+      // Si no hay youtubeId real en seed, lo dejamos fuera (discovery lo rellena)
+      if (kind !== "youtube") continue;
+
+      const yid = safeStr(cam.youtubeId);
+      if (!isValidYouTubeId(yid)) continue;
+
+      const id = safeStr(cam.id) || `news_${yid}`;
+      if (NEWS_SEEN_IDS.has(id)) continue;
+      if (NEWS_SEEN_YT.has(yid)) continue;
+
+      if (!newsTitleOk(cam.title, cam.source)) continue;
+
+      pushNews({
+        id,
+        title: safeStr(cam.title) || "News Live",
+        place: safeStr(cam.place) || "",
+        source: safeStr(cam.source) || "YouTube Live",
+        kind: "youtube",
+        youtubeId: yid,
+        originUrl: safeStr(cam.originUrl) || `https://www.youtube.com/watch?v=${encodeURIComponent(yid)}`,
+        thumb: youtubeThumb(yid),
+        tags: ["news"],
+        isAlt: false
+      });
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────
   // 2.5) CACHE LOAD (si hay cache buena, la usamos YA)
   // ─────────────────────────────────────────────────────────────
-  function loadCacheAny() {
-    const keys = [CACHE_KEY_V238, CACHE_KEY_LEGACY];
+  function loadCacheAny(keys, isOkFn) {
     for (let k = 0; k < keys.length; k++) {
       const key = keys[k];
       try {
@@ -765,8 +876,7 @@
           const id = safeStr(c.id);
           if (!id || ids.has(id)) continue;
 
-          // cache también: filtro webcam LIVE
-          if (!camTitleOk(c.title, c.source)) continue;
+          if (!isOkFn(c)) continue;
 
           if (kind === "youtube") {
             const yid = safeStr(c.youtubeId);
@@ -777,7 +887,7 @@
             if (!looksLikeM3U8(c.url)) continue;
           }
 
-          c.isAlt = false; // cache solo guarda “reales”
+          c.isAlt = false;
           ids.add(id);
           list.push(c);
         }
@@ -788,25 +898,29 @@
     return null;
   }
 
-  function saveCache(listNonAlt) {
+  function saveCache(keyMain, listNonAlt, limit) {
     try {
       const payload = {
         ts: Date.now(),
         v: VERSION,
-        target: TARGET_CAMS,
-        list: listNonAlt.slice(0, TARGET_CAMS)
+        target: limit,
+        list: listNonAlt.slice(0, limit)
       };
-      localStorage.setItem(CACHE_KEY_V238, JSON.stringify(payload));
-      // Compat: también guardamos legacy si NO hay namespace
-      if (!NS) localStorage.setItem(CACHE_KEY_LEGACY, JSON.stringify({ ts: payload.ts, list: payload.list }));
+      localStorage.setItem(keyMain, JSON.stringify(payload));
+      // Compat: legacy solo si no hay namespace y es cache webcams
+      if (!NS && keyMain === CACHE_KEY_V238) {
+        localStorage.setItem(CACHE_KEY_LEGACY, JSON.stringify({ ts: payload.ts, list: payload.list }));
+      }
     } catch (_) {}
   }
 
-  const cached = loadCacheAny();
-  if (cached && cached.length >= Math.min(80, TARGET_CAMS)) {
+  // Cache webcams
+  const cached = loadCacheAny([CACHE_KEY_V238, CACHE_KEY_LEGACY], (c) => camTitleOk(c.title, c.source));
+  if (cached && cached.length >= Math.min(120, TARGET_CAMS)) {
     for (let i = 0; i < cached.length; i++) {
       const c = cached[i];
       if (!c || typeof c !== "object") continue;
+
       const kind = safeStr(c.kind).toLowerCase();
       if (!ALLOWED_KINDS.has(kind)) continue;
 
@@ -824,11 +938,36 @@
     }
   }
 
+  // Cache news (si activas)
+  if (NEWS_ENABLED) {
+    const cachedNews = loadCacheAny([CACHE_NEWS_KEY_V238], (c) => newsTitleOk(c.title, c.source));
+    if (cachedNews && cachedNews.length >= Math.min(12, NEWS_TARGET)) {
+      for (let i = 0; i < cachedNews.length; i++) {
+        const c = cachedNews[i];
+        if (!c || typeof c !== "object") continue;
+        const kind = safeStr(c.kind).toLowerCase();
+        if (kind !== "youtube") continue;
+
+        const id = safeStr(c.id);
+        if (!id || NEWS_SEEN_IDS.has(id)) continue;
+
+        if (!newsTitleOk(c.title, c.source)) continue;
+
+        const yid = safeStr(c.youtubeId);
+        if (!isValidYouTubeId(yid) || NEWS_SEEN_YT.has(yid)) continue;
+
+        pushNews(c);
+        if (OUT_NEWS_CATALOG.length >= NEWS_TARGET) break;
+      }
+    }
+  }
+
   // Export inmediato (para no romper tu player/control)
   g.CAM_LIST = OUT;
   g.CAM_CATALOG_LIST = OUT_CATALOG;
+  g.CAM_NEWS_LIST = OUT_NEWS;
 
-  // Promise opcional (por si tu app quiere esperar a las 500)
+  // Promise opcional
   let __resolveReady = null;
   g.CAM_LIST_READY = new Promise((res) => { __resolveReady = res; });
 
@@ -884,14 +1023,21 @@
     const detail = {
       list: g.CAM_LIST,
       catalog: g.CAM_CATALOG_LIST,
+      news: g.CAM_NEWS_LIST,
+      newsCatalog: OUT_NEWS_CATALOG,
       total: Array.isArray(g.CAM_LIST) ? g.CAM_LIST.length : 0,
       catalogTotal: Array.isArray(g.CAM_CATALOG_LIST) ? g.CAM_CATALOG_LIST.length : 0,
+      newsTotal: Array.isArray(g.CAM_NEWS_LIST) ? g.CAM_NEWS_LIST.length : 0,
       version: VERSION,
       key: ROOM_KEY || "",
       target: TARGET_CAMS,
       autoDiscovery: !!AUTO_DISCOVERY,
       validateEmbed: !!VALIDATE_EMBED,
-      liveCheck: !!BEST_EFFORT_LIVE_CHECK
+      liveCheck: !!BEST_EFFORT_LIVE_CHECK,
+      newsEnabled: !!NEWS_ENABLED,
+      newsMix: !!NEWS_MIX_IN_MAIN,
+      newsInCatalog: !!NEWS_IN_CATALOG,
+      newsTarget: NEWS_TARGET
     };
     try { g.dispatchEvent(new CustomEvent("rlc_cam_list_updated", { detail })); } catch (_) {}
   }
@@ -915,10 +1061,10 @@
   g.RLCCams.getCatalogFeatured = getCatalogFeatured;
   g.RLCCams.onUpdate = onUpdate;
 
-  // Nuevas utilidades (no rompen nada)
+  // Utilidades
   g.RLCCams.getTarget = () => TARGET_CAMS;
   g.RLCCams.setTarget = (n) => {
-    const nn = Math.max(50, Math.min(2000, (n | 0) || TARGET_CAMS_DEFAULT));
+    const nn = Math.max(50, Math.min(2500, (n | 0) || TARGET_CAMS_DEFAULT));
     TARGET_CAMS = nn;
     emitUpdate();
     return TARGET_CAMS;
@@ -935,11 +1081,19 @@
   };
   g.RLCCams.clearCache = () => {
     try { localStorage.removeItem(CACHE_KEY_V238); } catch (_) {}
+    try { localStorage.removeItem(CACHE_NEWS_KEY_V238); } catch (_) {}
     try { if (!NS) localStorage.removeItem(CACHE_KEY_LEGACY); } catch (_) {}
     emitUpdate();
   };
 
-  // también expongo por compat
+  // News API (opcional)
+  g.RLCCams.getNewsList = () => Array.isArray(g.CAM_NEWS_LIST) ? g.CAM_NEWS_LIST : [];
+  g.RLCCams.setNewsEnabled = (v) => { NEWS_ENABLED = !!v; emitUpdate(); return NEWS_ENABLED; };
+  g.RLCCams.setNewsMix = (v) => { NEWS_MIX_IN_MAIN = !!v; emitUpdate(); return NEWS_MIX_IN_MAIN; };
+  g.RLCCams.setNewsInCatalog = (v) => { NEWS_IN_CATALOG = !!v; emitUpdate(); return NEWS_IN_CATALOG; };
+  g.RLCCams.setNewsTarget = (n) => { NEWS_TARGET = Math.max(10, Math.min(300, (n|0) || 60)); emitUpdate(); return NEWS_TARGET; };
+
+  // compat extra
   g.RLC_CATALOG_PAGE_SIZE = CATALOG_PAGE_SIZE;
 
   emitUpdate();
@@ -966,20 +1120,19 @@
 
   let __reqUsed = 0;
   function budgetOk() { return __reqUsed < DISCOVERY_REQUEST_BUDGET; }
+  function validateBudgetOk() { return __validateUsed < VALIDATE_BUDGET; }
 
   async function fetchWithTimeout(url, opts, timeoutMs) {
     if (!budgetOk()) throw new Error("budget_exhausted");
     __reqUsed++;
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), timeoutMs);
-    const sig = opts && opts.signal ? opts.signal : null;
 
-    // encadena señales (abort externo + timeout)
     const controller = new AbortController();
-    const onAbort = () => { try { controller.abort(); } catch (_) {} };
-    if (sig) {
-      try { sig.addEventListener("abort", onAbort, { once: true }); } catch (_) {}
-    }
+    const t = setTimeout(() => { try { controller.abort("timeout"); } catch (_) {} }, timeoutMs || 10000);
+
+    const sig = opts && opts.signal ? opts.signal : null;
+    const onAbort = () => { try { controller.abort("abort"); } catch (_) {} };
+
+    if (sig) { try { sig.addEventListener("abort", onAbort, { once: true }); } catch (_) {} }
     try { MOD._abort.signal.addEventListener("abort", onAbort, { once: true }); } catch (_) {}
 
     try {
@@ -1040,6 +1193,9 @@
 
   async function isReallyLiveYouTube(videoId, signal) {
     if (!BEST_EFFORT_LIVE_CHECK) return true;
+    if (!validateBudgetOk()) return true;
+    __validateUsed++;
+
     try {
       const html = await fetchTextSmart(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, 11000, signal);
       if (!html) return true;
@@ -1055,6 +1211,8 @@
 
   async function isEmbeddableYouTube(videoId, signal) {
     if (!VALIDATE_EMBED) return true;
+    if (!validateBudgetOk()) return true;
+    __validateUsed++;
 
     // 1) oEmbed (rápido)
     try {
@@ -1065,17 +1223,13 @@
       } else if (r && (r.status === 401 || r.status === 403 || r.status === 404)) {
         return false;
       }
-    } catch (_) {
-      // no lo usamos como negativo
-    }
+    } catch (_) {}
 
     // 2) embed HTML (best-effort)
     try {
       const html = await fetchTextSmart(`https://www.youtube.com/embed/${videoId}`, 9000, signal);
       if (html && textLikelyBlockedEmbed(html)) return false;
-    } catch (_) {
-      // si no podemos comprobar, no penalizamos
-    }
+    } catch (_) {}
 
     // 3) live check (best-effort)
     const liveOk = await isReallyLiveYouTube(videoId, signal);
@@ -1092,9 +1246,8 @@
     const author = safeStr(entry.author);
     if (!camTitleOk(title, author)) return null;
 
-    const id = `yt_${vid}`;
     return {
-      id,
+      id: `yt_${vid}`,
       title,
       place: "",
       source: author ? `${author} (YouTube Live)` : "YouTube Live",
@@ -1103,6 +1256,28 @@
       originUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`,
       thumb: youtubeThumb(vid),
       tags: ["auto","live","webcam"],
+      isAlt: false
+    };
+  }
+
+  function toAutoNews(entry) {
+    const vid = safeStr(entry && entry.videoId);
+    if (!isValidYouTubeId(vid)) return null;
+
+    const title = safeStr(entry.title) || "News Live";
+    const author = safeStr(entry.author);
+    if (!newsTitleOk(title, author)) return null;
+
+    return {
+      id: `news_${vid}`,
+      title,
+      place: "",
+      source: author ? `${author} (YouTube Live)` : "YouTube Live",
+      kind: "youtube",
+      youtubeId: vid,
+      originUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`,
+      thumb: youtubeThumb(vid),
+      tags: ["news","auto","live"],
       isAlt: false
     };
   }
@@ -1160,115 +1335,271 @@
       `&features=live` +
       `&sort=relevance` +
       `&region=US`;
-
     const res = await fetchJsonSmart(url, 12000, signal);
     return Array.isArray(res) ? res : [];
+  }
+
+  async function runDiscoveryWebcams(instances, signal) {
+    if (!AUTO_DISCOVERY) return;
+
+    if (OUT.length >= TARGET_CAMS) return;
+
+    const candidates = [];
+    const addedNow = new Set();
+
+    const tasks = [];
+    let instCursor = 0;
+    for (let qi = 0; qi < DISCOVERY_QUERIES.length; qi++) {
+      const q = DISCOVERY_QUERIES[qi];
+      for (let p = 1; p <= DISCOVERY_MAX_PAGES_PER_QUERY; p++) {
+        const inst = instances[instCursor++ % instances.length];
+        tasks.push({ q, p, inst });
+      }
+    }
+    shuffleInPlace(tasks);
+
+    let cursor = 0;
+    const foundForQuery = Object.create(null);
+
+    async function worker() {
+      while (cursor < tasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
+        if (!budgetOk()) break;
+
+        const t = tasks[cursor++];
+
+        try {
+          const key = t.q;
+          foundForQuery[key] = foundForQuery[key] || 0;
+          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) {
+            await sleep(40);
+            continue;
+          }
+
+          const results = await invidiousSearch(t.inst, t.q, t.p, signal);
+
+          for (let i = 0; i < results.length; i++) {
+            if (!budgetOk()) break;
+
+            const r = results[i];
+            if (!r || r.type !== "video") continue;
+            if (r.liveNow !== true) continue;
+
+            const cam = toAutoCam(r);
+            if (!cam) continue;
+
+            const vid = cam.youtubeId;
+            if (seenYouTube.has(vid) || addedNow.has(vid)) continue;
+            addedNow.add(vid);
+
+            const ok = await isEmbeddableYouTube(vid, signal);
+            if (!ok) continue;
+
+            candidates.push(cam);
+            foundForQuery[key]++;
+
+            if ((OUT_CATALOG.length + candidates.length) >= TARGET_CAMS) break;
+          }
+        } catch (_) {
+          // silencio
+        } finally {
+          await sleep(110);
+        }
+      }
+    }
+
+    const workers = [];
+    const n = Math.max(1, Math.min(DISCOVERY_CONCURRENCY, 8));
+    for (let i = 0; i < n; i++) workers.push(worker());
+    await Promise.all(workers);
+
+    // Añadir candidatos
+    for (let i = 0; i < candidates.length && OUT_CATALOG.length < TARGET_CAMS; i++) {
+      const c = candidates[i];
+      if (!c) continue;
+      if (seenIds.has(c.id)) continue;
+      if (seenYouTube.has(c.youtubeId)) continue;
+      pushCam(c);
+    }
+  }
+
+  async function runDiscoveryNews(instances, signal) {
+    if (!NEWS_ENABLED) return;
+    if (!NEWS_DISCOVERY) return;
+    if (OUT_NEWS_CATALOG.length >= NEWS_TARGET) return;
+
+    const candidates = [];
+    const addedNow = new Set();
+
+    const tasks = [];
+    let instCursor = 0;
+    for (let qi = 0; qi < NEWS_QUERIES.length; qi++) {
+      const q = NEWS_QUERIES[qi];
+      for (let p = 1; p <= Math.max(2, Math.min(8, DISCOVERY_MAX_PAGES_PER_QUERY)); p++) {
+        const inst = instances[instCursor++ % instances.length];
+        tasks.push({ q, p, inst });
+      }
+    }
+    shuffleInPlace(tasks);
+
+    let cursor = 0;
+    const foundForQuery = Object.create(null);
+
+    async function worker() {
+      while (cursor < tasks.length && (OUT_NEWS_CATALOG.length + candidates.length) < NEWS_TARGET) {
+        if (!budgetOk()) break;
+
+        const t = tasks[cursor++];
+
+        try {
+          const key = t.q;
+          foundForQuery[key] = foundForQuery[key] || 0;
+          if (foundForQuery[key] >= Math.max(40, Math.min(400, DISCOVERY_MAX_PER_QUERY))) {
+            await sleep(40);
+            continue;
+          }
+
+          const results = await invidiousSearch(t.inst, t.q, t.p, signal);
+
+          for (let i = 0; i < results.length; i++) {
+            if (!budgetOk()) break;
+
+            const r = results[i];
+            if (!r || r.type !== "video") continue;
+            if (r.liveNow !== true) continue;
+
+            const cam = toAutoNews(r);
+            if (!cam) continue;
+
+            const vid = cam.youtubeId;
+            if (NEWS_SEEN_YT.has(vid) || addedNow.has(vid)) continue;
+            addedNow.add(vid);
+
+            const ok = await isEmbeddableYouTube(vid, signal);
+            if (!ok) continue;
+
+            candidates.push(cam);
+            foundForQuery[key]++;
+
+            if ((OUT_NEWS_CATALOG.length + candidates.length) >= NEWS_TARGET) break;
+          }
+        } catch (_) {
+          // silencio
+        } finally {
+          await sleep(110);
+        }
+      }
+    }
+
+    const workers = [];
+    const n = Math.max(1, Math.min(3, DISCOVERY_CONCURRENCY)); // news más suave
+    for (let i = 0; i < n; i++) workers.push(worker());
+    await Promise.all(workers);
+
+    for (let i = 0; i < candidates.length && OUT_NEWS_CATALOG.length < NEWS_TARGET; i++) {
+      const c = candidates[i];
+      if (!c) continue;
+      if (NEWS_SEEN_IDS.has(c.id)) continue;
+      if (NEWS_SEEN_YT.has(c.youtubeId)) continue;
+      pushNews(c);
+    }
+  }
+
+  function applyNewsMixing() {
+    // Siempre exporto CAM_NEWS_LIST aparte
+    g.CAM_NEWS_LIST = OUT_NEWS;
+
+    if (!NEWS_ENABLED) return;
+
+    // Mix en CAM_LIST si lo pides
+    if (NEWS_MIX_IN_MAIN) {
+      for (let i = 0; i < OUT_NEWS_CATALOG.length; i++) {
+        const n = OUT_NEWS_CATALOG[i];
+        if (!n || n.kind !== "youtube") continue;
+        const yid = safeStr(n.youtubeId);
+        if (!isValidYouTubeId(yid)) continue;
+
+        // Evitar duplicar por youtubeId en la lista principal
+        if (seenYouTube.has(yid)) continue;
+
+        // Clonar con id estable “news_*” pero que no choque
+        let id = safeStr(n.id) || `news_${yid}`;
+        if (seenIds.has(id)) id = `${id}_mix_${(Math.random() * 1e6) | 0}`;
+
+        const cam = Object.assign({}, n, {
+          id,
+          tags: Array.isArray(n.tags) ? n.tags.slice(0, 11).concat(["mixed"]) : ["news","mixed"],
+          isAlt: false
+        });
+
+        // Para que el catálogo sea opcional
+        if (NEWS_IN_CATALOG) {
+          pushCam(cam);
+        } else {
+          // Meter en lista principal, pero NO en catálogo
+          if (!seenIds.has(cam.id)) {
+            seenIds.add(cam.id);
+            seenYouTube.add(yid);
+            OUT.push(cam);
+          }
+        }
+      }
+    } else if (NEWS_IN_CATALOG) {
+      // No mix en CAM_LIST, pero sí meterlos en el catálogo principal si lo pides
+      for (let i = 0; i < OUT_NEWS_CATALOG.length; i++) {
+        const n = OUT_NEWS_CATALOG[i];
+        if (!n || n.kind !== "youtube") continue;
+        const yid = safeStr(n.youtubeId);
+        if (!isValidYouTubeId(yid)) continue;
+        if (seenYouTube.has(yid)) continue;
+
+        let id = safeStr(n.id) || `news_${yid}`;
+        if (seenIds.has(id)) id = `${id}_cat_${(Math.random() * 1e6) | 0}`;
+
+        const cam = Object.assign({}, n, {
+          id,
+          tags: Array.isArray(n.tags) ? n.tags.slice(0, 11).concat(["news"]) : ["news"],
+          isAlt: false
+        });
+
+        pushCam(cam);
+      }
+    }
   }
 
   async function discoverMore() {
     const signal = MOD._abort.signal;
 
     try {
-      if (!AUTO_DISCOVERY) {
-        saveCache(OUT_CATALOG);
+      // Si no hay discovery, guardo cache y listo
+      if (!AUTO_DISCOVERY && !NEWS_ENABLED) {
+        saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS);
         emitUpdate();
         if (__resolveReady) __resolveReady(g.CAM_LIST);
         return;
       }
 
-      if (OUT.length >= TARGET_CAMS) {
-        saveCache(OUT_CATALOG);
-        emitUpdate();
-        if (__resolveReady) __resolveReady(g.CAM_LIST);
-        return;
-      }
-
+      // Instancias compartidas
       const instancesRaw = await getInvidiousInstances(signal);
       const instances = shuffleInPlace(instancesRaw.slice(0, Math.max(5, DISCOVERY_MAX_INSTANCES)));
 
-      const candidates = [];
-      const addedNow = new Set(); // videoId en esta run
-
-      // tasks “ligeras”: 1 instancia por (query,page) rotando (reduce spam)
-      const tasks = [];
-      let instCursor = 0;
-      for (let qi = 0; qi < DISCOVERY_QUERIES.length; qi++) {
-        const q = DISCOVERY_QUERIES[qi];
-        for (let p = 1; p <= DISCOVERY_MAX_PAGES_PER_QUERY; p++) {
-          const inst = instances[instCursor++ % instances.length];
-          tasks.push({ q, p, inst });
-        }
-      }
-      shuffleInPlace(tasks);
-
-      let cursor = 0;
-      const foundForQuery = Object.create(null);
-
-      async function worker() {
-        while (cursor < tasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
-          if (!budgetOk()) break;
-
-          const t = tasks[cursor++];
-
-          try {
-            const key = t.q;
-            foundForQuery[key] = foundForQuery[key] || 0;
-            if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) {
-              await sleep(40);
-              continue;
-            }
-
-            const results = await invidiousSearch(t.inst, t.q, t.p, signal);
-
-            for (let i = 0; i < results.length; i++) {
-              if (!budgetOk()) break;
-
-              const r = results[i];
-              if (!r || r.type !== "video") continue;
-              if (r.liveNow !== true) continue;
-
-              const cam = toAutoCam(r);
-              if (!cam) continue;
-
-              const vid = cam.youtubeId;
-              if (seenYouTube.has(vid) || addedNow.has(vid)) continue;
-              addedNow.add(vid);
-
-              const ok = await isEmbeddableYouTube(vid, signal);
-              if (!ok) continue;
-
-              candidates.push(cam);
-              foundForQuery[key]++;
-
-              if ((OUT_CATALOG.length + candidates.length) >= TARGET_CAMS) break;
-            }
-          } catch (_) {
-            // silencio
-          } finally {
-            await sleep(110);
-          }
-        }
+      // Webcams discovery
+      if (AUTO_DISCOVERY && OUT_CATALOG.length < TARGET_CAMS) {
+        await runDiscoveryWebcams(instances, signal);
       }
 
-      const workers = [];
-      const n = Math.max(1, Math.min(DISCOVERY_CONCURRENCY, 8));
-      for (let i = 0; i < n; i++) workers.push(worker());
-      await Promise.all(workers);
-
-      // Añadir candidatos
-      for (let i = 0; i < candidates.length && OUT_CATALOG.length < TARGET_CAMS; i++) {
-        const c = candidates[i];
-        if (!c) continue;
-        if (seenIds.has(c.id)) continue;
-        if (seenYouTube.has(c.youtubeId)) continue;
-        pushCam(c);
+      // News discovery (solo si activas)
+      if (NEWS_ENABLED && OUT_NEWS_CATALOG.length < NEWS_TARGET) {
+        await runDiscoveryNews(instances, signal);
       }
+
+      // Mezcla/Export de news según params
+      applyNewsMixing();
 
       // Failsafe ALT fill (solo player; catálogo limpio)
       if (HARD_FAILSAFE_ALT_FILL && OUT.length > 0 && OUT.length < TARGET_CAMS) {
         const baseLen = OUT.length;
         let k = 0;
-        while (OUT.length < TARGET_CAMS && k < 40000) {
+        while (OUT.length < TARGET_CAMS && k < 60000) {
           const src = OUT[k % baseLen];
           const altN = ((k / baseLen) | 0) + 1;
           const altId = `${src.id}_alt_${altN}`;
@@ -1290,15 +1621,18 @@
       // Export final
       g.CAM_LIST = OUT;
       g.CAM_CATALOG_LIST = OUT_CATALOG;
+      g.CAM_NEWS_LIST = OUT_NEWS;
 
-      // Guarda cache SOLO sin alts
-      saveCache(OUT_CATALOG);
+      // Guarda cache
+      saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS);
+      if (NEWS_ENABLED) saveCache(CACHE_NEWS_KEY_V238, OUT_NEWS_CATALOG, NEWS_TARGET);
 
       emitUpdate();
       if (__resolveReady) __resolveReady(g.CAM_LIST);
     } catch (_) {
       // Si algo explota, no bloqueamos
-      try { saveCache(OUT_CATALOG); } catch (_) {}
+      try { saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS); } catch (_) {}
+      try { if (NEWS_ENABLED) saveCache(CACHE_NEWS_KEY_V238, OUT_NEWS_CATALOG, NEWS_TARGET); } catch (_) {}
       try { emitUpdate(); } catch (_) {}
       try { if (__resolveReady) __resolveReady(g.CAM_LIST); } catch (_) {}
     }
@@ -1311,6 +1645,10 @@
   //  - {type:"CAMS_SET_TARGET", value:number}
   //  - {type:"CAMS_SET_AUTODISCOVERY", value:boolean}
   //  - {type:"CAMS_SET_VALIDATE", value:boolean}
+  //  - {type:"CAMS_SET_NEWS_ENABLED", value:boolean}
+  //  - {type:"CAMS_SET_NEWS_MIX", value:boolean}
+  //  - {type:"CAMS_SET_NEWS_CATALOG", value:boolean}
+  //  - {type:"CAMS_SET_NEWS_TARGET", value:number}
   try {
     if ("BroadcastChannel" in g) {
       MOD._bc = new BroadcastChannel("rlc_bus_v1");
@@ -1318,6 +1656,7 @@
         const msg = ev && ev.data;
         if (!msg || typeof msg !== "object") return;
         const t = msg.type || msg.t;
+
         if (t === "CAMS_CLEAR_CACHE") {
           g.RLCCams && g.RLCCams.clearCache && g.RLCCams.clearCache();
           return;
@@ -1334,11 +1673,28 @@
           g.RLCCams && g.RLCCams.setValidateEmbed && g.RLCCams.setValidateEmbed(!!msg.value);
           return;
         }
+        if (t === "CAMS_SET_NEWS_ENABLED") {
+          g.RLCCams && g.RLCCams.setNewsEnabled && g.RLCCams.setNewsEnabled(!!msg.value);
+          return;
+        }
+        if (t === "CAMS_SET_NEWS_MIX") {
+          g.RLCCams && g.RLCCams.setNewsMix && g.RLCCams.setNewsMix(!!msg.value);
+          return;
+        }
+        if (t === "CAMS_SET_NEWS_CATALOG") {
+          g.RLCCams && g.RLCCams.setNewsInCatalog && g.RLCCams.setNewsInCatalog(!!msg.value);
+          return;
+        }
+        if (t === "CAMS_SET_NEWS_TARGET") {
+          g.RLCCams && g.RLCCams.setNewsTarget && g.RLCCams.setNewsTarget(msg.value);
+          return;
+        }
+
         if (t === "CAMS_REFRESH") {
-          // reinicia discovery sin matar seeds/cache actual
           try { MOD._abort.abort(); } catch (_) {}
           MOD._abort = new AbortController();
           __reqUsed = 0;
+          __validateUsed = 0;
           const timer = setTimeout(() => { discoverMore(); }, 0);
           MOD._timers.push(timer);
         }
@@ -1351,6 +1707,7 @@
     try { MOD._abort.abort(); } catch (_) {}
     MOD._abort = new AbortController();
     __reqUsed = 0;
+    __validateUsed = 0;
     const timer = setTimeout(() => { discoverMore(); }, 0);
     MOD._timers.push(timer);
   };
