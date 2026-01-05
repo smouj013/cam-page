@@ -7,11 +7,13 @@
       - BroadcastChannel namespaced + legacy + postMessage same-origin fallback
    ✅ Inyecta cards si faltan + REPARA si existen incompletas (no rompe tu Control Room)
    ✅ Update-aware singleton: destruye versión previa y limpia listeners/BC/timers
-   ✅ NUEVO (sin romper nada): controles de “escala”/tamaño de barra y texto
+   ✅ Controles de “escala”/tamaño de barra y texto
       - tickerUiScale / tickerBarH / tickerFontPx (NEWS)
       - econUiScale / econBarH / econFontPx (ECON)
-      (Si tu player no los usa todavía, simplemente los ignora → 0 breaks)
-   ✅ Preview “noticiero” en el panel (para ver cómo quedará sin glitches)
+   ✅ v2.3.9+:
+      - Default NEWS sources: 20+ ids
+      - Default ECON clocks: más países/zonas
+      - Copy URL: escribe params “legacy+new” (tickerUiScale y tickerScale, etc.)
 */
 
 (() => {
@@ -35,7 +37,6 @@
 
   // ───────────────────────── helpers
   const qs = (s, r = document) => r.querySelector(s);
-  const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
   const num = (v, fb) => {
@@ -43,13 +44,6 @@
     return Number.isFinite(n) ? n : fb;
   };
   const safeJson = (raw, fb = null) => { try { return JSON.parse(raw); } catch (_) { return fb; } };
-  const parseBool = (v, def = false) => {
-    if (v == null) return def;
-    const s = String(v).trim().toLowerCase();
-    if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
-    if (s === "0" || s === "false" || s === "no" || s === "off") return false;
-    return def;
-  };
 
   function debounce(fn, ms = 170) {
     let t = 0;
@@ -367,6 +361,20 @@
     const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
     const CFG_KEY_LEGACY = CFG_KEY_BASE;
 
+    // ✅ Catálogo (IDs que soporta el player)
+    const NEWS_SOURCE_CATALOG = [
+      "gdelt",
+      "bbc","dw","guardian",
+      "aljazeera","reuters_world","ap_world",
+      "france24","skynews","abcnews","cbsnews","nbcnews","cnn_world",
+      "cnbc_world","wsj_world","ft_world",
+      "thehill_world","politico_world",
+      "economist_world","time_world","huffpost_world","axios_world",
+      "gnews_world","gnews_us","gnews_eu","gnews_latam",
+      "gnews_business","gnews_markets","gnews_tech","gnews_science","gnews_climate","gnews_health",
+      "gnews_reuters","gnews_ap","gnews_cnn","gnews_bloomberg","gnews_nyt","gnews_ft","gnews_aljazeera"
+    ];
+
     const DEFAULTS = {
       enabled: true,
       lang: "auto",
@@ -377,9 +385,19 @@
       timespan: "1d",
       bilingual: true,
       translateMax: 10,
-      sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"],
 
-      // ✅ NUEVO (2.3.9) — escalado visual (player puede ignorarlo sin romper)
+      // ✅ +20 sources por defecto
+      sources: [
+        "gdelt",
+        "bbc","dw","guardian",
+        "aljazeera","reuters_world","ap_world",
+        "france24","skynews","abcnews","cbsnews","nbcnews","cnn_world",
+        "cnbc_world","ft_world",
+        "gnews_world","gnews_us","gnews_eu","gnews_latam",
+        "gnews_business","gnews_markets","gnews_tech"
+      ],
+
+      // ✅ escalado visual
       uiScale: 1.0,      // 0.75..1.40
       barH: 34,          // 24..54
       fontPx: 12         // 10..18
@@ -393,9 +411,7 @@
     }
 
     function normalizeSources(list) {
-      // Allowed list “base” (no rompe). Tu rlcTickers.js (player) puede soportar más;
-      // aquí solo evitamos typos. Si quieres permitir ANY, cambia allowed=null.
-      const allowed = new Set(["gdelt","googlenews","bbc","dw","guardian"]);
+      const allowed = new Set(NEWS_SOURCE_CATALOG.map(s => String(s).toLowerCase()));
       const arr = Array.isArray(list)
         ? list
         : String(list || "").split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
@@ -502,8 +518,8 @@
           </div>
 
           <div class="rlcCtlRow rlcCtlFull">
-            <label>Sources (CSV)</label>
-            <input id="ctlTickerSources" placeholder="gdelt,googlenews,bbc,dw,guardian" />
+            <label>Sources (CSV) — (20+ por defecto)</label>
+            <input id="ctlTickerSources" placeholder="${DEFAULTS.sources.join(",")}" />
           </div>
 
           <div class="rlcCtlRow">
@@ -587,9 +603,7 @@
         bar.style.setProperty("--fontPx", `${c.fontPx}px`);
       } catch (_) {}
 
-      if (meta) {
-        meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px`;
-      }
+      if (meta) meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px`;
     }
 
     function applyUIFromCfg(cfg) {
@@ -689,8 +703,9 @@
       u.searchParams.set("tickerTranslateMax", String(cfg.translateMax));
       u.searchParams.set("tickerSources", normalizeSources(cfg.sources).join(","));
 
-      // ✅ NUEVO (2.3.9): escalado (player puede ignorar sin romper)
+      // ✅ compat: escribir NUEVO + LEGACY
       u.searchParams.set("tickerUiScale", String(cfg.uiScale));
+      u.searchParams.set("tickerScale", String(cfg.uiScale));
       u.searchParams.set("tickerBarH", String(cfg.barH));
       u.searchParams.set("tickerFontPx", String(cfg.fontPx));
 
@@ -731,19 +746,9 @@
 
       // live apply (sin glitches)
       const liveEls = [
-        "#ctlTickerOn",
-        "#ctlTickerLang",
-        "#ctlTickerSpeed",
-        "#ctlTickerRefresh",
-        "#ctlTickerTop",
-        "#ctlTickerHideOnVote",
-        "#ctlTickerSpan",
-        "#ctlTickerBilingual",
-        "#ctlTickerTranslateMax",
-        "#ctlTickerSources",
-        "#ctlTickerUiScale",
-        "#ctlTickerBarH",
-        "#ctlTickerFontPx"
+        "#ctlTickerOn","#ctlTickerLang","#ctlTickerSpeed","#ctlTickerRefresh","#ctlTickerTop",
+        "#ctlTickerHideOnVote","#ctlTickerSpan","#ctlTickerBilingual","#ctlTickerTranslateMax",
+        "#ctlTickerSources","#ctlTickerUiScale","#ctlTickerBarH","#ctlTickerFontPx"
       ];
       const applyDebounced = debounce(() => doApply(true), 180);
 
@@ -791,21 +796,40 @@
       hideOnVote: true,
       mode: "daily",
       showClocks: true,
+
+      // ✅ más países/zonas por defecto (12)
       clocks: [
+        { label: "UTC", country: "UN", tz: "UTC" },
         { label: "MAD", country: "ES", tz: "Europe/Madrid" },
-        { label: "NY",  country: "US", tz: "America/New_York" },
         { label: "LDN", country: "GB", tz: "Europe/London" },
-        { label: "TYO", country: "JP", tz: "Asia/Tokyo" }
+        { label: "NY",  country: "US", tz: "America/New_York" },
+        { label: "LA",  country: "US", tz: "America/Los_Angeles" },
+        { label: "MEX", country: "MX", tz: "America/Mexico_City" },
+        { label: "BUE", country: "AR", tz: "America/Argentina/Buenos_Aires" },
+        { label: "RIO", country: "BR", tz: "America/Sao_Paulo" },
+        { label: "JNB", country: "ZA", tz: "Africa/Johannesburg" },
+        { label: "DXB", country: "AE", tz: "Asia/Dubai" },
+        { label: "DEL", country: "IN", tz: "Asia/Kolkata" },
+        { label: "TYO", country: "JP", tz: "Asia/Tokyo" },
+        { label: "SYD", country: "AU", tz: "Australia/Sydney" }
       ],
+
       items: [
         { id:"btc",  label:"BTC/USD", stooq:"btcusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"bitcoin" },
         { id:"eth",  label:"ETH/USD", stooq:"ethusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"ethereum" },
         { id:"eurusd", label:"EUR/USD", stooq:"eurusd", kind:"fx", currency:"USD", decimals:4, country:"EU", tz:"Europe/Brussels", iconSlug:"euro" },
+        { id:"gbpusd", label:"GBP/USD", stooq:"gbpusd", kind:"fx", currency:"USD", decimals:4, country:"GB", tz:"Europe/London", glyph:"£" },
+        { id:"usdjpy", label:"USD/JPY", stooq:"usdjpy", kind:"fx", currency:"JPY", decimals:2, country:"JP", tz:"Asia/Tokyo", glyph:"¥" },
         { id:"aapl", label:"AAPL", stooq:"aapl.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"apple", domain:"apple.com" },
-        { id:"tsla", label:"TSLA", stooq:"tsla.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"tesla", domain:"tesla.com" }
+        { id:"tsla", label:"TSLA", stooq:"tsla.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"tesla", domain:"tesla.com" },
+        { id:"msft", label:"MSFT", stooq:"msft.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"microsoft", domain:"microsoft.com" },
+        { id:"nvda", label:"NVDA", stooq:"nvda.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"nvidia", domain:"nvidia.com" },
+        { id:"spx",  label:"S&P 500", stooq:"^spx", kind:"index", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"📈" },
+        { id:"dax",  label:"DAX", stooq:"^dax", kind:"index", currency:"EUR", decimals:2, country:"DE", tz:"Europe/Berlin", glyph:"🏦" },
+        { id:"gold", label:"GOLD", stooq:"gc.f", kind:"commodity", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"🪙" }
       ],
 
-      // ✅ NUEVO (2.3.9) — escalado visual (player puede ignorarlo sin romper)
+      // ✅ escalado visual
       uiScale: 1.0,  // 0.75..1.40
       barH: 36,      // 24..54
       fontPx: 12     // 10..18
@@ -1013,9 +1037,7 @@
         bar.style.setProperty("--fontPx", `${c.fontPx}px`);
       } catch (_) {}
 
-      if (meta) {
-        meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px`;
-      }
+      if (meta) meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px`;
     }
 
     function applyUIFromCfg(cfg) {
@@ -1103,8 +1125,6 @@
         ...(Array.isArray(clocks) ? { clocks } : {})
       });
 
-      // Si JSON inválido, no rompemos: mantenemos último válido en storage (cuando aplique).
-      // Aquí solo avisamos con pill.
       if (itemsTa && itemsTa.value.trim() && !Array.isArray(items)) {
         setStatus("Items JSON inválido (usa array) — se mantiene último válido", false);
       } else if (clocksTa && clocksTa.value.trim() && !Array.isArray(clocks)) {
@@ -1133,8 +1153,9 @@
       u.searchParams.set("econMode", cfg.mode);
       u.searchParams.set("econClocks", cfg.showClocks ? "1" : "0");
 
-      // ✅ NUEVO (2.3.9): escalado (player puede ignorar sin romper)
+      // ✅ compat: escribir NUEVO + LEGACY
       u.searchParams.set("econUiScale", String(cfg.uiScale));
+      u.searchParams.set("econScale", String(cfg.uiScale));
       u.searchParams.set("econBarH", String(cfg.barH));
       u.searchParams.set("econFontPx", String(cfg.fontPx));
 
@@ -1164,6 +1185,7 @@
 
         if (persist && itemsOk && clocksOk) writeCfg(CFG_KEY_NS, CFG_KEY_LEGACY, cfg);
         sendMsg("ECON_CFG", cfg);
+
         applyUIFromCfg(persist && itemsOk && clocksOk ? cfg : (readCfg(CFG_KEY_NS, CFG_KEY_LEGACY) || cfg));
       };
 
@@ -1189,16 +1211,9 @@
       const applyDebouncedJson = debounce(() => doApply(true), 350);
 
       const liveElsFast = [
-        "#ctlEconOn",
-        "#ctlEconSpeed",
-        "#ctlEconRefresh",
-        "#ctlEconTop",
-        "#ctlEconHideOnVote",
-        "#ctlEconMode",
-        "#ctlEconClocks",
-        "#ctlEconUiScale",
-        "#ctlEconBarH",
-        "#ctlEconFontPx"
+        "#ctlEconOn","#ctlEconSpeed","#ctlEconRefresh","#ctlEconTop",
+        "#ctlEconHideOnVote","#ctlEconMode","#ctlEconClocks",
+        "#ctlEconUiScale","#ctlEconBarH","#ctlEconFontPx"
       ];
 
       for (const sel of liveElsFast) {

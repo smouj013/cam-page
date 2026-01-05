@@ -9,7 +9,8 @@
       - Update-aware singleton (no dupes)
       - Escalado PRO (uiScale/barH/fontPx) sin glitches (layout mide alturas reales)
       - Fallback CSS “noticiero” suave (sin pisar tu theme)
-      - Sources ampliadas (GDELT + RSS clásicos + GoogleNews search packs)
+      - Sources ampliadas (20+ por defecto)
+      - PERF: rota fuentes y usa subset activo por refresh (evita 20+ fetch simultáneos)
 */
 
 (() => {
@@ -82,8 +83,9 @@
       tickerSources: safeStr(u.searchParams.get("tickerSources") || ""),
       tickerDebug: safeStr(u.searchParams.get("tickerDebug") || ""),
 
-      // ✅ v2.3.9 visuals
+      // ✅ v2.3.9 visuals (acepta legacy + new)
       tickerScale: safeStr(u.searchParams.get("tickerScale") || ""),
+      tickerUiScale: safeStr(u.searchParams.get("tickerUiScale") || ""),
       tickerBarH: safeStr(u.searchParams.get("tickerBarH") || ""),
       tickerFontPx: safeStr(u.searchParams.get("tickerFontPx") || ""),
 
@@ -97,8 +99,9 @@
       econClocks: safeStr(u.searchParams.get("econClocks") || ""),
       econDebug: safeStr(u.searchParams.get("econDebug") || ""),
 
-      // ✅ v2.3.9 visuals
+      // ✅ v2.3.9 visuals (acepta legacy + new)
       econScale: safeStr(u.searchParams.get("econScale") || ""),
+      econUiScale: safeStr(u.searchParams.get("econUiScale") || ""),
       econBarH: safeStr(u.searchParams.get("econBarH") || ""),
       econFontPx: safeStr(u.searchParams.get("econFontPx") || "")
     };
@@ -345,7 +348,7 @@
 .tkIco img{ width:18px; height:18px; display:block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
 .tkGlyph{ font-size: 16px; line-height:1; }
 
-/* per-ticker scale hooks (si tu theme ya lo hace, esto NO rompe) */
+/* per-ticker scale hooks */
 #rlcNewsTicker{ --_rlcScale: var(--rlcNewsUiScale, 1); --_rlcBarH: var(--rlcNewsBarH, var(--rlcBarH, 34px)); --_rlcFont: var(--rlcNewsFontPx, var(--rlcTickerFontPx, 13px)); }
 #rlcEconTicker{ --_rlcScale: var(--rlcEconUiScale, 1); --_rlcBarH: var(--rlcEconBarH, var(--rlcBarH, 34px)); --_rlcFont: var(--rlcEconFontPx, var(--rlcTickerFontPx, 13px)); }
 
@@ -402,7 +405,34 @@
 
     const uiLangAuto = (navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en";
 
-    // ✅ Sources ampliadas (ids)
+    // ✅ PERF: aunque haya 20+ sources, solo activamos un subset por refresh
+    const MAX_ACTIVE_SOURCES = 8;
+
+    function uniq(arr) {
+      const out = [];
+      const seen = new Set();
+      for (const x of (arr || [])) {
+        const s = safeStr(String(x || "")).toLowerCase();
+        if (!s || seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+      }
+      return out;
+    }
+    function rotateByHour(arr) {
+      const a = arr.slice();
+      if (a.length <= 1) return a;
+      const hourBucket = Math.floor(Date.now() / (60 * 60 * 1000));
+      const start = Math.abs(hourBucket) % a.length;
+      return a.slice(start).concat(a.slice(0, start));
+    }
+    function pickActiveSources(allSources) {
+      const u = uniq(allSources);
+      if (u.length <= MAX_ACTIVE_SOURCES) return u;
+      return rotateByHour(u).slice(0, MAX_ACTIVE_SOURCES);
+    }
+
+    // ✅ Sources ampliadas (ids) + RSS reales
     const API = {
       maxItems: 22,
       gdelt: {
@@ -410,13 +440,36 @@
         query_en: 'international OR world OR "breaking news" OR summit OR economy OR technology OR science OR climate OR health OR markets'
       },
       rss: {
-        // clásicos
+        // Clásicos
         bbc: "https://feeds.bbci.co.uk/news/world/rss.xml",
         dw: "https://rss.dw.com/rdf/rss-en-world",
         guardian: "https://www.theguardian.com/world/rss",
+        aljazeera: "https://www.aljazeera.com/xml/rss/all.xml",
 
-        // Google News RSS (search) — súper útil para ampliar sin depender de RSS privados
-        googlenews: "https://news.google.com/rss/search?q=world&hl=en-US&gl=US&ceid=US:en",
+        // Agregadores
+        reuters_world: "https://www.reuters.com/world/rss",
+        ap_world: "https://apnews.com/apf-topnews?output=rss",
+
+        // TV/US
+        cnn_world: "https://rss.cnn.com/rss/edition_world.rss",
+        abcnews: "https://abcnews.go.com/abcnews/internationalheadlines",
+        cbsnews: "https://www.cbsnews.com/latest/rss/world/",
+        nbcnews: "https://feeds.nbcnews.com/nbcnews/public/world",
+
+        // Business / economía
+        cnbc_world: "https://www.cnbc.com/id/100727362/device/rss/rss.html",
+        ft_world: "https://www.ft.com/world?format=rss",
+        wsj_world: "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+        economist_world: "https://www.economist.com/the-world-this-week/rss.xml",
+
+        // Política / general
+        politico_world: "https://www.politico.com/rss/world.xml",
+        thehill_world: "https://thehill.com/rss/syndicator/19109",
+        time_world: "https://time.com/feed/",
+        huffpost_world: "https://www.huffpost.com/section/world-news/feed",
+        axios_world: "https://www.axios.com/rss",
+
+        // Google News RSS (search packs)
         gnews_world: "https://news.google.com/rss/search?q=world&hl=en-US&gl=US&ceid=US:en",
         gnews_us: "https://news.google.com/rss/search?q=US%20breaking%20news&hl=en-US&gl=US&ceid=US:en",
         gnews_eu: "https://news.google.com/rss/search?q=Europe%20breaking%20news&hl=en-US&gl=US&ceid=US:en",
@@ -428,7 +481,7 @@
         gnews_climate: "https://news.google.com/rss/search?q=climate%20weather%20extreme&hl=en-US&gl=US&ceid=US:en",
         gnews_health: "https://news.google.com/rss/search?q=health%20WHO%20outbreak&hl=en-US&gl=US&ceid=US:en",
 
-        // site-based
+        // Google News site-based
         gnews_reuters: "https://news.google.com/rss/search?q=site%3Areuters.com%20world&hl=en-US&gl=US&ceid=US:en",
         gnews_ap: "https://news.google.com/rss/search?q=site%3Aapnews.com%20world&hl=en-US&gl=US&ceid=US:en",
         gnews_cnn: "https://news.google.com/rss/search?q=site%3Acnn.com%20world&hl=en-US&gl=US&ceid=US:en",
@@ -449,7 +502,18 @@
       timespan: "1d",
       bilingual: true,
       translateMax: 10,
-      sources: ["gdelt", "googlenews", "bbc", "dw", "guardian"],
+
+      // ✅ 20+ por defecto
+      sources: [
+        "gdelt",
+        "bbc","dw","guardian",
+        "aljazeera","reuters_world","ap_world",
+        "france24", // (si no existe en API, será ignorado; lo dejamos fuera por seguridad)
+        "cnn_world","cnbc_world","ft_world","wsj_world",
+        "politico_world","thehill_world","economist_world","time_world","axios_world",
+        "gnews_world","gnews_us","gnews_eu","gnews_latam",
+        "gnews_business","gnews_markets","gnews_tech"
+      ].filter(id => id === "gdelt" || !!API.rss[id]),
 
       // ✅ v2.3.9 visuals
       uiScale: 1.0,
@@ -465,7 +529,7 @@
     }
 
     function normalizeSources(list) {
-      const allowed = new Set(["gdelt", ...Object.keys(API.rss)]);
+      const allowed = new Set(["gdelt", ...Object.keys(API.rss)].map(s => String(s).toLowerCase()));
       const arr = Array.isArray(list)
         ? list
         : String(list || "").split(",").map(s => safeStr(s).toLowerCase()).filter(Boolean);
@@ -499,8 +563,9 @@
         if (arr.length) out.sources = arr;
       }
 
-      // ✅ v2.3.9 visuals
-      if (P.tickerScale) out.uiScale = clamp(num(P.tickerScale, DEFAULTS.uiScale), 0.75, 1.60);
+      // ✅ visuals: acepta tickerUiScale o tickerScale
+      const scaleStr = P.tickerUiScale || P.tickerScale;
+      if (scaleStr) out.uiScale = clamp(num(scaleStr, DEFAULTS.uiScale), 0.75, 1.60);
       if (P.tickerBarH) out.barH = clamp(num(P.tickerBarH, DEFAULTS.barH), 22, 72);
       if (P.tickerFontPx) out.fontPx = clamp(num(P.tickerFontPx, DEFAULTS.fontPx), 10, 20);
 
@@ -521,7 +586,6 @@
       c.translateMax = clamp(num(c.translateMax, DEFAULTS.translateMax), 0, 22);
       c.sources = normalizeSources(c.sources);
 
-      // ✅ visuals
       c.uiScale = clamp(num(c.uiScale, DEFAULTS.uiScale), 0.75, 1.60);
       c.barH = clamp(num(c.barH, DEFAULTS.barH), 22, 72);
       c.fontPx = clamp(num(c.fontPx, DEFAULTS.fontPx), 10, 20);
@@ -792,36 +856,14 @@
 
     async function getHeadlinesFromRss(id, url) {
       const xml = await fetchTextRobust(url, { allowJina: false });
-      const source = ({
-        googlenews: "GNEWS",
-        gnews_world: "GNEWS",
-        gnews_us: "GNEWS",
-        gnews_eu: "GNEWS",
-        gnews_latam: "GNEWS",
-        gnews_business: "GNEWS",
-        gnews_markets: "GNEWS",
-        gnews_tech: "GNEWS",
-        gnews_science: "GNEWS",
-        gnews_climate: "GNEWS",
-        gnews_health: "GNEWS",
-        gnews_reuters: "REUTERS",
-        gnews_ap: "AP",
-        gnews_cnn: "CNN",
-        gnews_bloomberg: "BLOOMBERG",
-        gnews_nyt: "NYT",
-        gnews_ft: "FT",
-        gnews_aljazeera: "ALJAZEERA",
-        bbc: "BBC",
-        dw: "DW",
-        guardian: "GUARDIAN"
-      }[id] || normalizeSourceFromUrl(url));
-
+      const source = normalizeSourceFromUrl(url);
       const items = parseRssOrAtom(xml, source);
       return uniqBy(items, x => safeStr(x.url).toLowerCase()).slice(0, API.maxItems);
     }
 
     async function getHeadlinesEnMixed() {
-      const srcs = CFG.sources || DEFAULTS.sources;
+      const srcsAll = CFG.sources || DEFAULTS.sources;
+      const srcs = pickActiveSources(srcsAll);
 
       const tasks = [];
       for (const id of srcs) {
@@ -930,7 +972,6 @@
     }
 
     function applyMarqueeSpeed(root, seg1, marquee) {
-      // Medición REAL (incluye scale)
       const wrap = marquee?.parentElement || null;
       const vw = wrap ? (wrap.getBoundingClientRect().width || 800) : 800;
       const w = Math.max(300, seg1.getBoundingClientRect().width || 300);
@@ -959,7 +1000,6 @@
       marquee.appendChild(seg1);
       marquee.appendChild(seg2);
 
-      // medir tras layout real
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           try { applyMarqueeSpeed(root, seg1, marquee); } catch (_) {}
@@ -970,7 +1010,8 @@
 
     function cacheKey() {
       const srcKey = (CFG.sources || []).join(",");
-      return `${CFG.timespan}|src=${srcKey}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
+      const activeKey = pickActiveSources(CFG.sources || []).join(",");
+      return `${CFG.timespan}|src=${srcKey}|active=${activeKey}|b=${CFG.bilingual ? 1 : 0}|mx=${CFG.translateMax|0}`;
     }
 
     function readCache() {
@@ -1106,7 +1147,6 @@
       log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
     }
 
-    function getCfg() { return CFG; }
     function isEnabled() { return !!CFG.enabled; }
     function isVisibleNow() {
       const root = qs("#rlcNewsTicker");
@@ -1118,7 +1158,7 @@
       return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10, heightPx: h };
     }
 
-    return { boot, onMessage, applyCfg, getCfg, isEnabled, isVisibleNow, getLayoutState };
+    return { boot, onMessage, applyCfg, isEnabled, isVisibleNow, getLayoutState };
   })();
 
   // ======================================================================
@@ -1145,19 +1185,36 @@
       hideOnVote: true,
       mode: "daily",       // daily|sinceLast
       showClocks: true,
+
+      // ✅ más países/zonas por defecto
       clocks: [
+        { label: "UTC", country: "UN", tz: "UTC" },
         { label: "MAD", country: "ES", tz: "Europe/Madrid" },
-        { label: "NY",  country: "US", tz: "America/New_York" },
         { label: "LDN", country: "GB", tz: "Europe/London" },
-        { label: "TYO", country: "JP", tz: "Asia/Tokyo" }
+        { label: "NY",  country: "US", tz: "America/New_York" },
+        { label: "LA",  country: "US", tz: "America/Los_Angeles" },
+        { label: "MEX", country: "MX", tz: "America/Mexico_City" },
+        { label: "BUE", country: "AR", tz: "America/Argentina/Buenos_Aires" },
+        { label: "RIO", country: "BR", tz: "America/Sao_Paulo" },
+        { label: "JNB", country: "ZA", tz: "Africa/Johannesburg" },
+        { label: "DXB", country: "AE", tz: "Asia/Dubai" },
+        { label: "DEL", country: "IN", tz: "Asia/Kolkata" },
+        { label: "TYO", country: "JP", tz: "Asia/Tokyo" },
+        { label: "SYD", country: "AU", tz: "Australia/Sydney" }
       ],
+
       items: [
         { id:"btc",  label:"BTC/USD", stooq:"btcusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"bitcoin" },
         { id:"eth",  label:"ETH/USD", stooq:"ethusd", kind:"crypto", currency:"USD", decimals:0, country:"UN", tz:"UTC", iconSlug:"ethereum" },
         { id:"eurusd", label:"EUR/USD", stooq:"eurusd", kind:"fx", currency:"USD", decimals:4, country:"EU", tz:"Europe/Brussels", iconSlug:"euro" },
+        { id:"gbpusd", label:"GBP/USD", stooq:"gbpusd", kind:"fx", currency:"USD", decimals:4, country:"GB", tz:"Europe/London", glyph:"£" },
+        { id:"usdjpy", label:"USD/JPY", stooq:"usdjpy", kind:"fx", currency:"JPY", decimals:2, country:"JP", tz:"Asia/Tokyo", glyph:"¥" },
         { id:"aapl", label:"AAPL", stooq:"aapl.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"apple", domain:"apple.com" },
         { id:"tsla", label:"TSLA", stooq:"tsla.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"tesla", domain:"tesla.com" },
+        { id:"msft", label:"MSFT", stooq:"msft.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"microsoft", domain:"microsoft.com" },
+        { id:"nvda", label:"NVDA", stooq:"nvda.us", kind:"stock", currency:"USD", decimals:2, country:"US", tz:"America/New_York", iconSlug:"nvidia", domain:"nvidia.com" },
         { id:"spx",  label:"S&P 500", stooq:"^spx", kind:"index", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"📈" },
+        { id:"dax",  label:"DAX", stooq:"^dax", kind:"index", currency:"EUR", decimals:2, country:"DE", tz:"Europe/Berlin", glyph:"🏦" },
         { id:"gold", label:"GOLD", stooq:"gc.f", kind:"commodity", currency:"USD", decimals:2, country:"US", tz:"America/New_York", glyph:"🪙" }
       ],
 
@@ -1234,8 +1291,8 @@
       if (P.econClocks === "0") out.showClocks = false;
       if (P.econClocks === "1") out.showClocks = true;
 
-      // ✅ v2.3.9 visuals
-      if (P.econScale) out.uiScale = clamp(num(P.econScale, DEFAULTS.uiScale), 0.75, 1.60);
+      const scaleStr = P.econUiScale || P.econScale;
+      if (scaleStr) out.uiScale = clamp(num(scaleStr, DEFAULTS.uiScale), 0.75, 1.60);
       if (P.econBarH) out.barH = clamp(num(P.econBarH, DEFAULTS.barH), 22, 72);
       if (P.econFontPx) out.fontPx = clamp(num(P.econFontPx, DEFAULTS.fontPx), 10, 20);
 
@@ -1790,7 +1847,6 @@
       log("boot", { CFG, KEY, BUS_NS, CFG_KEY_NS });
     }
 
-    function getCfg() { return CFG; }
     function isEnabled() { return !!CFG.enabled; }
     function isVisibleNow() {
       const root = qs("#rlcEconTicker");
@@ -1802,7 +1858,7 @@
       return { enabled: isEnabled(), visible: isVisibleNow(), topPx: CFG.topPx ?? 10, heightPx: h };
     }
 
-    return { boot, onMessage, applyCfg, getCfg, isEnabled, isVisibleNow, getLayoutState };
+    return { boot, onMessage, applyCfg, isEnabled, isVisibleNow, getLayoutState };
   })();
 
   // ───────────────────────── Layout sync (stack always, mide alturas reales)
