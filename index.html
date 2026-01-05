@@ -1,9 +1,15 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.9 (NEWSCAST UI UPGRADE)
-  ✅ HUD: sin botón expandir + sin texto de tiempo (solo progress)
-  ✅ VOTE: panel mucho más legible (TV style)
-  ✅ Alerts/Points/Ads: estilo unificado + stacking (sin solapes)
-  ✅ Fuente noticiero (IBM Plex Sans Condensed / Plex Mono)
-  ✅ Mantiene tu bridge/repair/diag y compatibilidad de IDs
+<!-- index.html — Random Live Cams (PLAYER) v2.3.9 (HARDENED + KEYED BUS + REPAIR + DIAG)
+  ✅ Compatible con tu stack actual:
+     - styles.css, cams.js, music.js, weatherClock.js, rlcTickers.js, catalogView.js, pointsControl.js, app.js
+  ✅ Control panel robusto:
+     - Legacy bus SIEMPRE: rlc_bus_v1
+     - Keyed bus dinámico: rlc_bus_v1:{key} (URL ?key= | localStorage rlc_last_key_v1 | msg.key)
+     - Mirror LS cmd/state/evt keyed <-> legacy
+     - Polling LS + reinyección a BC (por si BC/storage fallan)
+     - postMessage same-origin (cmd/state/event)
+  ✅ Version sentinel: alinear v=APP_VERSION sin borrar tokens
+  ✅ REPAIR MODE: ?repair=1 (limpia SW/caches/storage bajo demanda)
+  ✅ Diagnóstico en pantalla (window.error + unhandledrejection)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
@@ -21,10 +27,13 @@
 
   <!-- ───────────────────────── VERSION ───────────────────────── -->
   <script>
+    // Mantén esto alineado con tus assets locales (?v=)
     window.APP_VERSION = "2.3.9";
   </script>
 
-  <!-- ───────────────────────── VERSION SENTINEL ───────────────────────── -->
+  <!-- ───────────────────────── VERSION SENTINEL ─────────────────────────
+       Recarga suave si cambia APP_VERSION (NO borra storage / NO toca tokens).
+       También pide update del SW si existiera uno registrado. -->
   <script>
     (() => {
       "use strict";
@@ -56,17 +65,12 @@
     })();
   </script>
 
-  <!-- ───────────────────────── FONTS (NEWSCAST) ───────────────────────── -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
-
   <!-- ───────────────────────── STYLES ───────────────────────── -->
   <link rel="stylesheet" href="./styles.css?v=2.3.9" />
 
   <!-- ───────────────────────── REPAIR MODE ─────────────────────────
        index.html?repair=1
-       ⚠️ Limpia SW/caches + localStorage/sessionStorage (incluye tokens). -->
+       ⚠️ Esto SÍ limpia localStorage/sessionStorage (incluye tokens). Úsalo solo si quieres reset total. -->
   <script>
     (() => {
       "use strict";
@@ -109,6 +113,7 @@
   <link rel="preconnect" href="https://r.jina.ai" crossorigin />
 
   <!-- ───────────────────────── LIBS ───────────────────────── -->
+  <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
   <!-- ───────────────────────── ADMIN CONTROL BRIDGE (PLAYER) ───────────────────────── -->
@@ -118,6 +123,7 @@
 
       const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
+      // Base keys
       const BUS_BASE   = "rlc_bus_v1";
       const CMD_BASE   = "rlc_cmd_v1";
       const STATE_BASE = "rlc_state_v1";
@@ -125,6 +131,7 @@
 
       const LAST_KEY_STORE = "rlc_last_key_v1";
 
+      // Loop protection
       const BRIDGE_TAG = "__rlcBridgeHop_v1";
       const SRC_TAG    = "__rlcBridgeSrc_v1";
       const MAX_HOPS   = 1;
@@ -146,6 +153,7 @@
         try { return safeStr(localStorage.getItem(LAST_KEY_STORE) || ""); } catch (_) { return ""; }
       }
 
+      // KEY: URL > lastKey (engancha aunque abras sin ?key=)
       let KEY = getUrlKey() || getLastKey();
 
       const BUS_LEGACY = BUS_BASE;
@@ -169,6 +177,7 @@
 
       let K = computeKeys(KEY);
 
+      // Poll state (se resetea al cambiar KEY para no “comerse” el primer cmd)
       const POLL_MS = 250;
       let lastCmdRaw = "";
       let lastStateRaw = "";
@@ -192,6 +201,7 @@
         BUS_MAIN = `${BUS_BASE}:${KEY}`;
         K = computeKeys(KEY);
 
+        // reset poll memory para que el primer snapshot “entre”
         lastCmdRaw = "";
         lastStateRaw = "";
         lastEvtRaw = "";
@@ -223,6 +233,7 @@
 
         const type = String(msg.type || "").toLowerCase();
 
+        // Si viene key dentro del msg y aún no teníamos KEY, adoptarla
         if (!KEY) {
           const mk = safeStr(msg.key || "");
           if (mk) ensureKey(mk);
@@ -251,12 +262,17 @@
         const out = cloneMsg(msg);
         out[BRIDGE_TAG] = hop + 1;
         out[SRC_TAG] = fromTag || out[SRC_TAG] || "bridge";
+
+        // añade key si existe
         if (KEY && !out.key) out.key = KEY;
 
         try { targetBc.postMessage(out); } catch (_) {}
       }
 
       function acceptLegacyByKey(msg) {
+        // Si estamos en KEY mode, del legacy aceptamos:
+        // - msg.key vacío (control viejo)
+        // - o msg.key === KEY
         if (!KEY) return true;
         const mk = safeStr(msg && msg.key || "");
         if (!mk) return true;
@@ -267,8 +283,10 @@
         const msg = ev && ev.data;
         if (!isObj(msg)) return;
 
+        // Si llega por legacy y no cuadra la key, ignora.
         if (!fromMain && !acceptLegacyByKey(msg)) return;
 
+        // Si llega por legacy con key y no tenemos KEY, adoptarla
         if (!KEY) {
           const mk = safeStr(msg.key || "");
           if (mk) ensureKey(mk);
@@ -276,6 +294,7 @@
 
         mirrorToStorage(msg);
 
+        // forward al otro bus
         if (fromMain) forward(bcLegacy, msg, "main->legacy");
         else forward(bcMain, msg, "legacy->main");
       }
@@ -283,8 +302,11 @@
       try { if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onAnyBusMessage(ev, false)); } catch (_) {}
       try { if (bcMain)   bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch (_) {}
 
+      // Acepta postMessage desde preview/control (same-origin), y lo mete en el bus + storage
       window.addEventListener("message", (ev) => {
-        try { if (ev.origin && ev.origin !== location.origin) return; } catch (_) {}
+        try {
+          if (ev.origin && ev.origin !== location.origin) return;
+        } catch (_) {}
 
         const msg = ev && ev.data;
         if (!isObj(msg)) return;
@@ -295,6 +317,7 @@
         const mk = safeStr(msg.key || "");
         if (mk) ensureKey(mk);
 
+        // si tenemos KEY y msg trae una key distinta, ignora
         if (KEY) {
           const k2 = safeStr(msg.key || "");
           if (k2 && k2 !== KEY) return;
@@ -302,11 +325,14 @@
 
         mirrorToStorage(msg);
 
+        // post a BCs
         const out = Object.assign({}, msg, { key: KEY || msg.key || "" });
         try { if (bcMain)   bcMain.postMessage(out); } catch (_) {}
         try { if (bcLegacy) bcLegacy.postMessage(out); } catch (_) {}
       }, { passive: true });
 
+      // Polling LS: reinyección a BC para que app.js vea cmd/state/event aunque BC/storage no disparen.
+      // (Esto NO ejecuta nada por sí mismo: solo re-publica al canal que ya escucha tu app.js)
       function injectFromLS(raw) {
         if (!raw) return;
 
@@ -318,6 +344,8 @@
         if (mk && !KEY) ensureKey(mk);
 
         if (KEY && mk && mk !== KEY) return;
+
+        // evita loops: marca fuente LS
         if (msg[SRC_TAG] === "ls-poll") return;
 
         const out = Object.assign({}, msg);
@@ -329,6 +357,7 @@
       }
 
       function pollOnce() {
+        // Prioriza KEYED si existe, si no, legacy
         const cmdRaw   = readLS(K.cmdKey)   || readLS(K.cmdLegacy);
         const stateRaw = readLS(K.stateKey) || readLS(K.stateLegacy);
         const evtRaw   = readLS(K.evtKey)   || readLS(K.evtLegacy);
@@ -338,20 +367,24 @@
         if (evtRaw && evtRaw !== lastEvtRaw)         { lastEvtRaw = evtRaw; injectFromLS(evtRaw); }
       }
 
+      // storage event (útil entre pestañas)
       window.addEventListener("storage", (e) => {
         if (!e || !e.key) return;
 
+        // si cambia last key, podemos adoptar (solo si aún no hay KEY)
         if (e.key === LAST_KEY_STORE && !KEY) {
           const k = safeStr(e.newValue || "");
           if (k) ensureKey(k);
           return;
         }
 
+        // si cambian cmd/state/evt, fuerza inject
         if (e.key === K.cmdKey || e.key === K.cmdLegacy) injectFromLS(e.newValue || "");
         if (e.key === K.stateKey || e.key === K.stateLegacy) injectFromLS(e.newValue || "");
         if (e.key === K.evtKey || e.key === K.evtLegacy) injectFromLS(e.newValue || "");
       });
 
+      // Kick suave: publica boot event (para que control sepa que hay player)
       try {
         const ping = { type: "event", name: "PLAYER_BOOT", ts: now() };
         if (KEY) ping.key = KEY;
@@ -360,8 +393,10 @@
         if (bcLegacy) bcLegacy.postMessage(ping);
       } catch (_) {}
 
+      // Arranca polling
       try { setInterval(pollOnce, POLL_MS); } catch (_) {}
 
+      // Guarda last key si venía por URL (para ayudar al control)
       try {
         const uk = getUrlKey();
         if (uk) localStorage.setItem(LAST_KEY_STORE, uk);
@@ -369,7 +404,7 @@
     })();
   </script>
 
-  <!-- ───────────────────────── HARDEN: STAGE / Z-LAYERS ───────────────────────── -->
+  <!-- ───────────────────────── HARDEN: LAYERS + TICKERS TOP ───────────────────────── -->
   <style>
     html, body { height: 100%; }
     body { margin: 0; }
@@ -394,37 +429,112 @@
     #stage .layer-media{ z-index:1; }
     #rlcCatalog{ position:absolute; inset:0; z-index:2; display:none; pointer-events:none; }
     #rlcCatalog.on{ display:block; pointer-events:auto; }
-    #fallback{ z-index:6; pointer-events:auto; }
+    #fallback{ z-index:5; pointer-events:auto; }
     #stage .layer-ui{ z-index:10; }
 
-    /* Tickers arriba (clicables) */
+    /* Tickers SIEMPRE arriba */
     #rlcNewsTicker{
-      position:fixed !important;
-      left:10px !important; right:10px !important;
-      top:var(--rlcNewsTop, var(--rlcTickerTop,10px)) !important;
-      z-index:100 !important;
-      pointer-events:auto !important;
+      position:fixed!important;
+      left:10px!important; right:10px!important;
+      top:var(--rlcNewsTop, var(--rlcTickerTop,10px))!important;
+      z-index:2147483647!important;
+      pointer-events:none!important;
     }
     #rlcEconTicker{
-      position:fixed !important;
-      left:10px !important; right:10px !important;
+      position:fixed!important;
+      left:10px!important; right:10px!important;
       top:var(--rlcEconTop,
         calc(
           var(--rlcNewsTop, var(--rlcTickerTop,10px))
           + var(--rlcBarH,34px)
           + var(--rlcTickerGap, var(--rlcEconGap,6px))
         )
-      ) !important;
-      z-index:99 !important;
-      pointer-events:auto !important;
+      )!important;
+      z-index:2147483646!important;
+      pointer-events:none!important;
     }
 
     /* Countdown overlay */
     #rlcCountdown{
-      position:fixed; z-index:70;
+      position:absolute; z-index:50;
       top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset, 0px));
       right:max(14px, env(safe-area-inset-right));
+      display:flex; flex-direction:column; gap:6px;
+      padding:10px 12px; border-radius:14px;
+      background:linear-gradient(180deg,
+        var(--news-bg-top, rgba(10,14,22,.72)),
+        var(--news-bg-bot, rgba(10,14,22,.86))
+      );
+      border:1px solid var(--stroke, rgba(255,255,255,.12));
+      backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+      box-shadow:0 18px 55px rgba(0,0,0,.55);
+      color:rgba(255,255,255,.94);
+      max-width:min(340px, calc(100vw - 24px));
+      overflow:hidden;
       pointer-events:none;
+    }
+    #rlcCountdown.hidden{ display:none; }
+    #rlcCountdown .lbl{
+      font:950 12px/1 ui-sans-serif,system-ui;
+      letter-spacing:.14em;
+      opacity:.92;
+      text-transform:uppercase;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      display:flex; align-items:center; gap:8px;
+    }
+    #rlcCountdown .lbl::before{
+      content:"";
+      width:8px; height:8px; border-radius:999px;
+      background:var(--news-red, #ff375f);
+      box-shadow:0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
+    }
+    #rlcCountdown .time{
+      font:950 20px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      letter-spacing:.02em;
+      font-variant-numeric:tabular-nums;
+    }
+    #rlcCountdown.tr{ top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px)); right:max(14px, env(safe-area-inset-right)); left:auto; bottom:auto; }
+    #rlcCountdown.tl{ top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px)); left:max(14px, env(safe-area-inset-left)); right:auto; bottom:auto; }
+    #rlcCountdown.br{ bottom:max(14px, env(safe-area-inset-bottom)); right:max(14px, env(safe-area-inset-right)); top:auto; left:auto; }
+    #rlcCountdown.bl{ bottom:max(14px, env(safe-area-inset-bottom)); left:max(14px, env(safe-area-inset-left)); top:auto; right:auto; }
+
+    /* Diag overlay */
+    #rlcDiag{
+      position:fixed; inset:14px;
+      z-index:2147483645;
+      display:none;
+      pointer-events:auto;
+    }
+    #rlcDiag.on{ display:block; }
+    #rlcDiag .card{
+      max-width:980px;
+      margin:0 auto;
+      background:rgba(10,14,22,.86);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:16px;
+      box-shadow:0 18px 60px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    #rlcDiag .hdr{
+      padding:12px 14px;
+      font:950 12px/1 ui-sans-serif,system-ui;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      background:linear-gradient(90deg, rgba(255,59,59,.20), rgba(55,214,255,.12));
+      border-bottom:1px solid rgba(255,255,255,.12);
+    }
+    #rlcDiag pre{
+      margin:0;
+      padding:12px 14px;
+      white-space:pre-wrap;
+      font:600 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+      color:rgba(255,255,255,.92);
+    }
+    #rlcDiag .tip{
+      padding:10px 14px 14px;
+      color:rgba(255,255,255,.70);
+      border-top:1px solid rgba(255,255,255,.10);
+      font:650 12px/1.3 ui-sans-serif,system-ui;
     }
   </style>
 </head>
@@ -461,8 +571,7 @@
       <!-- ───────── UI LAYER ───────── -->
       <div class="layer layer-ui" aria-label="Overlays">
         <!-- HUD -->
-        <!-- ✅ Sin hud--collapsed por defecto (mejor info panel) -->
-        <div id="hud" class="hud" aria-label="HUD stream">
+        <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
           <div class="hudBar">
             <div class="hudLeft" id="hudLeft">
               <div class="badge" id="badgeLive">LIVE</div>
@@ -476,10 +585,9 @@
               </div>
             </div>
 
-            <!-- ✅ Mantenido por compat, pero oculto (CSS) -->
-            <div class="hudRight" aria-hidden="true">
-              <div class="hudCountdown mono hidden" id="hudCountdown">05:00</div>
-              <button id="hudToggle" class="hudToggle hidden" type="button" aria-label="Expandir HUD" aria-expanded="false">▸</button>
+            <div class="hudRight">
+              <div class="hudCountdown mono" id="hudCountdown">05:00</div>
+              <button id="hudToggle" class="hudToggle" type="button" aria-label="Expandir HUD" aria-expanded="false">▸</button>
             </div>
           </div>
 
@@ -505,7 +613,7 @@
             <div class="hudFooter">
               <span id="hudIndex">—</span>
               <span class="dot">•</span>
-              <span class="muted">N siguiente · P anterior · Espacio pausa · C chat</span>
+              <span class="muted">Espacio pausa · N siguiente · P anterior · H HUD · I detalles · C chat</span>
             </div>
           </div>
         </div>
@@ -519,7 +627,7 @@
         <!-- Vote -->
         <div id="voteBox" class="vote hidden" aria-label="Votación del chat" aria-live="polite">
           <div class="voteTop">
-            <div class="voteTitle">VOTACIÓN</div>
+            <div class="voteTitle">VOTA</div>
             <div class="voteTime mono" id="voteTime">00:20</div>
           </div>
           <div class="voteHint" id="voteHint">Votación en…</div>
@@ -611,7 +719,9 @@
   <script defer src="./pointsControl.js?v=2.3.9"></script>
   <script defer src="./app.js?v=2.3.9"></script>
 
-  <!-- ───────────────────────── COUNTDOWN BOOTSTRAP ───────────────────────── -->
+  <!-- ───────────────────────── COUNTDOWN BOOTSTRAP ─────────────────────────
+       Permite cfg desde control vía BC/LS + parámetros URL.
+       ✅ Compat legacy: acepta mensajes sin key en legacy bus. -->
   <script>
     (() => {
       "use strict";
@@ -666,11 +776,12 @@
       const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
       const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
+      // ✅ Compat legacy: si viene sin key, aceptamos.
       function keyOk(msg, isMain) {
         if (!KEY) return true;
-        if (isMain) return true;
+        if (isMain) return true; // el canal principal ya está namespaced por KEY
         const mk = safeStr(msg && msg.key || "");
-        if (!mk) return true;
+        if (!mk) return true;    // legacy control viejo
         return mk === KEY;
       }
 
@@ -704,6 +815,7 @@
         c.targetMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
         c.targetIso = safeStr(c.targetIso || "");
 
+        // Permite timestamp en targetIso (10 o 13 dígitos)
         if (!c.targetMs && /^\d{10,13}$/.test(c.targetIso)) {
           const n = parseInt(c.targetIso, 10);
           if (Number.isFinite(n)) c.targetMs = (String(n).length === 10) ? (n * 1000) : n;
