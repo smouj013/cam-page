@@ -1,4 +1,10 @@
-<!-- control.html — Random Live Cams (CONTROL) v2.3.5 -->
+<!-- control.html — Random Live Cams (CONTROL) v2.3.8 — READY (Neo-Atlas / Newsroom)
+  ✅ Alineado con control.js v2.3.8 (IDs compatibles + aliases)
+  ✅ Version sentinel + cache-bust
+  ✅ REPAIR MODE: control.html?repair=1
+  ✅ Diagnóstico on-screen (errores JS)
+  ✅ Sección KEY/Sala para fijar el "key" sin tocar la URL (si tu control.js lo soporta por storage)
+-->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
 <head>
@@ -13,7 +19,7 @@
   <title>Random Live Cams — Control</title>
   <meta name="description" content="Random Live Cams — Control Room (votación, overlays, ticker, catálogo CCTV, ads notice, bot IRC, auto título Helix)." />
 
-  <!-- ✅ Mantener versión actual del control (NO subir) -->
+  <!-- ✅ Mantener versión actual del control -->
   <script>window.APP_VERSION = "2.3.8";</script>
 
   <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
@@ -49,7 +55,7 @@
   <!-- ✅ Cache-bust ALINEADO con APP_VERSION (2.3.8) -->
   <link rel="stylesheet" href="./styles.css?v=2.3.8" />
 
-  <!-- REPAIR MODE: control.html?repair=1 -->
+  <!-- ✅ REPAIR MODE: control.html?repair=1 -->
   <script>
     (() => {
       try{
@@ -175,7 +181,6 @@
       background:rgba(0,0,0,.28)!important;
       backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)
     }
-
     .pill--ok{border-color:rgba(25,226,138,.35)!important;box-shadow:0 0 0 1px rgba(25,226,138,.12) inset}
     .pill--bad{border-color:rgba(255,90,90,.40)!important;box-shadow:0 0 0 1px rgba(255,90,90,.12) inset}
 
@@ -185,10 +190,9 @@
       background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06))!important;
       box-shadow:0 10px 30px rgba(0,0,0,.30);
       cursor:pointer;
+      transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;
     }
-
     .btn.ghost{background:rgba(0,0,0,.18)!important;border-color:rgba(255,255,255,.12)!important}
-
     .btn:hover{
       transform:translateY(-1px);
       border-color:rgba(55,214,255,.25)!important;
@@ -199,7 +203,8 @@
       border-radius:14px!important;
       border:1px solid rgba(255,255,255,.14)!important;
       background:rgba(0,0,0,.18)!important;
-      color:rgba(255,255,255,.92)!important
+      color:rgba(255,255,255,.92)!important;
+      outline:none;
     }
 
     .hint{color:var(--news-muted)}
@@ -216,6 +221,22 @@
       background:rgba(0,0,0,.22);
       border-radius:12px;
       padding:10px 12px
+    }
+
+    /* Preview frame (si no está en styles.css) */
+    .previewWrap{
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+      overflow:hidden;
+      background:rgba(0,0,0,.22);
+      margin-top:10px;
+      aspect-ratio: 16 / 9;
+    }
+    .previewFrame{
+      width:100%;
+      height:100%;
+      border:0;
+      display:block;
     }
 
     /* ✅ Fallback de layout (baja especificidad, no pisa tu styles.css) */
@@ -264,6 +285,16 @@
     :where(.nowTitle){font-weight:900; font-size:18px; margin-top:6px}
     :where(.nowMeta){opacity:.9; margin-top:6px}
 
+    /* Update / mismatch banner (si control.js lo usa) */
+    #ctlUpdateBanner{
+      display:none;
+      margin-top:12px;
+      border:1px solid rgba(255,90,90,.35);
+      background:rgba(255,90,90,.10);
+      border-radius:14px;
+      padding:10px 12px;
+    }
+
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
       .controlHeader,.pill{
         backdrop-filter:none!important;
@@ -284,6 +315,18 @@
       <div class="pill mono" id="ctlStatus" aria-live="polite">Conectando…</div>
     </header>
 
+    <!-- (Opcional) Banner de update/mismatch (control.js puede mostrarlo) -->
+    <section id="ctlUpdateBanner" class="card" aria-live="polite">
+      <div class="cardTitle">Actualización detectada</div>
+      <div class="hint" style="margin-top:8px">
+        Parece que el <b>player</b> y el <b>control</b> no van a la misma versión, o hay una update pendiente.
+      </div>
+      <div class="row2" style="margin-top:10px">
+        <button id="ctlUpdateReload" class="btn full" type="button">Recargar</button>
+        <button id="ctlUpdateHide" class="btn ghost full" type="button">Ocultar</button>
+      </div>
+    </section>
+
     <!-- DIAGNÓSTICO EN PANTALLA -->
     <section id="ctlDiagCard" class="card" style="display:none; margin-top:12px">
       <div class="cardTitle">Diagnóstico</div>
@@ -293,6 +336,27 @@
     </section>
 
     <section class="controlGrid" aria-label="Panel de control">
+
+      <!-- KEY / SALA -->
+      <div class="card">
+        <div class="cardTitle">Sala / KEY</div>
+        <div class="hint">Esto suele venir por URL (<span class="mono">?key=...</span>). Si tu <span class="mono">control.js</span> soporta storage, aquí lo fijas sin tocar enlaces.</div>
+
+        <label class="row" for="ctlKey">
+          <span>KEY</span>
+          <input id="ctlKey" class="input mono" type="text" placeholder="live_xxx..." autocomplete="off" />
+        </label>
+
+        <div class="row2">
+          <button id="ctlKeyApply" class="btn full" type="button">Aplicar KEY</button>
+          <button id="ctlKeyClear" class="btn ghost full" type="button">Limpiar</button>
+        </div>
+
+        <div class="hint" style="margin-top:10px">
+          Consejo: si abres control y player en varias pestañas, usa siempre la misma KEY para que el bus vaya fino.
+        </div>
+      </div>
+
       <!-- NOW -->
       <div class="card">
         <div class="cardTitle">Ahora</div>
@@ -305,6 +369,12 @@
         <div class="row2">
           <a id="ctlOrigin" class="btn ghost" href="#" target="_blank" rel="noopener noreferrer">Abrir origen</a>
           <button id="ctlCopyStreamUrl" class="btn" type="button">Copiar URL stream</button>
+        </div>
+
+        <!-- Extras opcionales (si tu control.js los usa) -->
+        <div class="row2" style="margin-top:10px">
+          <button id="ctlCopyPlayerUrl" class="btn ghost full" type="button">Copiar URL Player</button>
+          <button id="ctlCopyObsUrl" class="btn ghost full" type="button">Copiar URL OBS</button>
         </div>
       </div>
 
@@ -373,12 +443,14 @@
         <button id="ctlApplySettings" class="btn full" type="button">Aplicar ajustes</button>
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
 
-        <!-- ✅ Aliases opcionales (por si tu control.js los soporta como compat) -->
+        <!-- ✅ Aliases opcionales (compat con distintos control.js / botones legacy) -->
         <div style="display:none">
           <button id="ctlApply" type="button"></button>
           <button id="ctlApplyAll" type="button"></button>
           <button id="ctlHudToggle" type="button"></button>
           <button id="ctlSettingsApply" type="button"></button>
+          <button id="ctlHudApply" type="button"></button>
+          <button id="ctlCfgApply" type="button"></button>
         </div>
       </div>
 
@@ -769,7 +841,7 @@
   <script defer src="./cams.js?v=2.3.8"></script>
   <script defer src="./music.js?v=2.3.8"></script>
 
-  <!-- ✅ Control principal (ya lo tienes) -->
+  <!-- ✅ Control principal -->
   <script defer src="./control.js?v=2.3.8"></script>
 
   <!-- Opcionales -->

@@ -1,9 +1,10 @@
-/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.0 (NEWSROOM/BLACKCAST) — FULL
+/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.2 (NEWSROOM/BLACKCAST) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ NO rompe IDs/clases existentes (hud/vote/chat/control/tickers)
    ✅ Look “TV broadcast” (negro sobrio + acentos mínimos) + overlays integrados
-   ✅ Chat tipo “globo” + soporte avatar + nombre encima (si el HTML/JS lo trae)
+   ✅ Chat tipo “globo” SIN :has (0 fallos por compat/validadores)
    ✅ Tickers top (NEWS + ECON) con estética TV y stacking limpio
+   ✅ Offset robusto: --ui-top-offset = --rlcTickerH
    ✅ Fallbacks Opera GX / Safari / sin backdrop / sin mask
 */
 
@@ -76,25 +77,32 @@
   --rlcTickerTop: 10px;   /* top base (fallback) */
   --rlcTickerGap: 6px;    /* gap entre barras */
 
-  /* JS setea: (barH*count) + (gap si 2 barras) */
+  /* JS setea: altura total de barras (incluyendo gap si hay 2) */
   --rlcTickerH: 0px;
 
-  /* Offset overlays (solo si hay ticker) */
-  --ui-top-offset: calc(var(--rlcTickerH, 0px) + min(var(--rlcTickerH, 0px), var(--rlcTickerGap, 6px)));
+  /* Offset overlays */
+  --ui-top-offset: var(--rlcTickerH, 0px);
 
   /* Broadcast vibe */
   --scan-opacity: .045;
   --grain-opacity: .07;
   --vignette-opacity: .52;
 
-  /* Media (si quieres tocar un pelín la “tele”) */
+  /* Media */
   --media-filter: none; /* ejemplo: contrast(1.03) saturate(1.02) */
+
+  /* Chat */
+  --chatW: min(420px, calc(100vw - 24px));
+  --chatMaxH: min(46vh, 520px);
+  --chatAvatar: 34px;
+  --chatGap: 10px;
 }
 
 /* Hooks opcionales */
 body.ticker--off,
 body[data-ticker="0"]{
   --ui-top-offset: 0px;
+  --rlcTickerH: 0px;
 }
 
 /* ───────────────────────── KEYFRAMES ───────────────────────── */
@@ -162,7 +170,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* Scrollbar (sobre todo control) */
-@supports (scrollbar-color: auto){
+@supports (scrollbar-color: rgba(255,255,255,.22) rgba(255,255,255,.06)){
   *{ scrollbar-color: rgba(255,255,255,.22) rgba(255,255,255,.06); scrollbar-width: thin; }
 }
 *::-webkit-scrollbar{ width:12px; height:12px; }
@@ -176,7 +184,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 *::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.24); }
 
 /* ───────────────────────── TOP TICKERS (NEWS + ECON) ───────────────────────── */
-/* Nota: index.html tiene inline con !important para posición/left/right/top.
+/* Nota: index.html suele tener inline con !important para position/left/right/top.
    Aquí definimos la “piel TV” del ticker y su contenido interno. */
 
 #rlcNewsTicker,
@@ -195,8 +203,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   padding-left: max(12px, env(safe-area-inset-left));
   padding-right: max(12px, env(safe-area-inset-right));
 
-  background:
-    linear-gradient(180deg, rgba(6,7,10,.92), rgba(5,6,9,.88));
+  background: linear-gradient(180deg, rgba(6,7,10,.92), rgba(5,6,9,.88));
   border: 1px solid rgba(255,255,255,.10);
   box-shadow: 0 10px 26px rgba(0,0,0,.38);
   overflow:hidden;
@@ -474,7 +481,8 @@ input[type="range"]{ accent-color: var(--accent); }
 .layer-media{ z-index: 1; }
 .layer-ui{ z-index: 3; pointer-events:none; }
 .layer-ui *{ pointer-events:none; }
-.layer-ui .hud a, .layer-ui .hud button{ pointer-events:auto; }
+.layer-ui .hud a,
+.layer-ui .hud button{ pointer-events:auto; }
 
 .stage{
   position: fixed;
@@ -583,8 +591,7 @@ input[type="range"]{ accent-color: var(--accent); }
   overflow:hidden;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.12);
-  background:
-    linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
+  background: linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
   box-shadow: var(--shadow-soft);
 
   backdrop-filter: blur(12px);
@@ -675,7 +682,6 @@ input[type="range"]{ accent-color: var(--accent); }
   display: -webkit-box;
   -webkit-box-orient: vertical;
   line-clamp: 2;
-  -webkit-line-clamp: 2;
 
   overflow: hidden;
   text-overflow: ellipsis;
@@ -685,7 +691,6 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 .hud.hud--collapsed .hudTitle{
   line-clamp: 1;
-  -webkit-line-clamp: 1;
 }
 
 /* HUD TITLE MARQUEE (si data-marquee="1") */
@@ -695,7 +700,6 @@ input[type="range"]{ accent-color: var(--accent); }
   white-space: nowrap;
 
   line-clamp: unset;
-  -webkit-line-clamp: unset;
   -webkit-box-orient: initial;
 
   color: transparent;
@@ -1018,16 +1022,18 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── CHAT OVERLAY (BUBBLES + AVATAR + NAME) ───────────────────────── */
-/* ✅ Sin romper: soporta múltiples estructuras.
-   - Si tu JS mete <img class="avatar"> y un nodo de nombre, lo estiliza.
-   - Si no, se ve igual “globo TV” sin avatar/nombre. */
+/* ✅ 100% sin :has. Layout:
+   - Cada mensaje: flex (si no hay avatar, no hay gap fantasma)
+   - Bubble preferido: .msg/.message/.body
+   - Fallback: primer hijo “contenido” (div/span/p) si el JS no usa wrapper
+*/
 
 .rlcChatRoot{
   position:absolute;
   right: max(12px, env(safe-area-inset-right));
   bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(420px, calc(100vw - 24px));
-  max-height: min(46vh, 520px);
+  width: var(--chatW);
+  max-height: var(--chatMaxH);
   z-index: 7;
   pointer-events:none;
   display:none;
@@ -1040,103 +1046,67 @@ input[type="range"]{ accent-color: var(--accent); }
   flex-direction:column;
   justify-content:flex-end;
   gap: 10px;
-  max-height: min(46vh, 520px);
+  max-height: var(--chatMaxH);
   overflow:hidden;
   padding: 2px;
 }
 
-/* Cada mensaje: intentamos atrapar lo que sea */
+/* Cada mensaje */
 #rlcChatList > *{
   pointer-events:none;
   position: relative;
-
-  /* layout “bubble”: avatar (si existe) + cuerpo */
-  display:grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 10px;
-  align-items: end;
-
-  padding: 0; /* el padding va dentro del bubble */
+  display:flex;
+  align-items:flex-end;
+  gap: var(--chatGap);
   animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
+  min-width: 0;
 }
 
-/* Avatar: si hay <img> lo usamos; si no, lo escondemos sin romper */
+/* Avatar: si hay <img> o clases típicas */
 #rlcChatList > * img,
 #rlcChatList > * .avatar,
 #rlcChatList > * .pfp{
-  width: 34px;
-  height: 34px;
+  width: var(--chatAvatar);
+  height: var(--chatAvatar);
   border-radius: 999px;
   object-fit: cover;
   border: 1px solid rgba(255,255,255,.14);
   background: rgba(255,255,255,.06);
   box-shadow: 0 10px 24px rgba(0,0,0,.38);
-  grid-column: 1;
-  grid-row: 1;
+  flex: 0 0 auto;
 }
 
-/* Si tu HTML NO tiene avatar, pero el msg tiene clase conocida, no forzamos nada */
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp)){
-  grid-template-columns: 1fr;
-}
-
-/* “Nombre” encima: soportamos varias clases comunes + data-user */
+/* Nombre (si tu HTML lo trae) */
 #rlcChatList > * .name,
 #rlcChatList > * .user,
 #rlcChatList > * .author,
 #rlcChatList > * .nick{
-  grid-column: 2;
-  grid-row: 1;
-  align-self: end;
-  justify-self: start;
-
-  font: 950 11px/1 var(--sans);
-  letter-spacing: .04em;
-  color: rgba(255,255,255,.88);
-
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.35);
-  box-shadow: 0 10px 22px rgba(0,0,0,.30);
-  transform: translateY(8px);
-  z-index: 2;
-}
-
-/* Si el contenedor lleva data-user/name, lo pintamos como “label” (sin tocar HTML) */
-#rlcChatList > *[data-user]::before,
-#rlcChatList > *[data-name]::before,
-#rlcChatList > *[data-author]::before{
-  content: attr(data-user);
-  font: 950 11px/1 var(--sans);
-  letter-spacing: .04em;
-  color: rgba(255,255,255,.88);
-
   position:absolute;
-  left: 44px; /* deja hueco para avatar */
-  top: -8px;
+  left: calc(var(--chatAvatar) + var(--chatGap));
+  top: -10px;
+
+  font: 950 11px/1 var(--sans);
+  letter-spacing: .04em;
+  color: rgba(255,255,255,.88);
+
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(0,0,0,.35);
   box-shadow: 0 10px 22px rgba(0,0,0,.30);
   z-index: 2;
-}
-#rlcChatList > *[data-name]::before{ content: attr(data-name); }
-#rlcChatList > *[data-author]::before{ content: attr(data-author); }
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-user]::before,
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-name]::before,
-#rlcChatList > *:not(:has(img)):not(:has(.avatar)):not(:has(.pfp))[data-author]::before{
-  left: 0;
+
+  max-width: calc(100% - (var(--chatAvatar) + var(--chatGap)));
+  overflow:hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Bubble (texto): si tu JS ya envuelve el texto en un div, lo pillamos.
-   Si no, aplicamos a todo el mensaje como “bubble body”. */
+/* Bubble preferido */
 #rlcChatList > * .msg,
 #rlcChatList > * .message,
 #rlcChatList > * .body{
-  grid-column: 2;
-  grid-row: 1;
+  flex: 1 1 auto;
 
   border-radius: 16px;
   border: 1px solid rgba(255,255,255,.12);
@@ -1151,9 +1121,10 @@ input[type="range"]{ accent-color: var(--accent); }
   white-space: normal;
   position: relative;
   z-index: 1;
+  min-width: 0;
 }
 
-/* “Tail” del globo */
+/* Tail del globo (para wrapper) */
 #rlcChatList > * .msg::after,
 #rlcChatList > * .message::after,
 #rlcChatList > * .body::after{
@@ -1170,19 +1141,32 @@ input[type="range"]{ accent-color: var(--accent); }
   border-bottom-left-radius: 3px;
 }
 
-/* Si NO hay wrapper .msg/.message/.body: convierte el item completo en bubble */
-#rlcChatList > *:not(:has(.msg)):not(:has(.message)):not(:has(.body)){
+/* Fallback (sin wrapper): estiliza un hijo “contenido” típico */
+#rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp),
+#rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick),
+#rlcChatList > * > p{
+  flex: 1 1 auto;
+
   border-radius: 16px;
   border: 1px solid rgba(255,255,255,.12);
   background: linear-gradient(180deg, rgba(10,12,18,.86), rgba(8,10,14,.72));
   box-shadow: 0 12px 28px rgba(0,0,0,.34);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+
   padding: 10px 12px;
   font-size: 12.5px;
   line-height: 1.28;
+  white-space: normal;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
 }
-#rlcChatList > *:not(:has(.msg)):not(:has(.message)):not(:has(.body))::after{
+
+/* Tail del globo (fallback hijo) */
+#rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::after,
+#rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::after,
+#rlcChatList > * > p::after{
   content:"";
   position:absolute;
   left: -6px;
@@ -1206,9 +1190,40 @@ input[type="range"]{ accent-color: var(--accent); }
   color: rgba(87,201,255,.92);
 }
 
+/* ───────────────────────── OPTIONAL: CATALOG (si existe) ───────────────────────── */
+#rlcCatalog,
+.rlcCatalogRoot{
+  position:absolute;
+  inset:0;
+  z-index: 4;
+  display:none;
+}
+body.catalog--on #rlcCatalog,
+body.catalog--on .rlcCatalogRoot{
+  display:block;
+}
+#rlcCatalog .catalogGrid,
+.rlcCatalogRoot .catalogGrid{
+  position:absolute;
+  inset:0;
+  padding: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  display:grid;
+  gap: 8px;
+}
+#rlcCatalog .catalogCell,
+.rlcCatalogRoot .catalogCell{
+  border-radius: var(--r);
+  overflow:hidden;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.45);
+  box-shadow: 0 12px 30px rgba(0,0,0,.30);
+  position: relative;
+}
+
 /* ───────────────────────── CONTROL ROOM ───────────────────────── */
-.mode-control{
+body.mode-control{
   overflow:auto;
+  overflow-x:hidden;
   scrollbar-gutter: stable both-edges;
   background:
     radial-gradient(900px 620px at 22% 12%, rgba(87,201,255,.10), transparent 62%),
@@ -1218,7 +1233,10 @@ input[type="range"]{ accent-color: var(--accent); }
     repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 1px, transparent 1px, transparent 60px),
     linear-gradient(180deg, #04060b, #070a12);
 }
-.mode-control .stage, .mode-control .layer, .mode-control .layer-media, .mode-control .layer-ui{ display:none !important; }
+.mode-control .stage,
+.mode-control .layer,
+.mode-control .layer-media,
+.mode-control .layer-ui{ display:none !important; }
 
 .controlWrap{ max-width: 1240px; margin: 0 auto; padding: 16px; }
 
@@ -1398,6 +1416,13 @@ input[type="range"]{ accent-color: var(--accent); }
   .hud{ left: max(10px, env(safe-area-inset-left)); bottom: max(10px, env(safe-area-inset-bottom)); }
   .hudBar{ padding-left: 10px; padding-right: 10px; }
   .progress{ margin-left: 10px; margin-right: 10px; }
+  #rlcChatList > * .name,
+  #rlcChatList > * .user,
+  #rlcChatList > * .author,
+  #rlcChatList > * .nick{
+    left: 0;
+    max-width: 100%;
+  }
 }
 
 /* ───────────────────────── OPERA/SAFARI “NO-MASK” ───────────────────────── */
@@ -1433,9 +1458,4 @@ input[type="range"]{ accent-color: var(--accent); }
     border-color: rgba(255,255,255,.10) !important;
   }
   .stage::before, .layer-media::after{ opacity: .16; }
-}
-
-/* ───────────────────────── OPTIONAL: OLED friendly ───────────────────────── */
-@media (dynamic-range: high){
-  :root{ --bg:#03040a; }
 }
