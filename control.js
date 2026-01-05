@@ -945,7 +945,7 @@
     const c = Object.assign({}, TICKER_DEFAULTS, (inCfg || {}));
     c.enabled = (c.enabled !== false);
     c.lang = (c.lang === "es" || c.lang === "en" || c.lang === "auto") ? c.lang : "auto";
-    c.speedPxPerSec = clamp(num(c.speedPxPerSec, TICKER_DEFAULTS.speedPxPerSec), 20, 140);
+    c.speedPxPerSec = clamp(num(c.speedPxPerSec, TICKER_DEFAULTS.speedPxPerSec), 5, 140);
     c.refreshMins = clamp(num(c.refreshMins, TICKER_DEFAULTS.refreshMins), 3, 60);
     c.topPx = clamp(num(c.topPx, TICKER_DEFAULTS.topPx), 0, 120);
     c.hideOnVote = (c.hideOnVote !== false);
@@ -1011,7 +1011,7 @@
     const base = tickerCfg || loadTickerCfg();
     const enabled = ctlTickerOn ? (ctlTickerOn.value !== "off") : base.enabled;
     const lang = ctlTickerLang ? (ctlTickerLang.value || base.lang || "auto") : (base.lang || "auto");
-    const speedPxPerSec = ctlTickerSpeed ? clamp(parseInt(ctlTickerSpeed.value || "55", 10) || 55, 20, 140) : (base.speedPxPerSec || 55);
+    const speedPxPerSec = ctlTickerSpeed ? clamp(parseInt(ctlTickerSpeed.value || "55", 10) || 55, 5, 140) : (base.speedPxPerSec || 55);
     const refreshMins = ctlTickerRefresh ? clamp(parseInt(ctlTickerRefresh.value || "12", 10) || 12, 3, 60) : (base.refreshMins || 12);
     const topPx = ctlTickerTop ? clamp(parseInt(ctlTickerTop.value || "10", 10) || 10, 0, 120) : (base.topPx || 10);
     const hideOnVote = ctlTickerHideOnVote ? (ctlTickerHideOnVote.value !== "off") : base.hideOnVote;
