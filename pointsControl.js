@@ -1,16 +1,18 @@
-/* pointsControl.js — RLC Points v1.3.0 (NEO VISUAL + NO-INTERFERE HOTKEYS + KEYED BUS + CONTROL + SAFE STORAGE + DEDUPE)
-   ✅ Misma compatibilidad (IDs ctlPts* / storage / bus / key)
-   ✅ Overlay más bonito (Neo-Atlas) + delta animado + goal bar mejor
-   ✅ NO interfiere con otros botones/control: hotkeys SOLO dentro de la card POINTS
+/* pointsControl.js — RLC Points v2.3.8
+   ✅ Integrado en PLAYER (no necesitas otra fuente)
+   ✅ Anti-solape: evita colisión con alertas/chat/vote (best-effort) sin tocar tus otros scripts
+   ✅ Drag & drop: ALT+arrastrar (o ?ptsEdit=1) -> guarda + publica por bus (KEY)
+   ✅ Mantiene: keyed bus, storage safe, dedupe, control card auto-inject, hotkeys scope
 */
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const LOAD_GUARD = "__RLC_POINTS_LOADED_V130";
+
+  const LOAD_GUARD = "__RLC_POINTS_LOADED_V238";
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-  const VERSION = "1.3.0";
+  const VERSION = "2.3.8";
 
   // ───────────────────────── helpers
   const qs = (s, r = document) => r.querySelector(s);
@@ -54,6 +56,9 @@
       u.searchParams.get("pts") ?? u.searchParams.get("points") ?? u.searchParams.get("pointsOverlay"),
       false
     );
+    const edit = parseBool(u.searchParams.get("ptsEdit") ?? u.searchParams.get("ptsDrag"), false);
+    const avoid = parseBool(u.searchParams.get("ptsAvoid"), true);
+
     return {
       key: safeStr(u.searchParams.get("key") || ""),
       overlay,
@@ -68,6 +73,12 @@
       showDelta: parseBool(u.searchParams.get("ptsShowDelta"), true),
       pos: safeStr(u.searchParams.get("ptsPos") || ""), // tl,tr,bl,br
       scale: clamp(num(u.searchParams.get("ptsScale"), 1), 0.6, 1.8),
+
+      // NEW
+      x: clamp(num(u.searchParams.get("ptsX"), 12), 0, 360),
+      y: clamp(num(u.searchParams.get("ptsY"), 12), 0, 360),
+      avoid,
+      edit,
     };
   }
 
@@ -124,6 +135,11 @@
     name: "Crystal",
     icon: "💎",
     theme: "neo",
+
+    // NEW (pos libre por offsets)
+    x: 12,   // px desde el borde (según esquina)
+    y: 12,   // px desde el borde (según esquina)
+    avoid: true, // anti-solape best-effort
   };
 
   const STATE_DEFAULTS = {
@@ -134,6 +150,7 @@
 
   function normalizeCfg(inCfg) {
     const c = Object.assign({}, CFG_DEFAULTS, (inCfg || {}));
+
     c.enabled = (c.enabled !== false);
     c.showGoal = (c.showGoal !== false);
     c.showDelta = (c.showDelta !== false);
@@ -147,6 +164,11 @@
     c.icon = String(c.icon || CFG_DEFAULTS.icon).trim().slice(0, 6) || CFG_DEFAULTS.icon;
 
     c.theme = String(c.theme || "neo").trim().toLowerCase() || "neo";
+
+    c.x = clamp(num(c.x, CFG_DEFAULTS.x), 0, 360);
+    c.y = clamp(num(c.y, CFG_DEFAULTS.y), 0, 360);
+    c.avoid = (c.avoid !== false);
+
     return c;
   }
 
@@ -174,13 +196,17 @@
     c.showGoal = !!P.showGoal;
     c.showDelta = !!P.showDelta;
 
+    // NEW
+    if (Number.isFinite(P.x)) c.x = P.x;
+    if (Number.isFinite(P.y)) c.y = P.y;
+    c.avoid = !!P.avoid;
+
     return normalizeCfg(c);
   }
 
   function saveCfg(cfg) {
     const c = normalizeCfg(cfg);
     const raw = JSON.stringify(c);
-    // guarda siempre en keyed y base
     lsSet(PTS_CFG_KEY, raw);
     lsSet(PTS_CFG_KEY_BASE, raw);
     return c;
@@ -266,7 +292,6 @@
   function ensureControlCard() {
     if (!IS_CONTROL_PAGE) return false;
 
-    // si ya hay controles, no reinyectes
     if (qs("#ctlPtsApply") || qs("#ctlPointsApply") || qs("#ctlPtsValue") || qs("#ctlPtsName")) return true;
 
     const grid = qs(".controlGrid") || qs("section.controlGrid") || qs("#controlGrid") || null;
@@ -363,8 +388,9 @@
       </div>
 
       <div class="rlcPtsMini">
-        Si quieres overlay separado (opcional), copia la URL y úsala como Browser Source transparente.<br/>
-        Pero si cargas este script en el <b>PLAYER</b>, ya va integrado en la emisión.
+        ✅ Integrado en el <b>PLAYER</b> (no necesitas otra fuente).<br/>
+        🖱️ Para recolocar: abre el player y <b>mantén ALT</b> + arrastra el panel.<br/>
+        (o añade <span class="mono">?ptsEdit=1</span> para modo edición permanente).
       </div>
     `.trim();
 
@@ -373,13 +399,11 @@
   }
 
   // ───────────────────────── Decide overlay mode
-  // PLAYER: overlay SIEMPRE (integrado en broadcast)
   const overlayWanted =
     IS_PLAYER_PAGE ||
     !!P.overlay ||
     !!document.getElementById("rlcPtsRoot");
 
-  // Solo aplica “ptsOnly” en overlay dedicado, NO en player
   const overlayOnlyMode = !!(P.overlay && P.overlayOnly && !IS_PLAYER_PAGE);
 
   // ───────────────────────── Overlay UI
@@ -398,8 +422,8 @@
   --rlcPtsX:12px;
   --rlcPtsY:12px;
   --rlcPtsTopExtra:0px;
+  --rlcPtsBottomExtra:0px;
 
-  /* theme fallbacks (si styles.css no define) */
   --rlcPts_panel: var(--panel, rgba(10,14,20,.62));
   --rlcPts_panel2: var(--panel2, rgba(10,14,20,.76));
   --rlcPts_stroke: var(--stroke, rgba(255,255,255,.12));
@@ -417,6 +441,17 @@
   transform:translateZ(0) scale(var(--rlcPtsScale));
   contain:layout paint style;
 }
+.rlcPtsRoot.edit{
+  pointer-events:auto;
+}
+.rlcPtsRoot.edit .rlcPtsCard{
+  outline:2px solid rgba(55,214,255,.22);
+  box-shadow:
+    0 18px 55px rgba(0,0,0,.48),
+    0 0 0 2px rgba(55,214,255,.10) inset;
+  cursor:grab;
+}
+.rlcPtsRoot.edit .rlcPtsCard:active{cursor:grabbing}
 
 .rlcPtsRoot.pos-tl{
   left:max(var(--rlcPtsX),env(safe-area-inset-left));
@@ -430,12 +465,12 @@
 }
 .rlcPtsRoot.pos-bl{
   left:max(var(--rlcPtsX),env(safe-area-inset-left));
-  bottom:max(var(--rlcPtsY),env(safe-area-inset-bottom));
+  bottom:calc(max(var(--rlcPtsY),env(safe-area-inset-bottom)) + var(--rlcPtsBottomExtra,0px));
   transform-origin:bottom left
 }
 .rlcPtsRoot.pos-br{
   right:max(var(--rlcPtsX),env(safe-area-inset-right));
-  bottom:max(var(--rlcPtsY),env(safe-area-inset-bottom));
+  bottom:calc(max(var(--rlcPtsY),env(safe-area-inset-bottom)) + var(--rlcPtsBottomExtra,0px));
   transform-origin:bottom right
 }
 
@@ -561,6 +596,29 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   let lastRenderValue = null;
   let deltaTimer = null;
 
+  // Edit mode (ALT hold o param ptsEdit=1)
+  let editHeld = false;
+  const editPersistent = !!P.edit;
+
+  function setEditMode(on) {
+    if (!elRoot) return;
+    elRoot.classList.toggle("edit", !!on);
+  }
+
+  // Vars positioning
+  function applyPosVars(x, y) {
+    try {
+      document.documentElement.style.setProperty("--rlcPtsX", `${clamp(+x || 0, 0, 800)}px`);
+      document.documentElement.style.setProperty("--rlcPtsY", `${clamp(+y || 0, 0, 800)}px`);
+    } catch (_) {}
+  }
+  function applyExtraVars(topExtra, bottomExtra) {
+    try {
+      document.documentElement.style.setProperty("--rlcPtsTopExtra", `${Math.max(0, +topExtra || 0)}px`);
+      document.documentElement.style.setProperty("--rlcPtsBottomExtra", `${Math.max(0, +bottomExtra || 0)}px`);
+    } catch (_) {}
+  }
+
   function ensureOverlayUI() {
     if (!overlayWanted) return false;
     injectOverlayStylesOnce();
@@ -572,7 +630,7 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       elRoot.className = "rlcPtsRoot pos-tl";
       elRoot.setAttribute("aria-hidden", "true");
       elRoot.innerHTML =
-        '<div class="rlcPtsCard">' +
+        '<div class="rlcPtsCard" id="rlcPtsCard">' +
           '<div class="rlcPtsTop">' +
             '<div class="rlcPtsIcon" id="rlcPtsIcon">💎</div>' +
             '<div class="rlcPtsMeta">' +
@@ -594,6 +652,9 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     elBar = qs("#rlcPtsBarFill");
     elGoalL = qs("#rlcPtsGoalL");
     elGoalR = qs("#rlcPtsGoalR");
+
+    // aplicar modo edición si procede
+    setEditMode(editPersistent || editHeld);
 
     return true;
   }
@@ -629,6 +690,229 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     }, 1500);
   }
 
+  // ───────────────────────── Anti-solape best-effort
+  const AVOID_SELECTORS = [
+    "#rlcAlerts", "#alerts", "#alertsOverlay", "#rlcAlertStack", ".rlcAlerts", ".alertsOverlay", ".alerts",
+    "#rlcToastWrap", ".rlcToastWrap", ".rlcToast", ".toast",
+    "#voteOverlay", "#rlcVoteOverlay", "#rlcVote", ".voteOverlay",
+    "#chatOverlay", "#rlcChatOverlay", "#rlcChat", ".chatOverlay",
+  ];
+  const EXCLUDE_SELECTORS = ["#rlcNewsTicker", "#rlcEconTicker", "#rlcPtsRoot"];
+
+  function isVisibleEl(el) {
+    try {
+      if (!el) return false;
+      const st = getComputedStyle(el);
+      if (!st || st.display === "none" || st.visibility === "hidden" || +st.opacity === 0) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 4 && r.height > 4;
+    } catch (_) { return false; }
+  }
+
+  function rectsOverlap(a, b, pad = 6) {
+    const ax1 = a.left - pad, ay1 = a.top - pad, ax2 = a.right + pad, ay2 = a.bottom + pad;
+    const bx1 = b.left, by1 = b.top, bx2 = b.right, by2 = b.bottom;
+    return (ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1);
+  }
+
+  let avoidRAF = null;
+  let dragging = false;
+
+  function scheduleAvoidUpdate() {
+    if (!cfg?.avoid) return;
+    if (!IS_PLAYER_PAGE) return;
+    if (!elRoot) return;
+    if (dragging) return;
+    if (avoidRAF) return;
+
+    avoidRAF = requestAnimationFrame(() => {
+      avoidRAF = null;
+      try { applyAvoidanceNow(); } catch (_) {}
+    });
+  }
+
+  function applyAvoidanceNow() {
+    if (!cfg?.avoid || !elRoot) return;
+    if (elRoot.classList.contains("off")) return;
+
+    // reset extras first
+    applyExtraVars(0, 0);
+
+    const ptsRect = elRoot.getBoundingClientRect();
+    const pos = String(cfg.pos || "tl");
+    const isTop = (pos === "tl" || pos === "tr");
+    const isLeft = (pos === "tl" || pos === "bl");
+
+    const vw = window.innerWidth || 1;
+    const vh = window.innerHeight || 1;
+    const midX = vw / 2;
+    const midY = vh / 2;
+
+    // candidatos
+    const set = new Set();
+    for (const sel of AVOID_SELECTORS) {
+      for (const el of qsa(sel)) set.add(el);
+    }
+    for (const sel of EXCLUDE_SELECTORS) {
+      for (const el of qsa(sel)) set.delete(el);
+    }
+    set.delete(elRoot);
+
+    let topExtra = 0;
+    let bottomExtra = 0;
+
+    for (const el of set) {
+      if (!isVisibleEl(el)) continue;
+
+      const r = el.getBoundingClientRect();
+
+      // filtra cuadrante para evitar empujes raros
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+
+      const candLeft = cx < midX;
+      const candTop = cy < midY;
+
+      if (isLeft !== candLeft) continue;
+      if (isTop !== candTop) continue;
+
+      // solo si hay overlap real
+      if (!rectsOverlap(ptsRect, r, 8)) continue;
+
+      if (isTop) {
+        const overlap = (r.bottom - ptsRect.top) + 10; // margin
+        topExtra = Math.max(topExtra, overlap);
+      } else {
+        const overlap = (ptsRect.bottom - r.top) + 10; // margin
+        bottomExtra = Math.max(bottomExtra, overlap);
+      }
+    }
+
+    applyExtraVars(topExtra, bottomExtra);
+  }
+
+  // refresco ligero (por si alertas entran/salen)
+  let avoidTimer = null;
+  function startAvoidLoop() {
+    if (!IS_PLAYER_PAGE) return;
+    if (avoidTimer) return;
+    avoidTimer = setInterval(() => {
+      try { scheduleAvoidUpdate(); } catch (_) {}
+    }, 450);
+  }
+
+  // ───────────────────────── Drag & Drop (ALT o ptsEdit=1)
+  function pickCornerFromRect(r) {
+    const vw = window.innerWidth || 1;
+    const vh = window.innerHeight || 1;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const left = cx < vw / 2;
+    const top = cy < vh / 2;
+    return (top ? (left ? "tl" : "tr") : (left ? "bl" : "br"));
+  }
+
+  function computeOffsetsForCorner(corner, r) {
+    const vw = window.innerWidth || 1;
+    const vh = window.innerHeight || 1;
+
+    const x = (corner === "tl" || corner === "bl")
+      ? r.left
+      : (vw - r.right);
+
+    const y = (corner === "tl" || corner === "tr")
+      ? r.top  // ojo: aquí ya incluye ui-top-offset+extras, pero sirve como “sensación”
+      : (vh - r.bottom);
+
+    return { x: clamp(x, 0, 800), y: clamp(y, 0, 800) };
+  }
+
+  function bindDrag() {
+    if (!IS_PLAYER_PAGE) return;
+    const card = qs("#rlcPtsCard");
+    if (!card || !elRoot) return;
+
+    let pid = null;
+    let startX = 0, startY = 0;
+    let baseX = cfg.x || 12, baseY = cfg.y || 12;
+    let corner = cfg.pos || "tl";
+
+    const canDragNow = () => editPersistent || editHeld;
+
+    const onDown = (e) => {
+      if (!canDragNow()) return;
+      if (!e) return;
+
+      // solo botón izq o touch/pen
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+
+      try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+
+      dragging = true;
+      applyExtraVars(0, 0); // evita jitter al arrastrar
+
+      pid = e.pointerId;
+      try { card.setPointerCapture(pid); } catch (_) {}
+
+      const r = elRoot.getBoundingClientRect();
+      corner = pickCornerFromRect(r);
+
+      // sincroniza corner al momento (snap al cuadrante)
+      if (corner !== cfg.pos) {
+        cfg = normalizeCfg({ ...cfg, pos: corner });
+        setOverlayPos(cfg.pos);
+      }
+
+      const off = computeOffsetsForCorner(cfg.pos, r);
+      baseX = off.x;
+      baseY = off.y;
+
+      startX = e.clientX;
+      startY = e.clientY;
+    };
+
+    const onMove = (e) => {
+      if (!dragging) return;
+      if (pid != null && e.pointerId !== pid) return;
+
+      try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      let nextX = baseX + (cfg.pos === "tl" || cfg.pos === "bl" ? dx : -dx);
+      let nextY = baseY + (cfg.pos === "tl" || cfg.pos === "tr" ? dy : -dy);
+
+      nextX = clamp(nextX, 0, 800);
+      nextY = clamp(nextY, 0, 800);
+
+      // aplica en vivo (sin publicar aún)
+      applyPosVars(nextX, nextY);
+
+      // actualiza cfg local (para que al soltar, guardemos eso)
+      cfg = normalizeCfg({ ...cfg, x: nextX, y: nextY });
+    };
+
+    const onUp = (e) => {
+      if (!dragging) return;
+      if (pid != null && e.pointerId !== pid) return;
+
+      dragging = false;
+      pid = null;
+
+      // guarda + publica (sincroniza con OBS / otras instancias)
+      cfg = publishCfg(cfg);
+
+      // re-eval avoid después de recolocar
+      scheduleAvoidUpdate();
+    };
+
+    try { card.addEventListener("pointerdown", onDown, { passive: false }); } catch (_) {}
+    try { window.addEventListener("pointermove", onMove, { passive: false }); } catch (_) {}
+    try { window.addEventListener("pointerup", onUp, { passive: true }); } catch (_) {}
+    try { window.addEventListener("pointercancel", onUp, { passive: true }); } catch (_) {}
+  }
+
   function renderOverlay() {
     if (!overlayWanted) return;
     if (!ensureOverlayUI()) return;
@@ -639,6 +923,9 @@ body.rlcPtsOnly .controlWrap{display:none!important}
 
     setOverlayPos(cfg.pos);
     setOverlayScale(cfg.scale);
+
+    // offsets
+    applyPosVars(cfg.x ?? 12, cfg.y ?? 12);
 
     if (elIcon) elIcon.textContent = cfg.icon || "💎";
     if (elName) elName.textContent = String(cfg.name || "Crystal").toUpperCase();
@@ -661,7 +948,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       if (elGoalR) elGoalR.textContent = `Goal ${fmtK(goal)}`;
     }
 
-    // delta: solo cuando ya hay baseline
     if (cfg.showDelta) {
       if (lastRenderValue == null) {
         lastRenderValue = v;
@@ -673,6 +959,9 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     } else {
       lastRenderValue = v;
     }
+
+    // anti-solape
+    scheduleAvoidUpdate();
   }
 
   // ───────────────────────── Control UI (IDs) (NO romper compat)
@@ -737,7 +1026,7 @@ body.rlcPtsOnly .controlWrap{display:none!important}
 
     if (ctlPtsUrl && !isEditing(ctlPtsUrl)) ctlPtsUrl.value = buildOverlayUrl();
 
-    setCtlStatus(cfg.enabled ? `ON · ${fmtK(state.value | 0)}` : "OFF", !!cfg.enabled);
+    setCtlStatus(cfg.enabled ? `ON · ${fmtK(state.value | 0)} · Drag: ALT` : "OFF", !!cfg.enabled);
   }
 
   function readControlCfg() {
@@ -765,7 +1054,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   function applyControlAll() {
     cfg = publishCfg(readControlCfg());
     state = publishState(readControlState());
-    // baseline para que el delta no salte por “apply”
     lastRenderValue = (state.value | 0);
     renderOverlay();
     syncControlUI();
@@ -827,12 +1115,10 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   }
 
   function hotkeysScopeOk(e) {
-    // ✅ NO INTERFERIR: hotkeys SOLO si el foco está dentro del card POINTS
     const card = qs("#ctlPtsCard");
     if (!card) return false;
     const a = document.activeElement;
     if (a && card.contains(a)) return true;
-    // o si el evento viene desde dentro del card (click focus etc.)
     try {
       const t = e?.target;
       if (t && card.contains(t)) return true;
@@ -868,7 +1154,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       });
     } catch (_) {}
 
-    // ✅ Hotkeys solo dentro de la card, para no pisar otros controles del panel
     try {
       document.addEventListener("keydown", (e) => {
         if (isTextInputActive()) return;
@@ -968,10 +1253,8 @@ body.rlcPtsOnly .controlWrap{display:none!important}
 
   // ───────────────────────── Boot
   onReady(() => {
-    // control card (si procede)
     ensureControlCard();
 
-    // overlay-only transparente (solo overlay dedicado)
     if (overlayOnlyMode) {
       try {
         document.documentElement.classList.add("rlcPtsOnly");
@@ -987,7 +1270,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     const hadCfg = !!lsGet(PTS_CFG_KEY) || !!lsGet(PTS_CFG_KEY_BASE);
     const hadSt = !!lsGet(PTS_STATE_KEY) || !!lsGet(PTS_STATE_KEY_BASE);
 
-    // primera vez: publica para sincronizar
     if (!hadCfg) cfg = publishCfg(cfg);
     if (!hadSt) {
       state.updatedAt = Date.now();
@@ -997,5 +1279,27 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     bindControl();
     renderOverlay();
     syncControlUI();
+
+    // Edit mode: ALT hold
+    if (IS_PLAYER_PAGE) {
+      try {
+        document.addEventListener("keydown", (e) => {
+          const on = !!(e && e.altKey);
+          if (on && !editHeld) { editHeld = true; setEditMode(true); }
+        });
+        document.addEventListener("keyup", (e) => {
+          const on = !!(e && e.altKey);
+          if (!on && editHeld && !editPersistent) { editHeld = false; setEditMode(false); }
+        });
+      } catch (_) {}
+
+      bindDrag();
+      startAvoidLoop();
+
+      // recompute al cambiar tamaño
+      try {
+        window.addEventListener("resize", () => scheduleAvoidUpdate(), { passive: true });
+      } catch (_) {}
+    }
   });
 })();
