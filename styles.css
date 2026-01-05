@@ -1,8 +1,9 @@
-/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.5 (RLC 2.3.9) — FULL
+/* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.6 (RLC 2.3.9) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ NO rompe IDs/clases existentes (hud/vote/chat/control/tickers)
-   ✅ Look “TV broadcast” refinado + legibilidad mejorada
-   ✅ Chat bubbles sólidos (sin “panel negro” en browsers sin backdrop-filter)
+   ✅ Chat FIX: nombre 1 línea (ellipsis) + NUNCA solapa el mensaje (layout grid)
+   ✅ ADS mejorados (legibilidad + estética TV) sin romper markup
+   ✅ Vote panel un poco más abajo (variable)
    ✅ 100% sin :has (compat/validadores)
    ✅ Offset robusto: --ui-top-offset = --rlcTickerH (lo setea rlcTickers.js)
    ✅ Tickers clicables (links) sin afectar overlays
@@ -80,6 +81,10 @@
   --rlcTickerH: 0px;      /* JS setea altura total real */
   --ui-top-offset: var(--rlcTickerH, 0px);
 
+  /* Ajustes overlays (nuevo) */
+  --voteTopPad: 24px;     /* ✅ baja un poco el panel de votos */
+  --adsTopPad:  20px;     /* ✅ separa un poco Ads/Alerts del borde */
+
   /* Broadcast vibe */
   --scan-opacity: .045;
   --grain-opacity: .07;
@@ -113,6 +118,14 @@
   /* Tail */
   --chatTailSize: 12px;
   --chatTailLift: 10px;
+
+  /* ───────── ADS/ALERT (nuevo) ───────── */
+  --adBgA: rgba(8,10,14,.92);
+  --adBgB: rgba(8,10,14,.74);
+  --adStroke: rgba(255,255,255,.13);
+  --adText: rgba(255,255,255,.90);
+  --adMuted: rgba(255,255,255,.66);
+  --adMaxW: min(480px, calc(100vw - 24px));
 }
 
 /* Hooks opcionales */
@@ -914,7 +927,8 @@ input[type="range"]{ accent-color: var(--accent); }
 .vote,
 #voteBox{
   position:absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+  /* ✅ baja un poco el panel (antes max(12px,...)) */
+  top: calc(max(var(--voteTopPad), env(safe-area-inset-top)) + var(--ui-top-offset));
   right: max(12px, env(safe-area-inset-right));
   width: min(320px, calc(100vw - 24px));
   z-index: 6;
@@ -999,30 +1013,42 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 
 /* ───────────────────────── ADS/ALERT overlays (compat) ───────────────────────── */
+/* ✅ Mejorados: más legibles, más “TV”, badge opcional si tu markup lo trae */
 #adsBox, #adBox, #adOverlay, #adsOverlay, #rlcAdsBox, #rlcAdBox, #rlcAdOverlay, #rlcAdsOverlay,
 .adBox, .adsBox, .adOverlay, .adsOverlay, .adNotice, .adsNotice, .alertBox, .alertsBox, .alertOverlay{
   position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset));
+  top: calc(max(var(--adsTopPad), env(safe-area-inset-top)) + var(--ui-top-offset));
   left: max(12px, env(safe-area-inset-left));
   right: auto;
   z-index: 8;
   pointer-events:none;
 }
+
+/* Caja interna */
 #adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
 #rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *,
 .adBox > *, .adsBox > *, .adOverlay > *, .adsOverlay > *, .adNotice > *, .adsNotice > *, .alertBox > *, .alertsBox > *, .alertOverlay > *{
   pointer-events:none;
   border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(8,10,14,.92), rgba(8,10,14,.72));
-  box-shadow: 0 12px 30px rgba(0,0,0,.34);
+  border: 1px solid var(--adStroke);
+  background: linear-gradient(180deg, var(--adBgA), var(--adBgB));
+  box-shadow: 0 14px 34px rgba(0,0,0,.40);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+
   padding: 10px 12px;
-  max-width: min(420px, calc(100vw - 24px));
+  max-width: var(--adMaxW);
+
   font-size: 12.5px;
-  line-height: 1.3;
+  line-height: 1.34;
+  color: var(--adText);
+
+  animation: rlcPopIn var(--dur-3) var(--ease-soft) both;
+  overflow:hidden;
+  contain: paint;
 }
+
+/* Strip broadcast superior */
 #adsBox > *::before, #adBox > *::before, #adOverlay > *::before, #adsOverlay > *::before,
 #rlcAdsBox > *::before, #rlcAdBox > *::before, #rlcAdOverlay > *::before, #rlcAdsOverlay > *::before,
 .adBox > *::before, .adsBox > *::before, .adOverlay > *::before, .adsOverlay > *::before, .adNotice > *::before,
@@ -1032,11 +1058,50 @@ input[type="range"]{ accent-color: var(--accent); }
   height: 3px;
   margin: -10px -12px 10px;
   background: linear-gradient(90deg, rgba(255,53,90,.78), rgba(87,201,255,.62));
-  opacity:.85;
+  opacity:.88;
+}
+
+/* Texto interno típico (no rompe si no existe) */
+#adsBox b, #adBox b, #adOverlay b, #adsOverlay b,
+#rlcAdsBox b, #rlcAdBox b, #rlcAdOverlay b, #rlcAdsOverlay b,
+.adBox b, .adsBox b, .adOverlay b, .adsOverlay b, .adNotice b, .adsNotice b, .alertBox b, .alertsBox b, .alertOverlay b,
+#adsBox strong, #adBox strong, #adOverlay strong, #adsOverlay strong,
+#rlcAdsBox strong, #rlcAdBox strong, #rlcAdOverlay strong, #rlcAdsOverlay strong,
+.adBox strong, .adsBox strong, .adOverlay strong, .adsOverlay strong, .adNotice strong, .adsNotice strong, .alertBox strong, .alertsBox strong, .alertOverlay strong{
+  font-weight: 950;
+  color: rgba(255,255,255,.94);
+}
+#adsBox small, #adBox small, #adOverlay small, #adsOverlay small,
+#rlcAdsBox small, #rlcAdBox small, #rlcAdOverlay small, #rlcAdsOverlay small,
+.adBox small, .adsBox small, .adOverlay small, .adsOverlay small, .adNotice small, .adsNotice small, .alertBox small, .alertsBox small, .alertOverlay small{
+  color: var(--adMuted);
+}
+
+/* Badge opcional (si tu JS mete .adBadge / .badge / .tag dentro) */
+.adBadge, .adsBadge, .alertBadge, .adTag, .adsTag{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  font: 950 10px/1 var(--sans);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: rgba(255,255,255,.90);
+}
+.adBadge::before, .adsBadge::before, .alertBadge::before, .adTag::before, .adsTag::before{
+  content:"";
+  width: 7px; height: 7px; border-radius: 999px;
+  background: rgba(255,211,106,.92);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.10);
 }
 
 /* ───────────────────────── CHAT OVERLAY (BUBBLES + AVATAR + NAME) ───────────────────────── */
-/* ✅ Objetivo: burbujas más “TV”, más legibles, sin panel negro, sin :has. */
+/* ✅ FIX PRO: Nombre 1 línea + NUNCA solapa el mensaje (grid). */
 
 .rlcChatRoot{
   position:absolute;
@@ -1047,8 +1112,6 @@ input[type="range"]{ accent-color: var(--accent); }
   z-index: 7;
   pointer-events:none;
   display:none;
-
-  /* evita “bloques” por herencias raras */
   background: transparent !important;
 }
 .rlcChatRoot.chat--on{ display:block !important; }
@@ -1064,21 +1127,25 @@ input[type="range"]{ accent-color: var(--accent); }
   overflow:hidden;
   padding: 2px;
 
-  /* fade superior (si soporta mask) */
   -webkit-mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
   mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
 }
 
-/* Cada mensaje (fila): jamás pinta fondo */
+/* Cada mensaje: grid (sin :has) */
 #rlcChatList > *{
   pointer-events:none;
   position: relative;
-  display:flex;
-  align-items:flex-end;
-  gap: var(--chatGap);
+
+  display:grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 0;
+  row-gap: 6px;
+
+  align-items: end;
   min-width: 0;
 
-  background: transparent !important; /* FIX panel negro */
+  background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
 
@@ -1089,8 +1156,13 @@ input[type="range"]{ accent-color: var(--accent); }
 #rlcChatList > * img,
 #rlcChatList > * .avatar,
 #rlcChatList > * .pfp{
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: end;
+
   width: var(--chatAvatar);
   height: var(--chatAvatar);
+  margin-right: var(--chatGap);
   border-radius: 999px;
   object-fit: cover;
   flex: 0 0 auto;
@@ -1102,14 +1174,23 @@ input[type="range"]{ accent-color: var(--accent); }
     0 0 0 1px rgba(87,201,255,.10) inset;
 }
 
-/* Nombre: pill encima de la burbuja */
+/* Nombre: YA NO absoluto => no hay solape */
 #rlcChatList > * .name,
 #rlcChatList > * .user,
 #rlcChatList > * .author,
 #rlcChatList > * .nick{
-  position:absolute;
-  left: calc(var(--chatAvatar) + var(--chatGap));
-  top: -12px;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  justify-self: start;
+
+  position: relative;
+  display:inline-flex;
+  align-items:center;
+
+  height: 20px;                 /* ✅ fuerza 1 línea */
+  max-width: 100%;
+  min-width: 0;
 
   font: 950 11px/1 var(--sans);
   letter-spacing: .04em;
@@ -1122,20 +1203,21 @@ input[type="range"]{ accent-color: var(--accent); }
   box-shadow: 0 12px 24px rgba(0,0,0,.36);
   z-index: 3;
 
-  max-width: calc(100% - (var(--chatAvatar) + var(--chatGap)));
+  white-space: nowrap !important; /* ✅ nunca 2 líneas */
   overflow:hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
 
-/* ───── Burbuja preferida (wrappers típicos) ───── */
+/* Burbuja preferida */
 #rlcChatList > * .msg,
 #rlcChatList > * .message,
 #rlcChatList > * .body{
-  flex: 1 1 auto;
+  grid-column: 2;
+  grid-row: 2;
+
   min-width: 0;
 
   border-radius: 16px;
@@ -1161,7 +1243,7 @@ input[type="range"]{ accent-color: var(--accent); }
   z-index: 2;
 }
 
-/* Strip broadcast (igual que HUD/Vote, pero más fino) */
+/* Strip broadcast */
 #rlcChatList > * .msg::before,
 #rlcChatList > * .message::before,
 #rlcChatList > * .body::before{
@@ -1175,7 +1257,7 @@ input[type="range"]{ accent-color: var(--accent); }
   pointer-events:none;
 }
 
-/* Tail (mejorado) */
+/* Tail */
 #rlcChatList > * .msg::after,
 #rlcChatList > * .message::after,
 #rlcChatList > * .body::after{
@@ -1193,11 +1275,13 @@ input[type="range"]{ accent-color: var(--accent); }
   box-shadow: -6px 10px 18px rgba(0,0,0,.18);
 }
 
-/* ───── Fallback (sin wrapper): estiliza hijo “contenido” típico ───── */
+/* Fallback sin wrapper */
 #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp),
 #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick),
 #rlcChatList > * > p{
-  flex: 1 1 auto;
+  grid-column: 2;
+  grid-row: 2;
+
   min-width: 0;
 
   border-radius: 16px;
@@ -1283,7 +1367,7 @@ input[type="range"]{ accent-color: var(--accent); }
   vertical-align: -0.22em;
 }
 
-/* “Bot/System” (si tu JS mete clases) — no rompe si no existen */
+/* “Bot/System” (si tu JS mete clases) */
 #rlcChatList > *.bot .msg,
 #rlcChatList > *.bot .message,
 #rlcChatList > *.bot .body{
@@ -1522,14 +1606,8 @@ body.mode-control{
   .hudBar{ padding-left: 10px; padding-right: 10px; }
   .progress{ margin-left: 10px; margin-right: 10px; }
 
-  /* nombre del chat: evita cortar en móvil */
-  #rlcChatList > * .name,
-  #rlcChatList > * .user,
-  #rlcChatList > * .author,
-  #rlcChatList > * .nick{
-    left: 0;
-    max-width: 100%;
-  }
+  /* Chat móvil: avatar un pelín menor */
+  :root{ --chatAvatar: 30px; }
 }
 
 /* ───────────────────────── OPERA/SAFARI “NO-MASK” ───────────────────────── */
@@ -1554,7 +1632,6 @@ body.mode-control{
 }
 
 /* ───────────────────────── FALLBACK: sin backdrop-filter ───────────────────────── */
-/* ✅ FIX: NO pintamos #rlcChatList > * (fila). Solo las burbujas. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
   .hud, .vote, #voteBox, .card, .pill, .fallbackCard, #rlcNewsTicker, #rlcEconTicker{
     backdrop-filter:none !important;
@@ -1568,7 +1645,7 @@ body.mode-control{
     border-color: rgba(255,255,255,.10) !important;
   }
 
-  /* Chat: burbuja sólida limpia (sin “panel negro” detrás) */
+  /* Chat: burbuja sólida limpia */
   #rlcChatList > *{ background: transparent !important; }
 
   #rlcChatList > * .msg,
@@ -1588,6 +1665,15 @@ body.mode-control{
   #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::after,
   #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::after,
   #rlcChatList > * > p::after{
+    background: rgba(10,12,18,.92) !important;
+  }
+
+  /* ADS/ALERT: más sólido */
+  #adsBox > *, #adBox > *, #adOverlay > *, #adsOverlay > *,
+  #rlcAdsBox > *, #rlcAdBox > *, #rlcAdOverlay > *, #rlcAdsOverlay > *,
+  .adBox > *, .adsBox > *, .adOverlay > *, .adsOverlay > *, .adNotice > *, .adsNotice > *, .alertBox > *, .alertsBox > *, .alertOverlay > *{
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
     background: rgba(10,12,18,.92) !important;
   }
 
