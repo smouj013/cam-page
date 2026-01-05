@@ -1,8 +1,9 @@
-/* pointsControl.js — RLC Points v2.3.8
-   ✅ Integrado en PLAYER (no necesitas otra fuente)
-   ✅ Anti-solape: evita colisión con alertas/chat/vote (best-effort) sin tocar tus otros scripts
-   ✅ Drag & drop: ALT+arrastrar (o ?ptsEdit=1) -> guarda + publica por bus (KEY)
-   ✅ Mantiene: keyed bus, storage safe, dedupe, control card auto-inject, hotkeys scope
+/* pointsControl.js — RLC Points v2.3.8 (FIXED)
+   ✅ Control card auto-inject: ahora RE-QUERY refs tras inyectar (antes eran null)
+   ✅ Drag: guarda offsets sin “doble sumar” --ui-top-offset / extras (evita drift)
+   ✅ Anti-solape: incluye IDs reales (#voteBox, #rlcChatRoot, etc.)
+   ✅ Copy URL: genera overlay en index.html (no en control.html)
+   ✅ ptsOnly: funciona también en index.html (overlay transparente para OBS)
 */
 (() => {
   "use strict";
@@ -74,7 +75,7 @@
       pos: safeStr(u.searchParams.get("ptsPos") || ""), // tl,tr,bl,br
       scale: clamp(num(u.searchParams.get("ptsScale"), 1), 0.6, 1.8),
 
-      // NEW
+      // pos libre
       x: clamp(num(u.searchParams.get("ptsX"), 12), 0, 360),
       y: clamp(num(u.searchParams.get("ptsY"), 12), 0, 360),
       avoid,
@@ -130,16 +131,14 @@
     enabled: true,
     showGoal: true,
     showDelta: true,
-    pos: "tl", // tl,tr,bl,br
+    pos: "tl",
     scale: 1,
     name: "Crystal",
     icon: "💎",
     theme: "neo",
-
-    // NEW (pos libre por offsets)
-    x: 12,   // px desde el borde (según esquina)
-    y: 12,   // px desde el borde (según esquina)
-    avoid: true, // anti-solape best-effort
+    x: 12,
+    y: 12,
+    avoid: true,
   };
 
   const STATE_DEFAULTS = {
@@ -187,7 +186,6 @@
     const b = safeJson(lsGet(PTS_CFG_KEY_BASE), null);
     if (b && typeof b === "object") return normalizeCfg(b);
 
-    // query overrides (solo primera vez)
     const c = normalizeCfg(CFG_DEFAULTS);
     if (P.name) c.name = P.name;
     if (P.icon) c.icon = P.icon;
@@ -196,7 +194,6 @@
     c.showGoal = !!P.showGoal;
     c.showDelta = !!P.showDelta;
 
-    // NEW
     if (Number.isFinite(P.x)) c.x = P.x;
     if (Number.isFinite(P.y)) c.y = P.y;
     c.avoid = !!P.avoid;
@@ -249,7 +246,7 @@
     return s;
   }
 
-  // ───────────────────────── Page detect (CONTROL vs PLAYER vs overlay-only)
+  // ───────────────────────── Page detect
   function isLikelyControlPage() {
     if (document.body?.classList?.contains("mode-control")) return true;
     if (qs(".controlWrap") || qs(".controlGrid") || qs("main.controlWrap")) return true;
@@ -266,7 +263,7 @@
   const IS_CONTROL_PAGE = isLikelyControlPage();
   const IS_PLAYER_PAGE = isLikelyPlayerPage();
 
-  // ───────────────────────── Control panel auto-inject (en control.html)
+  // ───────────────────────── Control panel auto-inject
   function injectControlCardStylesOnce() {
     if (qs("#rlcPtsControlStyles")) return;
     const st = document.createElement("style");
@@ -316,7 +313,7 @@
       <div class="rlcPtsGrid">
         <label class="rlcFld">
           <span>Enabled</span>
-          <select id="ctlPtsOn">
+          <select id="ctlPtsOn" class="select">
             <option value="on">ON</option>
             <option value="off">OFF</option>
           </select>
@@ -324,7 +321,7 @@
 
         <label class="rlcFld">
           <span>Position</span>
-          <select id="ctlPtsPos">
+          <select id="ctlPtsPos" class="select">
             <option value="tl">Top-Left</option>
             <option value="tr">Top-Right</option>
             <option value="bl">Bottom-Left</option>
@@ -334,27 +331,27 @@
 
         <label class="rlcFld">
           <span>Name</span>
-          <input id="ctlPtsName" type="text" placeholder="Crystal" maxlength="24" />
+          <input id="ctlPtsName" class="input" type="text" placeholder="Crystal" maxlength="24" />
         </label>
 
         <label class="rlcFld">
           <span>Icon</span>
-          <input id="ctlPtsIcon" type="text" placeholder="💎" maxlength="6" />
+          <input id="ctlPtsIcon" class="input" type="text" placeholder="💎" maxlength="6" />
         </label>
 
         <label class="rlcFld">
           <span>Value</span>
-          <input id="ctlPtsValue" type="number" min="0" step="1" />
+          <input id="ctlPtsValue" class="input" type="number" min="0" step="1" />
         </label>
 
         <label class="rlcFld">
           <span>Goal</span>
-          <input id="ctlPtsGoal" type="number" min="0" step="1" />
+          <input id="ctlPtsGoal" class="input" type="number" min="0" step="1" />
         </label>
 
         <label class="rlcFld">
           <span>Show goal bar</span>
-          <select id="ctlPtsShowGoal">
+          <select id="ctlPtsShowGoal" class="select">
             <option value="on">ON</option>
             <option value="off">OFF</option>
           </select>
@@ -362,7 +359,7 @@
 
         <label class="rlcFld">
           <span>Show delta pop</span>
-          <select id="ctlPtsShowDelta">
+          <select id="ctlPtsShowDelta" class="select">
             <option value="on">ON</option>
             <option value="off">OFF</option>
           </select>
@@ -370,26 +367,25 @@
 
         <label class="rlcFld">
           <span>Scale</span>
-          <input id="ctlPtsScale" type="number" min="0.6" max="1.8" step="0.05" />
+          <input id="ctlPtsScale" class="input" type="number" min="0.6" max="1.8" step="0.05" />
         </label>
 
         <label class="rlcFld">
           <span>Delta step</span>
-          <input id="ctlPtsDelta" type="number" min="1" step="1" value="10" />
+          <input id="ctlPtsDelta" class="input" type="number" min="1" step="1" value="10" />
         </label>
       </div>
 
       <div class="rlcPtsBtns">
-        <button id="ctlPtsSub" type="button">− Restar</button>
-        <button id="ctlPtsAdd" type="button">+ Sumar</button>
-        <button id="ctlPtsApply" type="button">Aplicar</button>
-        <button id="ctlPtsReset" type="button">Reset</button>
-        <button id="ctlPtsCopyUrl" type="button">Copiar URL overlay</button>
+        <button id="ctlPtsSub" class="btn ghost" type="button">− Restar</button>
+        <button id="ctlPtsAdd" class="btn ghost" type="button">+ Sumar</button>
+        <button id="ctlPtsApply" class="btn" type="button">Aplicar</button>
+        <button id="ctlPtsReset" class="btn ghost" type="button">Reset</button>
+        <button id="ctlPtsCopyUrl" class="btn ghost" type="button">Copiar URL overlay</button>
       </div>
 
       <div class="rlcPtsMini">
-        ✅ Integrado en el <b>PLAYER</b> (no necesitas otra fuente).<br/>
-        🖱️ Para recolocar: abre el player y <b>mantén ALT</b> + arrastra el panel.<br/>
+        🖱️ Para recolocar en player: <b>ALT</b> + arrastra el panel.<br/>
         (o añade <span class="mono">?ptsEdit=1</span> para modo edición permanente).
       </div>
     `.trim();
@@ -398,13 +394,14 @@
     return true;
   }
 
-  // ───────────────────────── Decide overlay mode
+  // ───────────────────────── Overlay mode
   const overlayWanted =
     IS_PLAYER_PAGE ||
     !!P.overlay ||
     !!document.getElementById("rlcPtsRoot");
 
-  const overlayOnlyMode = !!(P.overlay && P.overlayOnly && !IS_PLAYER_PAGE);
+  // ✅ FIX: ptsOnly también puede aplicarse en player (para OBS)
+  const overlayOnlyMode = !!(P.overlay && P.overlayOnly);
 
   // ───────────────────────── Overlay UI
   const OVERLAY_ROOT_ID = "rlcPtsRoot";
@@ -441,15 +438,12 @@
   transform:translateZ(0) scale(var(--rlcPtsScale));
   contain:layout paint style;
 }
-.rlcPtsRoot.edit{
-  pointer-events:auto;
-}
+.rlcPtsRoot.edit{ pointer-events:auto; }
 .rlcPtsRoot.edit .rlcPtsCard{
   outline:2px solid rgba(55,214,255,.22);
-  box-shadow:
-    0 18px 55px rgba(0,0,0,.48),
-    0 0 0 2px rgba(55,214,255,.10) inset;
+  box-shadow: 0 18px 55px rgba(0,0,0,.48), 0 0 0 2px rgba(55,214,255,.10) inset;
   cursor:grab;
+  touch-action:none;
 }
 .rlcPtsRoot.edit .rlcPtsCard:active{cursor:grabbing}
 
@@ -481,9 +475,7 @@
   border-radius:18px;
   background:linear-gradient(180deg, var(--rlcPts_panel), var(--rlcPts_panel2));
   border:1px solid var(--rlcPts_stroke);
-  box-shadow:
-    0 18px 55px rgba(0,0,0,.48),
-    0 1px 0 rgba(255,255,255,.06) inset;
+  box-shadow: 0 18px 55px rgba(0,0,0,.48), 0 1px 0 rgba(255,255,255,.06) inset;
   backdrop-filter:blur(12px);
   -webkit-backdrop-filter:blur(12px);
   overflow:hidden;
@@ -497,12 +489,7 @@
     radial-gradient(560px 160px at 100% 0%, rgba(255,206,87,.10), transparent 60%);
   pointer-events:none;
 }
-.rlcPtsTop{
-  position:relative;
-  display:flex;
-  align-items:center;
-  gap:10px;
-}
+.rlcPtsTop{ position:relative; display:flex; align-items:center; gap:10px; }
 .rlcPtsIcon{
   width:36px;height:36px;border-radius:14px;
   display:grid;place-items:center;
@@ -581,9 +568,16 @@
 
 .rlcPtsRoot.off{display:none!important}
 
-/* overlay-only transparente */
-body.rlcPtsOnly, html.rlcPtsOnly { background:transparent!important; }
-body.rlcPtsOnly .controlWrap{display:none!important}
+/* overlay-only transparente (OBS) */
+body.rlcPtsOnly, html.rlcPtsOnly{ background:transparent!important; }
+body.rlcPtsOnly #stage,
+body.rlcPtsOnly .stage,
+body.rlcPtsOnly .layer,
+body.rlcPtsOnly #rlcNewsTicker,
+body.rlcPtsOnly #rlcEconTicker,
+body.rlcPtsOnly #fallback,
+body.rlcPtsOnly #rlcDiag,
+body.rlcPtsOnly .controlWrap{ display:none!important; }
 
 @media (prefers-reduced-motion: reduce){
   .rlcPtsDelta, .rlcPtsBar>i{transition:none!important}
@@ -596,7 +590,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   let lastRenderValue = null;
   let deltaTimer = null;
 
-  // Edit mode (ALT hold o param ptsEdit=1)
   let editHeld = false;
   const editPersistent = !!P.edit;
 
@@ -605,7 +598,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     elRoot.classList.toggle("edit", !!on);
   }
 
-  // Vars positioning
   function applyPosVars(x, y) {
     try {
       document.documentElement.style.setProperty("--rlcPtsX", `${clamp(+x || 0, 0, 800)}px`);
@@ -617,6 +609,13 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       document.documentElement.style.setProperty("--rlcPtsTopExtra", `${Math.max(0, +topExtra || 0)}px`);
       document.documentElement.style.setProperty("--rlcPtsBottomExtra", `${Math.max(0, +bottomExtra || 0)}px`);
     } catch (_) {}
+  }
+  function readCssPx(varName) {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+      const n = parseFloat(v.replace("px", "").trim());
+      return Number.isFinite(n) ? n : 0;
+    } catch (_) { return 0; }
   }
 
   function ensureOverlayUI() {
@@ -653,7 +652,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     elGoalL = qs("#rlcPtsGoalL");
     elGoalR = qs("#rlcPtsGoalR");
 
-    // aplicar modo edición si procede
     setEditMode(editPersistent || editHeld);
 
     return true;
@@ -690,12 +688,12 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     }, 1500);
   }
 
-  // ───────────────────────── Anti-solape best-effort
+  // ───────────────────────── Anti-solape best-effort (FIX IDs)
   const AVOID_SELECTORS = [
     "#rlcAlerts", "#alerts", "#alertsOverlay", "#rlcAlertStack", ".rlcAlerts", ".alertsOverlay", ".alerts",
     "#rlcToastWrap", ".rlcToastWrap", ".rlcToast", ".toast",
-    "#voteOverlay", "#rlcVoteOverlay", "#rlcVote", ".voteOverlay",
-    "#chatOverlay", "#rlcChatOverlay", "#rlcChat", ".chatOverlay",
+    "#voteOverlay", "#rlcVoteOverlay", "#rlcVote", ".voteOverlay", "#voteBox",
+    "#chatOverlay", "#rlcChatOverlay", "#rlcChat", ".chatOverlay", "#rlcChatRoot", "#rlcChatList",
   ];
   const EXCLUDE_SELECTORS = ["#rlcNewsTicker", "#rlcEconTicker", "#rlcPtsRoot"];
 
@@ -735,7 +733,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     if (!cfg?.avoid || !elRoot) return;
     if (elRoot.classList.contains("off")) return;
 
-    // reset extras first
     applyExtraVars(0, 0);
 
     const ptsRect = elRoot.getBoundingClientRect();
@@ -748,14 +745,9 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     const midX = vw / 2;
     const midY = vh / 2;
 
-    // candidatos
     const set = new Set();
-    for (const sel of AVOID_SELECTORS) {
-      for (const el of qsa(sel)) set.add(el);
-    }
-    for (const sel of EXCLUDE_SELECTORS) {
-      for (const el of qsa(sel)) set.delete(el);
-    }
+    for (const sel of AVOID_SELECTORS) for (const el of qsa(sel)) set.add(el);
+    for (const sel of EXCLUDE_SELECTORS) for (const el of qsa(sel)) set.delete(el);
     set.delete(elRoot);
 
     let topExtra = 0;
@@ -765,8 +757,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       if (!isVisibleEl(el)) continue;
 
       const r = el.getBoundingClientRect();
-
-      // filtra cuadrante para evitar empujes raros
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
 
@@ -776,14 +766,13 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       if (isLeft !== candLeft) continue;
       if (isTop !== candTop) continue;
 
-      // solo si hay overlap real
       if (!rectsOverlap(ptsRect, r, 8)) continue;
 
       if (isTop) {
-        const overlap = (r.bottom - ptsRect.top) + 10; // margin
+        const overlap = (r.bottom - ptsRect.top) + 10;
         topExtra = Math.max(topExtra, overlap);
       } else {
-        const overlap = (ptsRect.bottom - r.top) + 10; // margin
+        const overlap = (ptsRect.bottom - r.top) + 10;
         bottomExtra = Math.max(bottomExtra, overlap);
       }
     }
@@ -791,17 +780,14 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     applyExtraVars(topExtra, bottomExtra);
   }
 
-  // refresco ligero (por si alertas entran/salen)
   let avoidTimer = null;
   function startAvoidLoop() {
     if (!IS_PLAYER_PAGE) return;
     if (avoidTimer) return;
-    avoidTimer = setInterval(() => {
-      try { scheduleAvoidUpdate(); } catch (_) {}
-    }, 450);
+    avoidTimer = setInterval(() => { try { scheduleAvoidUpdate(); } catch (_) {} }, 450);
   }
 
-  // ───────────────────────── Drag & Drop (ALT o ptsEdit=1)
+  // ───────────────────────── Drag & Drop (ALT o ptsEdit=1) (FIX drift)
   function pickCornerFromRect(r) {
     const vw = window.innerWidth || 1;
     const vh = window.innerHeight || 1;
@@ -816,13 +802,16 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     const vw = window.innerWidth || 1;
     const vh = window.innerHeight || 1;
 
-    const x = (corner === "tl" || corner === "bl")
-      ? r.left
-      : (vw - r.right);
+    const uiTop = readCssPx("--ui-top-offset");
+    const topExtra = readCssPx("--rlcPtsTopExtra");
+    const bottomExtra = readCssPx("--rlcPtsBottomExtra");
 
+    const x = (corner === "tl" || corner === "bl") ? r.left : (vw - r.right);
+
+    // ✅ TOP: quita uiTop + topExtra para no “doble sumar” al persistir
     const y = (corner === "tl" || corner === "tr")
-      ? r.top  // ojo: aquí ya incluye ui-top-offset+extras, pero sirve como “sensación”
-      : (vh - r.bottom);
+      ? Math.max(0, r.top - uiTop - topExtra)
+      : Math.max(0, (vh - r.bottom) - bottomExtra);
 
     return { x: clamp(x, 0, 800), y: clamp(y, 0, 800) };
   }
@@ -835,35 +824,36 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     let pid = null;
     let startX = 0, startY = 0;
     let baseX = cfg.x || 12, baseY = cfg.y || 12;
-    let corner = cfg.pos || "tl";
 
     const canDragNow = () => editPersistent || editHeld;
 
     const onDown = (e) => {
       if (!canDragNow()) return;
       if (!e) return;
-
-      // solo botón izq o touch/pen
       if (e.pointerType === "mouse" && e.button !== 0) return;
 
       try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
 
       dragging = true;
-      applyExtraVars(0, 0); // evita jitter al arrastrar
+
+      // evita jitter durante drag
+      applyExtraVars(0, 0);
+      void elRoot.offsetWidth;
 
       pid = e.pointerId;
       try { card.setPointerCapture(pid); } catch (_) {}
 
-      const r = elRoot.getBoundingClientRect();
-      corner = pickCornerFromRect(r);
+      const r1 = elRoot.getBoundingClientRect();
+      const corner = pickCornerFromRect(r1);
 
-      // sincroniza corner al momento (snap al cuadrante)
       if (corner !== cfg.pos) {
         cfg = normalizeCfg({ ...cfg, pos: corner });
         setOverlayPos(cfg.pos);
+        void elRoot.offsetWidth;
       }
 
-      const off = computeOffsetsForCorner(cfg.pos, r);
+      const r2 = elRoot.getBoundingClientRect();
+      const off = computeOffsetsForCorner(cfg.pos, r2);
       baseX = off.x;
       baseY = off.y;
 
@@ -880,16 +870,13 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
 
-      let nextX = baseX + (cfg.pos === "tl" || cfg.pos === "bl" ? dx : -dx);
-      let nextY = baseY + (cfg.pos === "tl" || cfg.pos === "tr" ? dy : -dy);
+      let nextX = baseX + ((cfg.pos === "tl" || cfg.pos === "bl") ? dx : -dx);
+      let nextY = baseY + ((cfg.pos === "tl" || cfg.pos === "tr") ? dy : -dy);
 
       nextX = clamp(nextX, 0, 800);
       nextY = clamp(nextY, 0, 800);
 
-      // aplica en vivo (sin publicar aún)
       applyPosVars(nextX, nextY);
-
-      // actualiza cfg local (para que al soltar, guardemos eso)
       cfg = normalizeCfg({ ...cfg, x: nextX, y: nextY });
     };
 
@@ -900,10 +887,7 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       dragging = false;
       pid = null;
 
-      // guarda + publica (sincroniza con OBS / otras instancias)
       cfg = publishCfg(cfg);
-
-      // re-eval avoid después de recolocar
       scheduleAvoidUpdate();
     };
 
@@ -924,7 +908,6 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     setOverlayPos(cfg.pos);
     setOverlayScale(cfg.scale);
 
-    // offsets
     applyPosVars(cfg.x ?? 12, cfg.y ?? 12);
 
     if (elIcon) elIcon.textContent = cfg.icon || "💎";
@@ -960,37 +943,45 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       lastRenderValue = v;
     }
 
-    // anti-solape
     scheduleAvoidUpdate();
   }
 
-  // ───────────────────────── Control UI (IDs) (NO romper compat)
-  const ctlPtsOn = qs("#ctlPtsOn") || qs("#ctlPointsOn");
-  const ctlPtsName = qs("#ctlPtsName") || qs("#ctlPointsName");
-  const ctlPtsIcon = qs("#ctlPtsIcon") || qs("#ctlPointsIcon");
-  const ctlPtsValue = qs("#ctlPtsValue") || qs("#ctlPointsValue");
-  const ctlPtsGoal = qs("#ctlPtsGoal") || qs("#ctlPointsGoal");
-  const ctlPtsDelta = qs("#ctlPtsDelta") || qs("#ctlPointsDelta");
+  // ───────────────────────── CONTROL UI (FIX: refs dinámicas)
+  const ctl = {
+    on: null, name: null, icon: null, value: null, goal: null, delta: null,
+    showGoal: null, showDelta: null, pos: null, scale: null,
+    add: null, sub: null, apply: null, reset: null, copyUrl: null,
+    status: null, url: null
+  };
 
-  const ctlPtsShowGoal = qs("#ctlPtsShowGoal");
-  const ctlPtsShowDelta = qs("#ctlPtsShowDelta");
-  const ctlPtsPos = qs("#ctlPtsPos");
-  const ctlPtsScale = qs("#ctlPtsScale");
+  function refreshCtlRefs() {
+    ctl.on = qs("#ctlPtsOn") || qs("#ctlPointsOn");
+    ctl.name = qs("#ctlPtsName") || qs("#ctlPointsName");
+    ctl.icon = qs("#ctlPtsIcon") || qs("#ctlPointsIcon");
+    ctl.value = qs("#ctlPtsValue") || qs("#ctlPointsValue");
+    ctl.goal = qs("#ctlPtsGoal") || qs("#ctlPointsGoal");
+    ctl.delta = qs("#ctlPtsDelta") || qs("#ctlPointsDelta");
 
-  const ctlPtsAdd = qs("#ctlPtsAdd");
-  const ctlPtsSub = qs("#ctlPtsSub");
-  const ctlPtsApply = qs("#ctlPtsApply") || qs("#ctlPointsApply");
-  const ctlPtsReset = qs("#ctlPtsReset") || qs("#ctlPointsReset");
-  const ctlPtsCopyUrl = qs("#ctlPtsCopyUrl") || qs("#ctlPointsCopyUrl");
-  const ctlPtsStatus = qs("#ctlPtsStatus");
-  const ctlPtsUrl = qs("#ctlPtsUrl"); // opcional
+    ctl.showGoal = qs("#ctlPtsShowGoal");
+    ctl.showDelta = qs("#ctlPtsShowDelta");
+    ctl.pos = qs("#ctlPtsPos");
+    ctl.scale = qs("#ctlPtsScale");
+
+    ctl.add = qs("#ctlPtsAdd");
+    ctl.sub = qs("#ctlPtsSub");
+    ctl.apply = qs("#ctlPtsApply") || qs("#ctlPointsApply");
+    ctl.reset = qs("#ctlPtsReset") || qs("#ctlPointsReset");
+    ctl.copyUrl = qs("#ctlPtsCopyUrl") || qs("#ctlPointsCopyUrl");
+    ctl.status = qs("#ctlPtsStatus");
+    ctl.url = qs("#ctlPtsUrl");
+  }
 
   function setCtlStatus(text, ok = true) {
-    if (!ctlPtsStatus) return;
-    ctlPtsStatus.textContent = text;
+    if (!ctl.status) return;
+    ctl.status.textContent = text;
     try {
-      ctlPtsStatus.classList.toggle("pill--ok", !!ok);
-      ctlPtsStatus.classList.toggle("pill--bad", !ok);
+      ctl.status.classList.toggle("pill--ok", !!ok);
+      ctl.status.classList.toggle("pill--bad", !ok);
     } catch (_) {}
   }
 
@@ -1001,52 +992,66 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   }
 
   function buildOverlayUrl() {
-    const u = new URL(location.href);
-    u.searchParams.set("pts", "1");
-    if (KEY) u.searchParams.set("key", KEY);
-    u.searchParams.set("ptsOnly", "1");
-    return u.toString();
+    const base = new URL(location.href);
+
+    // ✅ Si estás en control.html, genera URL para index.html
+    base.pathname = base.pathname
+      .replace(/control\.html?$/i, "index.html")
+      .replace(/\/control$/i, "/index.html");
+
+    // limpia params y construye overlay points-only
+    base.search = "";
+
+    // conserva cache-bust si tienes APP_VERSION
+    const appV = String(g.APP_VERSION || "").trim();
+    if (appV) base.searchParams.set("v", appV);
+
+    base.searchParams.set("pts", "1");
+    base.searchParams.set("ptsOnly", "1");
+    if (KEY) base.searchParams.set("key", KEY);
+
+    return base.toString();
   }
 
   function syncControlUI() {
-    const isControl = !!(ctlPtsApply || ctlPtsValue || ctlPtsName);
+    const isControl = !!(ctl.apply || ctl.value || ctl.name);
     if (!isControl) return;
 
-    if (ctlPtsOn && !isEditing(ctlPtsOn)) ctlPtsOn.value = cfg.enabled ? "on" : "off";
-    if (ctlPtsName && !isEditing(ctlPtsName)) ctlPtsName.value = cfg.name || "";
-    if (ctlPtsIcon && !isEditing(ctlPtsIcon)) ctlPtsIcon.value = cfg.icon || "";
-    if (ctlPtsShowGoal && !isEditing(ctlPtsShowGoal)) ctlPtsShowGoal.value = cfg.showGoal ? "on" : "off";
-    if (ctlPtsShowDelta && !isEditing(ctlPtsShowDelta)) ctlPtsShowDelta.value = cfg.showDelta ? "on" : "off";
-    if (ctlPtsPos && !isEditing(ctlPtsPos)) ctlPtsPos.value = cfg.pos || "tl";
-    if (ctlPtsScale && !isEditing(ctlPtsScale)) ctlPtsScale.value = String(cfg.scale ?? 1);
+    if (ctl.on && !isEditing(ctl.on)) ctl.on.value = cfg.enabled ? "on" : "off";
+    if (ctl.name && !isEditing(ctl.name)) ctl.name.value = cfg.name || "";
+    if (ctl.icon && !isEditing(ctl.icon)) ctl.icon.value = cfg.icon || "";
+    if (ctl.showGoal && !isEditing(ctl.showGoal)) ctl.showGoal.value = cfg.showGoal ? "on" : "off";
+    if (ctl.showDelta && !isEditing(ctl.showDelta)) ctl.showDelta.value = cfg.showDelta ? "on" : "off";
+    if (ctl.pos && !isEditing(ctl.pos)) ctl.pos.value = cfg.pos || "tl";
+    if (ctl.scale && !isEditing(ctl.scale)) ctl.scale.value = String(cfg.scale ?? 1);
 
-    if (ctlPtsValue && !isEditing(ctlPtsValue)) ctlPtsValue.value = String(state.value | 0);
-    if (ctlPtsGoal && !isEditing(ctlPtsGoal)) ctlPtsGoal.value = String(state.goal | 0);
-    if (ctlPtsDelta && !isEditing(ctlPtsDelta) && !ctlPtsDelta.value) ctlPtsDelta.value = "10";
+    if (ctl.value && !isEditing(ctl.value)) ctl.value.value = String(state.value | 0);
+    if (ctl.goal && !isEditing(ctl.goal)) ctl.goal.value = String(state.goal | 0);
+    if (ctl.delta && !isEditing(ctl.delta) && !ctl.delta.value) ctl.delta.value = "10";
 
-    if (ctlPtsUrl && !isEditing(ctlPtsUrl)) ctlPtsUrl.value = buildOverlayUrl();
+    if (ctl.url && !isEditing(ctl.url)) ctl.url.value = buildOverlayUrl();
 
     setCtlStatus(cfg.enabled ? `ON · ${fmtK(state.value | 0)} · Drag: ALT` : "OFF", !!cfg.enabled);
   }
 
   function readControlCfg() {
     const out = Object.assign({}, cfg);
-    if (ctlPtsOn) out.enabled = (ctlPtsOn.value !== "off");
-    if (ctlPtsName) out.name = String(ctlPtsName.value || out.name || CFG_DEFAULTS.name).trim();
-    if (ctlPtsIcon) out.icon = String(ctlPtsIcon.value || out.icon || CFG_DEFAULTS.icon).trim();
+    if (ctl.on) out.enabled = (ctl.on.value !== "off");
+    if (ctl.name) out.name = String(ctl.name.value || out.name || CFG_DEFAULTS.name).trim();
+    if (ctl.icon) out.icon = String(ctl.icon.value || out.icon || CFG_DEFAULTS.icon).trim();
 
-    if (ctlPtsShowGoal) out.showGoal = (ctlPtsShowGoal.value !== "off");
-    if (ctlPtsShowDelta) out.showDelta = (ctlPtsShowDelta.value !== "off");
-    if (ctlPtsPos) out.pos = String(ctlPtsPos.value || out.pos || "tl").trim().toLowerCase();
-    if (ctlPtsScale) out.scale = clamp(num(ctlPtsScale.value, out.scale ?? 1), 0.6, 1.8);
+    if (ctl.showGoal) out.showGoal = (ctl.showGoal.value !== "off");
+    if (ctl.showDelta) out.showDelta = (ctl.showDelta.value !== "off");
+    if (ctl.pos) out.pos = String(ctl.pos.value || out.pos || "tl").trim().toLowerCase();
+    if (ctl.scale) out.scale = clamp(num(ctl.scale.value, out.scale ?? 1), 0.6, 1.8);
 
     return normalizeCfg(out);
   }
 
   function readControlState() {
     const out = Object.assign({}, state);
-    if (ctlPtsValue) out.value = Math.max(0, (parseInt(ctlPtsValue.value || "0", 10) || 0));
-    if (ctlPtsGoal) out.goal = Math.max(0, (parseInt(ctlPtsGoal.value || "0", 10) || 0));
+    if (ctl.value) out.value = Math.max(0, (parseInt(ctl.value.value || "0", 10) || 0));
+    if (ctl.goal) out.goal = Math.max(0, (parseInt(ctl.goal.value || "0", 10) || 0));
     out.updatedAt = Date.now();
     return normalizeState(out);
   }
@@ -1060,11 +1065,11 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   }
 
   function applyDelta(sign) {
-    const d = clamp(parseInt(ctlPtsDelta?.value || "10", 10) || 10, 1, 999999);
+    const d = clamp(parseInt(ctl.delta?.value || "10", 10) || 10, 1, 999999);
     const cur = state.value | 0;
     const next = Math.max(0, cur + (sign > 0 ? d : -d));
     state = publishState({ ...state, value: next, updatedAt: Date.now() });
-    if (ctlPtsValue && !isEditing(ctlPtsValue)) ctlPtsValue.value = String(next);
+    if (ctl.value && !isEditing(ctl.value)) ctl.value.value = String(next);
     renderOverlay();
     syncControlUI();
   }
@@ -1119,26 +1124,23 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     if (!card) return false;
     const a = document.activeElement;
     if (a && card.contains(a)) return true;
-    try {
-      const t = e?.target;
-      if (t && card.contains(t)) return true;
-    } catch (_) {}
+    try { const t = e?.target; if (t && card.contains(t)) return true; } catch (_) {}
     return false;
   }
 
   function bindControl() {
-    const isControl = !!(ctlPtsApply || ctlPtsValue || ctlPtsName);
+    const isControl = !!(ctl.apply || ctl.value || ctl.name);
     if (!isControl) return;
 
     const doApply = () => applyControlAll();
     const doApplyDeb = debounce(doApply, 170);
 
-    try { ctlPtsApply?.addEventListener?.("click", doApply); } catch (_) {}
-    try { ctlPtsAdd?.addEventListener?.("click", () => applyDelta(+1)); } catch (_) {}
-    try { ctlPtsSub?.addEventListener?.("click", () => applyDelta(-1)); } catch (_) {}
-    try { ctlPtsReset?.addEventListener?.("click", resetAll); } catch (_) {}
+    try { ctl.apply?.addEventListener?.("click", doApply); } catch (_) {}
+    try { ctl.add?.addEventListener?.("click", () => applyDelta(+1)); } catch (_) {}
+    try { ctl.sub?.addEventListener?.("click", () => applyDelta(-1)); } catch (_) {}
+    try { ctl.reset?.addEventListener?.("click", resetAll); } catch (_) {}
 
-    const live = [ctlPtsOn, ctlPtsName, ctlPtsIcon, ctlPtsShowGoal, ctlPtsShowDelta, ctlPtsPos, ctlPtsScale, ctlPtsValue, ctlPtsGoal];
+    const live = [ctl.on, ctl.name, ctl.icon, ctl.showGoal, ctl.showDelta, ctl.pos, ctl.scale, ctl.value, ctl.goal];
     for (const el of live) {
       if (!el) continue;
       try { el.addEventListener("change", doApply); } catch (_) {}
@@ -1146,11 +1148,11 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     }
 
     try {
-      ctlPtsCopyUrl?.addEventListener?.("click", async () => {
+      ctl.copyUrl?.addEventListener?.("click", async () => {
         const url = buildOverlayUrl();
         const ok = await copyToClipboard(url);
-        try { ctlPtsCopyUrl.textContent = ok ? "Copiado ✅" : "Error ❌"; } catch (_) {}
-        setTimeout(() => { try { ctlPtsCopyUrl.textContent = "Copiar URL overlay"; } catch (_) {} }, 1200);
+        try { ctl.copyUrl.textContent = ok ? "Copiado ✅" : "Error ❌"; } catch (_) {}
+        setTimeout(() => { try { ctl.copyUrl.textContent = "Copiar URL overlay"; } catch (_) {} }, 1200);
       });
     } catch (_) {}
 
@@ -1168,7 +1170,7 @@ body.rlcPtsOnly .controlWrap{display:none!important}
     syncControlUI();
   }
 
-  // ───────────────────────── Receive bus messages (DEDUP por tipo)
+  // ───────────────────────── Receive bus messages (DEDUP simple)
   const lastSeenByType = { PTS_CFG: 0, PTS_STATE: 0 };
 
   function shouldAcceptMsg(msg) {
@@ -1255,6 +1257,9 @@ body.rlcPtsOnly .controlWrap{display:none!important}
   onReady(() => {
     ensureControlCard();
 
+    // ✅ MUY IMPORTANTE: re-query refs después de inyectar
+    refreshCtlRefs();
+
     if (overlayOnlyMode) {
       try {
         document.documentElement.classList.add("rlcPtsOnly");
@@ -1276,11 +1281,13 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       state = publishState(state);
     }
 
+    // re-sync UI
+    refreshCtlRefs();
     bindControl();
+
     renderOverlay();
     syncControlUI();
 
-    // Edit mode: ALT hold
     if (IS_PLAYER_PAGE) {
       try {
         document.addEventListener("keydown", (e) => {
@@ -1296,10 +1303,7 @@ body.rlcPtsOnly .controlWrap{display:none!important}
       bindDrag();
       startAvoidLoop();
 
-      // recompute al cambiar tamaño
-      try {
-        window.addEventListener("resize", () => scheduleAvoidUpdate(), { passive: true });
-      } catch (_) {}
+      try { window.addEventListener("resize", () => scheduleAvoidUpdate(), { passive: true }); } catch (_) {}
     }
   });
 })();
