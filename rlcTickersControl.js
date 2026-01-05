@@ -415,7 +415,7 @@
       const lang = safeStr(c.lang);
       c.lang = (lang === "es" || lang === "en" || lang === "auto") ? lang : "auto";
 
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 160);
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 160);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 90);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 160);
       c.hideOnVote = (c.hideOnVote !== false);
@@ -462,7 +462,7 @@
 
           <div class="rlcCtlRow">
             <label>Speed (px/s)</label>
-            <input id="ctlTickerSpeed" type="number" min="20" max="160" step="1" />
+            <input id="ctlTickerSpeed" type="number" min="5" max="160" step="1" />
           </div>
 
           <div class="rlcCtlRow">
@@ -856,7 +856,7 @@
     function normalizeCfg(inCfg) {
       const c = Object.assign({}, DEFAULTS, inCfg || {});
       c.enabled = (c.enabled !== false);
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 160);
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 160);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 30);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 160);
       c.hideOnVote = (c.hideOnVote !== false);
@@ -898,7 +898,7 @@
 
           <div class="rlcCtlRow">
             <label>Speed (px/s)</label>
-            <input id="ctlEconSpeed" type="number" min="20" max="160" step="1" />
+            <input id="ctlEconSpeed" type="number" min="5" max="160" step="1" />
           </div>
 
           <div class="rlcCtlRow">
