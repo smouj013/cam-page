@@ -1,7 +1,13 @@
-/* app.js — RLC Player v2.3.9 PRO (ADMIN COMMANDS HOTFIX)
-   ✅ FIX CRÍTICO (por lo que NO te iban los botones del panel admin):
+/* app.js — RLC Player v2.3.9 PRO (ADMIN COMMANDS HOTFIX + CHAT ANNOUNCE ON REAL PLAY)
+   ✅ FIX CRÍTICO:
       - NO usar (x | 0) con timestamps (Date.now()) → overflow 32-bit → comandos descartados.
       - Ahora ts se trata como Number (ms) y se aceptan ts/tsMs/t/seq.
+   ✅ NUEVO:
+      - Anuncio al chat al cambiar de cámara, SOLO cuando realmente se ve/arranca:
+        * YouTube: cuando avanza currentTime (infoDelivery)
+        * HLS: en onplaying
+        * Image: en onload
+      - Evita anunciar cams que fallan/son saltadas.
    ✅ Mantiene TODO lo tuyo (v2.3.8 PRO) + refuerzos:
       - Polling LS + BC + postMessage
       - Dedup robusto por firma + ventana temporal
@@ -135,6 +141,11 @@
     const ytCookiesExplicit = (ytCookiesParam != null) || (ytSessionParam != null);
     const ytCookies = ytCookiesExplicit ? parseBoolParam((ytCookiesParam ?? ytSessionParam), true) : true;
 
+    // ✅ Nuevo: anunciar cam al chat (solo aplica si OWNER_MODE y hay twitchChannel)
+    const sayCamParam = (u.searchParams.get("sayCam") ?? u.searchParams.get("camSay") ?? u.searchParams.get("botCam") ?? null);
+    const sayCamExplicit = (sayCamParam != null);
+    const sayCam = sayCamExplicit ? parseBoolParam(sayCamParam, true) : false;
+
     return {
       mins: clamp(toInt(u.searchParams.get("mins") || "5", 5), 1, 120),
       fit: (u.searchParams.get("fit") || "cover"),
@@ -190,6 +201,10 @@
       startTimeoutMs,
       stallTimeoutMs,
       maxStalls,
+
+      // new
+      sayCam,
+      sayCamExplicit
     };
   }
 
@@ -603,6 +618,77 @@
     return true;
   }
 
+  // ───────────────────────── “Say cam on real play” (NEW) ─────────────────────────
+  // Default: ON en OWNER_MODE salvo que ?sayCam=0
+  let sayCamEnabled = (P.sayCamExplicit ? !!P.sayCam : OWNER_MODE);
+
+  let announceToken = 0;
+  let announceDone = false;
+  let announceCamId = "";
+  let announceKind = "";
+
+  function camAnnounceText(cam) {
+    const t = String(cam?.title || "Live Cam").trim();
+    const p = String(cam?.place || "").trim();
+    const s = String(cam?.source || "").trim();
+
+    let msg = `📡 Ahora: ${t}`;
+    if (p) msg += ` — ${p}`;
+    if (s) msg += ` · ${s}`;
+
+    // Extra: índice (útil)
+    try {
+      const total = Math.max(1, cams.length || 1);
+      msg += `  (${idx + 1}/${total})`;
+    } catch (_) {}
+
+    return msg.slice(0, 470);
+  }
+
+  function resetCamAnnounce(tok, cam) {
+    announceToken = tok | 0;
+    announceDone = false;
+    announceCamId = String(cam?.id ?? "");
+    announceKind = String(cam?.kind ?? "");
+  }
+
+  function maybeAnnounceCam(tok, cam, why = "") {
+    if (!sayCamEnabled) return;
+    if (!OWNER_MODE || !twitchChannel) return;
+    if (!cam) return;
+    if ((tok | 0) !== (announceToken | 0)) return;
+    if (announceDone) return;
+
+    // Seguridad extra: no anunciar si ya estamos en fallback/oculto
+    // (por si alguien llama a esto fuera de contexto)
+    try {
+      if (cam.kind === "youtube" && frame?.classList?.contains?.("hidden")) return;
+      if (cam.kind === "hls" && video?.classList?.contains?.("hidden")) return;
+      if (cam.kind === "image" && img?.classList?.contains?.("hidden")) return;
+    } catch (_) {}
+
+    // Dedupe por id si por algún motivo se reintenta el mismo token/cam
+    const id = String(cam.id ?? "");
+    if (id && announceCamId && id !== announceCamId) {
+      // si cambió id, reseteamos (raro)
+      announceCamId = id;
+    }
+
+    announceDone = true;
+
+    const text = camAnnounceText(cam);
+    botSay(text);
+
+    emitEvent("CAM_CHAT_ANNOUNCE", {
+      id: String(cam.id ?? ""),
+      kind: String(cam.kind ?? ""),
+      title: String(cam.title ?? ""),
+      place: String(cam.place ?? ""),
+      source: String(cam.source ?? ""),
+      why: String(why || "")
+    });
+  }
+
   // ───────────────────────── Health watchdog ─────────────────────────
   let playToken = 0;
   let startTimer = null;
@@ -1013,7 +1099,10 @@
         const st = (data.info != null) ? (data.info | 0) : -999;
         ytLastState = st;
         if (st === 0) { emitEvent("YT_ENDED", {}); healthFail(tok, cam, "yt_ended"); return; }
-        if (st === 1 || st === 3) { ytLastGoodAt = nowMs(); healthProgress(tok); return; }
+        // ✅ Importante: NO anunciamos aquí (puede “decir playing” y luego caer).
+        // El anuncio va cuando haya progreso real de currentTime (infoDelivery).
+        if (st === 1) { ytLastGoodAt = nowMs(); healthProgress(tok); return; }
+        if (st === 3) { ytLastGoodAt = nowMs(); healthProgress(tok); return; }
         return;
       }
 
@@ -1025,6 +1114,9 @@
             ytLastTime = ct;
             ytLastGoodAt = nowMs();
             healthProgress(tok);
+
+            // ✅ Anuncia SOLO cuando hay progreso real (se está viendo/reproduciendo)
+            maybeAnnounceCam(tok, cam, "yt_time_progress");
           }
         }
         return;
@@ -1932,6 +2024,9 @@
     playToken++;
     const tok = playToken;
 
+    // ✅ Reset anuncio “solo cuando se ve”
+    resetCamAnnounce(tok, cam);
+
     if (cam.kind === "youtube") {
       showOnly("youtube");
       healthExpectStart(tok, cam, "youtube");
@@ -1982,7 +2077,11 @@
       };
 
       if (img) {
-        img.onload = () => healthProgress(tok);
+        img.onload = () => {
+          healthProgress(tok);
+          // ✅ aquí ya “se ve”
+          maybeAnnounceCam(tok, cam, "image_onload");
+        };
         img.onerror = () => { if (!autoskip) return; img.onerror = null; healthFail(tok, cam, "image_error"); };
       }
 
@@ -2003,7 +2102,13 @@
 
       video.onloadeddata = () => healthProgress(tok);
       video.oncanplay = () => { healthProgress(tok); safePlayVideo(); };
-      video.onplaying = () => healthProgress(tok);
+
+      // ✅ anunciar SOLO cuando está reproduciendo de verdad
+      video.onplaying = () => {
+        healthProgress(tok);
+        maybeAnnounceCam(tok, cam, "hls_onplaying");
+      };
+
       video.ontimeupdate = () => healthProgress(tok);
 
       video.onwaiting = () => healthStall(tok, cam, "waiting");
@@ -2106,6 +2211,9 @@
     bgmEnabled = true;
     ytCookiesEnabled = true;
 
+    // mantener sayCamEnabled por defecto (OWNER_MODE), salvo query explicit
+    sayCamEnabled = (P.sayCamExplicit ? !!P.sayCam : OWNER_MODE);
+
     applyFilters();
     setFit("cover");
     setRoundMins(5);
@@ -2182,6 +2290,9 @@
       owner: OWNER_MODE ? 1 : 0,
 
       tagVote: { active: tagVoteActive ? 1 : 0 },
+
+      // ✅ nuevo
+      sayCam: sayCamEnabled ? 1 : 0,
 
       ...extra
     };
@@ -2359,6 +2470,15 @@
         postState({ reason: "twitch" });
       } break;
 
+      // ✅ nuevo: togglear anuncio
+      case "SET_SAYCAM":
+      case "SAYCAM":
+      case "SET_SAY_CAM":
+      case "SAY_CAM":
+        sayCamEnabled = !!(payload?.enabled ?? payload?.value ?? payload ?? true);
+        postState({ reason: "say_cam" }, true);
+        break;
+
       case "SET_VOTE":
       case "VOTE": {
         if (isObj(payload)) {
@@ -2529,6 +2649,10 @@
           if (payload.mins != null) setRoundMins(payload.mins);
           if (payload.fit != null) setFit(String(payload.fit));
           if (payload.autoskip != null) autoskip = !!payload.autoskip;
+
+          if (payload.sayCam != null || payload.say_cam != null) {
+            sayCamEnabled = !!(payload.sayCam ?? payload.say_cam);
+          }
 
           if (payload.adfree != null) {
             const want = !!payload.adfree;
@@ -2703,7 +2827,7 @@
     try {
       const cam = cams[idx] || {};
       const data = {
-        v: 5,
+        v: 6,
         ts: nowMs(),
         key: KEY || "",
         version: VERSION,
@@ -2741,7 +2865,10 @@
 
         ads: { enabled: !!adsEnabled, adLead: adLeadDefaultSec | 0, showDuring: !!adShowDuring, chatText: adChatText || "" },
 
-        bgm: { enabled: !!bgmEnabled, vol: +bgmVol || 0, idx: bgmIdx | 0, playing: !!bgmPlaying }
+        bgm: { enabled: !!bgmEnabled, vol: +bgmVol || 0, idx: bgmIdx | 0, playing: !!bgmPlaying },
+
+        // new
+        sayCam: !!sayCamEnabled
       };
 
       const raw = JSON.stringify(data);
@@ -2882,6 +3009,11 @@
     else if (saved?.twitch) twitchChannel = String(saved.twitch || "").trim().replace(/^@/, "");
     else if (OWNER_MODE) twitchChannel = readBotCfgChannel() || OWNER_DEFAULT_TWITCH;
     else twitchChannel = P.twitch || "";
+
+    // sayCam (URL manda)
+    if (P.sayCamExplicit) sayCamEnabled = !!P.sayCam;
+    else if (saved && typeof saved.sayCam === "boolean") sayCamEnabled = !!saved.sayCam;
+    else sayCamEnabled = OWNER_MODE;
 
     if (saved && typeof saved === "object") {
       if (saved.playing != null) playing = !!saved.playing;
