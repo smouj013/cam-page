@@ -482,7 +482,7 @@
       const out = {};
       if (P.ticker === "1" || P.ticker === "true") out.enabled = true;
       if (P.tickerLang === "es" || P.tickerLang === "en" || P.tickerLang === "auto") out.lang = P.tickerLang;
-      if (P.tickerSpeed) out.speedPxPerSec = clamp(num(P.tickerSpeed, DEFAULTS.speedPxPerSec), 20, 140);
+      if (P.tickerSpeed) out.speedPxPerSec = clamp(num(P.tickerSpeed, DEFAULTS.speedPxPerSec), 5, 140);
       if (P.tickerRefresh) out.refreshMins = clamp(num(P.tickerRefresh, DEFAULTS.refreshMins), 3, 60);
       if (P.tickerTop) out.topPx = clamp(num(P.tickerTop, DEFAULTS.topPx), 0, 180);
       if (P.tickerHideOnVote === "0") out.hideOnVote = false;
@@ -512,7 +512,7 @@
       const c = Object.assign({}, inCfg || {});
       c.enabled = (c.enabled !== false);
       c.lang = (c.lang === "es" || c.lang === "en" || c.lang === "auto") ? c.lang : "auto";
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 140);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 180);
       c.hideOnVote = (c.hideOnVote !== false);
