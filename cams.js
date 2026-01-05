@@ -462,6 +462,16 @@
       originUrl: "https://www.youtube.com/watch?v=YRZMwOqHIEE",
       tags: ["beach","brazil"]
     },
+    {
+      id: "caracas_venezuela",
+      title: "Caracas — Live Cam",
+      place: "Caracas, Venezuela",
+      source: "Caracas (YouTube)",
+      kind: "youtube",
+      youtubeId: "VWbQN94LAOI",
+      originUrl: "https://www.youtube.com/watch?v=VWbQN94LAOI",
+      tags: ["beach","brazil"]
+    },
 
     // ✅ USA — CASA BLANCA
     {
