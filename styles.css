@@ -1,10 +1,10 @@
 /* styles.css — RLC Neo-Atlas TV (WORLD CAMS) v3.7.4 (NEWSROOM/BLACKCAST) — FULL
    ✅ Compatible con: index.html (player) + control.html (control)
    ✅ NO rompe IDs/clases existentes (hud/vote/chat/control/tickers)
-   ✅ Look “TV broadcast” (negro sobrio + acentos mínimos) + overlays integrados
-   ✅ Chat tipo “globo” SIN :has (0 fallos por compat/validadores)
-   ✅ FIX CLAVE: elimina “panel negro” detrás del chat en navegadores sin backdrop-filter
-   ✅ Tickers top (NEWS + ECON) con estética TV y stacking limpio
+   ✅ Look “TV broadcast” refinado (más contraste, tipografía más legible)
+   ✅ Chat bubbles MUCHO más sólidos: mejor lectura, mejor tail, mejor nombre, fade suave
+   ✅ 100% sin :has (compat/validadores)
+   ✅ FIX CLAVE mantenido: elimina “panel negro” detrás del chat en browsers sin backdrop-filter
    ✅ Offset robusto: --ui-top-offset = --rlcTickerH
    ✅ Fallbacks Opera GX / Safari / sin backdrop / sin mask
 */
@@ -77,11 +77,7 @@
   --rlcBarH: 34px;        /* altura barra */
   --rlcTickerTop: 10px;   /* top base (fallback) */
   --rlcTickerGap: 6px;    /* gap entre barras */
-
-  /* JS setea: altura total de barras (incluyendo gap si hay 2) */
-  --rlcTickerH: 0px;
-
-  /* Offset overlays */
+  --rlcTickerH: 0px;      /* JS setea altura total real */
   --ui-top-offset: var(--rlcTickerH, 0px);
 
   /* Broadcast vibe */
@@ -90,23 +86,33 @@
   --vignette-opacity: .52;
 
   /* Media */
-  --media-filter: none; /* ejemplo: contrast(1.03) saturate(1.02) */
+  --media-filter: none;
 
-  /* ───────── CHAT (MEJORADO) ───────── */
+  /* ───────── CHAT ───────── */
   --chatW: min(440px, calc(100vw - 24px));
   --chatMaxH: min(48vh, 560px);
   --chatAvatar: 34px;
   --chatGap: 10px;
 
-  /* Burbuja TV (más legible sobre vídeo) */
-  --chatBubbleA: rgba(14,18,28,.80);
-  --chatBubbleB: rgba(10,14,22,.62);
-  --chatBubbleStroke: rgba(255,255,255,.15);
+  /* Chat bubble (más contraste + texto más legible) */
+  --chatBubbleA: rgba(16,20,30,.86);
+  --chatBubbleB: rgba(10,12,18,.62);
+  --chatBubbleStroke: rgba(255,255,255,.16);
   --chatBubbleGlow: rgba(87,201,255,.14);
-  --chatNameBg: rgba(0,0,0,.32);
+  --chatBubbleShadow: 0 14px 32px rgba(0,0,0,.36);
 
+  /* Nombre */
+  --chatNameBgA: rgba(0,0,0,.40);
+  --chatNameBgB: rgba(0,0,0,.24);
+
+  /* Texto chat */
   --chatText: rgba(255,255,255,.94);
-  --chatShadow: 0 14px 34px rgba(0,0,0,.42);
+  --chatTextSoft: rgba(255,255,255,.78);
+  --chatLink: rgba(87,201,255,.92);
+
+  /* Tail */
+  --chatTailSize: 12px;
+  --chatTailLift: 10px;
 }
 
 /* Hooks opcionales */
@@ -195,9 +201,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 *::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.24); }
 
 /* ───────────────────────── TOP TICKERS (NEWS + ECON) ───────────────────────── */
-/* Nota: index.html suele tener inline con !important para position/left/right/top.
-   Aquí definimos la “piel TV” del ticker y su contenido interno. */
-
 #rlcNewsTicker,
 #rlcEconTicker{
   position: fixed;
@@ -343,7 +346,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   overflow:hidden;
   white-space: nowrap;
   font-size: 12.5px;
-  color: rgba(255,255,255,.92);
+  color: rgba(255,255,255,.90);
   text-shadow: 0 2px 10px rgba(0,0,0,.40);
 }
 
@@ -731,13 +734,9 @@ input[type="range"]{ accent-color: var(--accent); }
   transform: translate3d(0,0,0);
   animation: rlcHudMarquee var(--hudMarqueeDur) linear infinite;
 }
-.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{
-  left: calc(100% + var(--hudMarqueeGap));
-}
+.hud.hud--collapsed .hudTitle[data-marquee="1"]::after{ left: calc(100% + var(--hudMarqueeGap)); }
 .hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::before,
-.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::after{
-  animation-play-state: paused;
-}
+.hud.hud--collapsed .hudTitle[data-marquee="1"]:hover::after{ animation-play-state: paused; }
 
 .hudRight{
   display:flex;
@@ -847,7 +846,7 @@ input[type="range"]{ accent-color: var(--accent); }
 }
 .hudValue{
   font-size: 12px;
-  color: rgba(255,255,255,.90);
+  color: rgba(255,255,255,.88);
   min-width: 0;
   white-space: normal;
 }
@@ -969,7 +968,7 @@ input[type="range"]{ accent-color: var(--accent); }
 .voteHint{
   padding: 8px 10px 10px;
   font-size: 12px;
-  color: rgba(255,255,255,.66);
+  color: rgba(255,255,255,.64);
   line-height: 1.32;
 }
 .voteBars{ padding: 0 10px 12px; display:grid; gap: 8px; }
@@ -1030,12 +1029,8 @@ input[type="range"]{ accent-color: var(--accent); }
   opacity:.85;
 }
 
-/* ───────────────────────── CHAT OVERLAY (MEJORADO) ───────────────────────── */
-/* ✅ 100% sin :has
-   - FILA nunca pinta fondo (evita “panel negro”)
-   - Burbujas más legibles y “broadcast”
-   - Texto con mejor contraste + sombra suave
-*/
+/* ───────────────────────── CHAT OVERLAY (BUBBLES + AVATAR + NAME) ───────────────────────── */
+/* ✅ Objetivo: burbujas más “TV”, más legibles, sin panel negro, sin :has. */
 
 .rlcChatRoot{
   position:absolute;
@@ -1047,27 +1042,28 @@ input[type="range"]{ accent-color: var(--accent); }
   pointer-events:none;
   display:none;
 
-  /* lift sin panel */
-  filter: drop-shadow(0 14px 26px rgba(0,0,0,.35));
+  /* evita “bloques” por herencias raras */
+  background: transparent !important;
 }
 .rlcChatRoot.chat--on{ display:block !important; }
 
+/* Lista: apila mensajes hacia abajo; con fade superior suave */
 #rlcChatList{
   position:relative;
   display:flex;
   flex-direction:column;
   justify-content:flex-end;
-  gap: 12px;
+  gap: 10px;
   max-height: var(--chatMaxH);
   overflow:hidden;
-  padding: 4px;
+  padding: 2px;
+
+  /* fade superior (si soporta mask) */
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
 }
 
-/* Fade suave a mensajes viejos (opcional pero queda pro) */
-#rlcChatList > *:nth-last-child(n+7){ opacity:.82; }
-#rlcChatList > *:nth-last-child(n+10){ opacity:.72; }
-
-/* Cada mensaje (FILA): ✅ NUNCA debe pintar fondo */
+/* Cada mensaje (fila): jamás pinta fondo */
 #rlcChatList > *{
   pointer-events:none;
   position: relative;
@@ -1076,11 +1072,14 @@ input[type="range"]{ accent-color: var(--accent); }
   gap: var(--chatGap);
   min-width: 0;
 
-  background: transparent !important; /* FIX “panel negro” */
+  background: transparent !important; /* FIX panel negro */
+  border: 0 !important;
+  box-shadow: none !important;
+
   animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
 }
 
-/* Avatar */
+/* Avatar (si existe) */
 #rlcChatList > * img,
 #rlcChatList > * .avatar,
 #rlcChatList > * .pfp{
@@ -1088,145 +1087,145 @@ input[type="range"]{ accent-color: var(--accent); }
   height: var(--chatAvatar);
   border-radius: 999px;
   object-fit: cover;
-  border: 1px solid rgba(255,255,255,.14);
+  flex: 0 0 auto;
+
+  border: 1px solid rgba(255,255,255,.18);
   background: rgba(255,255,255,.06);
   box-shadow:
-    0 10px 22px rgba(0,0,0,.42),
-    0 0 0 3px rgba(0,0,0,.22),
-    0 0 0 1px rgba(87,201,255,.18) inset;
-  flex: 0 0 auto;
-  opacity: .98;
+    0 12px 26px rgba(0,0,0,.42),
+    0 0 0 1px rgba(87,201,255,.10) inset;
 }
 
-/* Nombre (pill) */
+/* Nombre: pill encima de la burbuja */
 #rlcChatList > * .name,
 #rlcChatList > * .user,
 #rlcChatList > * .author,
 #rlcChatList > * .nick{
   position:absolute;
   left: calc(var(--chatAvatar) + var(--chatGap));
-  top: -11px;
+  top: -12px;
 
   font: 950 11px/1 var(--sans);
-  letter-spacing: .05em;
+  letter-spacing: .04em;
   color: rgba(255,255,255,.92);
 
-  padding: 5px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(0,0,0,.36), rgba(0,0,0,.22));
-  box-shadow: 0 12px 22px rgba(0,0,0,.32);
-  z-index: 2;
+  border: 1px solid rgba(255,255,255,.14);
+  background: linear-gradient(180deg, var(--chatNameBgA), var(--chatNameBgB));
+  box-shadow: 0 12px 24px rgba(0,0,0,.36);
+  z-index: 3;
 
   max-width: calc(100% - (var(--chatAvatar) + var(--chatGap)));
   overflow:hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
-/* Bubble preferido */
+/* ───── Burbuja preferida (wrappers típicos) ───── */
 #rlcChatList > * .msg,
 #rlcChatList > * .message,
 #rlcChatList > * .body{
   flex: 1 1 auto;
   min-width: 0;
 
-  border-radius: 18px;
+  border-radius: 16px;
   border: 1px solid var(--chatBubbleStroke);
   background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
   box-shadow:
-    var(--chatShadow),
+    var(--chatBubbleShadow),
     0 0 0 1px var(--chatBubbleGlow) inset;
 
-  backdrop-filter: blur(14px) saturate(1.15);
-  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(12px) saturate(1.12);
+  -webkit-backdrop-filter: blur(12px) saturate(1.12);
 
-  padding: 11px 12px 10px;
-  font-size: 12.75px;
-  line-height: 1.32;
+  padding: 10px 12px 11px;
+
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
   color: var(--chatText);
-  text-shadow: 0 2px 10px rgba(0,0,0,.38);
-  white-space: normal;
+  text-shadow: 0 2px 10px rgba(0,0,0,.34);
 
+  white-space: normal;
   position: relative;
-  z-index: 1;
+  z-index: 2;
 }
 
-/* Strip broadcast (más pro: no ocupa todo el borde) */
+/* Strip broadcast (igual que HUD/Vote, pero más fino) */
 #rlcChatList > * .msg::before,
 #rlcChatList > * .message::before,
 #rlcChatList > * .body::before{
   content:"";
   position:absolute;
-  left: 10px;
-  right: 10px;
-  top: 0;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255,53,90,.62), rgba(87,201,255,.52), rgba(71,215,155,.46));
-  opacity:.86;
+  left:0; right:0; top:0;
+  height:2px;
+  border-radius: 16px 16px 0 0;
+  background: linear-gradient(90deg, rgba(255,53,90,.55), rgba(87,201,255,.45));
+  opacity:.82;
   pointer-events:none;
 }
 
-/* Tail (apunta al avatar) */
+/* Tail (mejorado) */
 #rlcChatList > * .msg::after,
 #rlcChatList > * .message::after,
 #rlcChatList > * .body::after{
   content:"";
   position:absolute;
-  left: -6px;
-  bottom: 12px;
-  width: 12px;
-  height: 12px;
+  left: calc(-1 * (var(--chatTailSize) / 2));
+  bottom: var(--chatTailLift);
+  width: var(--chatTailSize);
+  height: var(--chatTailSize);
   background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
   border-left: 1px solid var(--chatBubbleStroke);
   border-bottom: 1px solid var(--chatBubbleStroke);
   transform: rotate(45deg);
   border-bottom-left-radius: 3px;
-  filter: drop-shadow(0 8px 10px rgba(0,0,0,.18));
+  box-shadow: -6px 10px 18px rgba(0,0,0,.18);
 }
 
-/* Fallback (sin wrapper): estiliza un hijo “contenido” típico */
+/* ───── Fallback (sin wrapper): estiliza hijo “contenido” típico ───── */
 #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp),
 #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick),
 #rlcChatList > * > p{
   flex: 1 1 auto;
   min-width: 0;
 
-  border-radius: 18px;
+  border-radius: 16px;
   border: 1px solid var(--chatBubbleStroke);
   background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
   box-shadow:
-    var(--chatShadow),
+    var(--chatBubbleShadow),
     0 0 0 1px var(--chatBubbleGlow) inset;
 
-  backdrop-filter: blur(14px) saturate(1.15);
-  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(12px) saturate(1.12);
+  -webkit-backdrop-filter: blur(12px) saturate(1.12);
 
-  padding: 11px 12px 10px;
-  font-size: 12.75px;
-  line-height: 1.32;
+  padding: 10px 12px 11px;
+
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
   color: var(--chatText);
-  text-shadow: 0 2px 10px rgba(0,0,0,.38);
+  text-shadow: 0 2px 10px rgba(0,0,0,.34);
+
   white-space: normal;
-
   position: relative;
-  z-index: 1;
+  z-index: 2;
 }
-
-/* Strip + Tail fallback hijo */
 #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::before,
 #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::before,
 #rlcChatList > * > p::before{
   content:"";
   position:absolute;
-  left: 10px;
-  right: 10px;
-  top: 0;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255,53,90,.62), rgba(87,201,255,.52), rgba(71,215,155,.46));
-  opacity:.86;
+  left:0; right:0; top:0;
+  height:2px;
+  border-radius: 16px 16px 0 0;
+  background: linear-gradient(90deg, rgba(255,53,90,.55), rgba(87,201,255,.45));
+  opacity:.82;
   pointer-events:none;
 }
 #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::after,
@@ -1234,33 +1233,62 @@ input[type="range"]{ accent-color: var(--accent); }
 #rlcChatList > * > p::after{
   content:"";
   position:absolute;
-  left: -6px;
-  bottom: 12px;
-  width: 12px;
-  height: 12px;
+  left: calc(-1 * (var(--chatTailSize) / 2));
+  bottom: var(--chatTailLift);
+  width: var(--chatTailSize);
+  height: var(--chatTailSize);
   background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
   border-left: 1px solid var(--chatBubbleStroke);
   border-bottom: 1px solid var(--chatBubbleStroke);
   transform: rotate(45deg);
   border-bottom-left-radius: 3px;
-  filter: drop-shadow(0 8px 10px rgba(0,0,0,.18));
+  box-shadow: -6px 10px 18px rgba(0,0,0,.18);
 }
 
-/* Tipografía interna (más visible) */
+/* Tipografía interna + links/emotes */
 #rlcChatList b, #rlcChatList strong{
   font-weight: 950;
   color: rgba(255,255,255,.96);
 }
 #rlcChatList em{
   font-style: normal;
-  color: rgba(87,201,255,.95);
+  color: rgba(87,201,255,.92);
 }
 #rlcChatList a{
-  color: rgba(87,201,255,.98);
+  color: var(--chatLink);
   text-decoration: underline;
-  text-decoration-color: rgba(87,201,255,.50);
+  text-decoration-color: rgba(87,201,255,.44);
+  text-underline-offset: 2px;
 }
 #rlcChatList a:hover{ text-decoration-color: rgba(87,201,255,.78); }
+#rlcChatList code{
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255,255,255,.92);
+  background: rgba(0,0,0,.26);
+  border: 1px solid rgba(255,255,255,.10);
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+#rlcChatList img{
+  max-height: 1.35em;
+  width: auto;
+  display: inline-block;
+  vertical-align: -0.22em;
+}
+
+/* “Bot/System” (si tu JS mete clases) — no rompe si no existen */
+#rlcChatList > *.bot .msg,
+#rlcChatList > *.bot .message,
+#rlcChatList > *.bot .body{
+  border-color: rgba(71,215,155,.24);
+  box-shadow: var(--chatBubbleShadow), 0 0 0 1px rgba(71,215,155,.12) inset;
+}
+#rlcChatList > *.bot .msg::before,
+#rlcChatList > *.bot .message::before,
+#rlcChatList > *.bot .body::before{
+  background: linear-gradient(90deg, rgba(71,215,155,.55), rgba(87,201,255,.35));
+}
 
 /* ───────────────────────── OPTIONAL: CATALOG (si existe) ───────────────────────── */
 #rlcCatalog,
@@ -1271,9 +1299,8 @@ input[type="range"]{ accent-color: var(--accent); }
   display:none;
 }
 body.catalog--on #rlcCatalog,
-body.catalog--on .rlcCatalogRoot{
-  display:block;
-}
+body.catalog--on .rlcCatalogRoot{ display:block; }
+
 #rlcCatalog .catalogGrid,
 .rlcCatalogRoot .catalogGrid{
   position:absolute;
@@ -1488,6 +1515,8 @@ body.mode-control{
   .hud{ left: max(10px, env(safe-area-inset-left)); bottom: max(10px, env(safe-area-inset-bottom)); }
   .hudBar{ padding-left: 10px; padding-right: 10px; }
   .progress{ margin-left: 10px; margin-right: 10px; }
+
+  /* nombre del chat: evita cortar en móvil */
   #rlcChatList > * .name,
   #rlcChatList > * .user,
   #rlcChatList > * .author,
@@ -1505,6 +1534,8 @@ body.mode-control{
     mask-image:none !important;
     color: rgba(255,255,255,.92) !important;
   }
+  /* Chat list fade: desactiva mask si no hay soporte */
+  #rlcChatList{ -webkit-mask-image:none !important; mask-image:none !important; }
 }
 
 /* ───────────────────────── ACCESSIBILITY ───────────────────────── */
@@ -1542,7 +1573,7 @@ body.mode-control{
   #rlcChatList > * > p{
     backdrop-filter:none !important;
     -webkit-backdrop-filter:none !important;
-    background: rgba(10,12,18,.94) !important; /* más contraste */
+    background: rgba(10,12,18,.92) !important;
   }
 
   #rlcChatList > * .msg::after,
@@ -1551,7 +1582,7 @@ body.mode-control{
   #rlcChatList > * > div:not(.name):not(.user):not(.author):not(.nick):not(.avatar):not(.pfp)::after,
   #rlcChatList > * > span:not(.name):not(.user):not(.author):not(.nick)::after,
   #rlcChatList > * > p::after{
-    background: rgba(10,12,18,.94) !important;
+    background: rgba(10,12,18,.92) !important;
   }
 
   .stage::before, .layer-media::after{ opacity: .16; }
