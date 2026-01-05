@@ -632,7 +632,7 @@
     const p = String(cam?.place || "").trim();
     const s = String(cam?.source || "").trim();
 
-    let msg = `📡 Ahora: ${t}`;
+    let msg = `📍: ${t}`;
     if (p) msg += ` — ${p}`;
     if (s) msg += ` · ${s}`;
 
