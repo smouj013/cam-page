@@ -3,7 +3,7 @@
   ✅ Version sentinel + cache-bust
   ✅ REPAIR MODE: control.html?repair=1
   ✅ Diagnóstico on-screen (errores JS)
-  ✅ Sección KEY/Sala para fijar el "key" sin tocar la URL (si tu control.js lo soporta por storage)
+  ✅ AUTO-PERSIST (por KEY) + AUTO-RESTORE + AUTO-APPLY al recargar
 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
@@ -340,7 +340,7 @@
       <!-- KEY / SALA -->
       <div class="card">
         <div class="cardTitle">Sala / KEY</div>
-        <div class="hint">Esto suele venir por URL (<span class="mono">?key=...</span>). Si tu <span class="mono">control.js</span> soporta storage, aquí lo fijas sin tocar enlaces.</div>
+        <div class="hint">Esto suele venir por URL (<span class="mono">?key=...</span>). Este panel guarda y restaura todo por KEY automáticamente.</div>
 
         <label class="row" for="ctlKey">
           <span>KEY</span>
@@ -371,7 +371,6 @@
           <button id="ctlCopyStreamUrl" class="btn" type="button">Copiar URL stream</button>
         </div>
 
-        <!-- Extras opcionales (si tu control.js los usa) -->
         <div class="row2" style="margin-top:10px">
           <button id="ctlCopyPlayerUrl" class="btn ghost full" type="button">Copiar URL Player</button>
           <button id="ctlCopyObsUrl" class="btn ghost full" type="button">Copiar URL OBS</button>
@@ -415,7 +414,6 @@
           </select>
         </label>
 
-        <!-- ✅ COMPAT: ON/OFF (control.js calcula hudDetails con != "off") -->
         <label class="row" for="ctlHudDetails">
           <span>Detalles HUD</span>
           <select id="ctlHudDetails" class="select">
@@ -443,7 +441,6 @@
         <button id="ctlApplySettings" class="btn full" type="button">Aplicar ajustes</button>
         <button id="ctlReset" class="btn ghost full" type="button">Reset estado</button>
 
-        <!-- ✅ Aliases opcionales (compat con distintos control.js / botones legacy) -->
         <div style="display:none">
           <button id="ctlApply" type="button"></button>
           <button id="ctlApplyAll" type="button"></button>
@@ -634,7 +631,6 @@
           <select id="ctlPreviewOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
         </label>
 
-        <!-- ✅ FIX: sin class hidden; control.js controla display -->
         <div id="ctlPreviewWrap" class="previewWrap" style="display:none">
           <iframe id="ctlPreview" class="previewFrame" title="Preview stream"
             referrerpolicy="strict-origin-when-cross-origin"
@@ -837,6 +833,244 @@
     })();
   </script>
 
+  <!-- ✅ AUTO-PERSIST + AUTO-RESTORE + AUTO-APPLY (por KEY) -->
+  <script>
+    (() => {
+      "use strict";
+
+      const qs = (s) => document.querySelector(s);
+      const getVal = (id) => { const el = qs("#"+id); return el ? String(el.value ?? "") : ""; };
+      const setVal = (id, v) => { const el = qs("#"+id); if(el) el.value = (v ?? ""); };
+
+      const LS_LAST = "rlc_control_last_key_v1";
+      const LS_UI = (key) => `rlc_control_ui_v1:${key}`;
+
+      const FIELDS = [
+        "ctlKey",
+
+        "ctlMins","ctlFit","ctlHud","ctlHudDetails","ctlAutoskip","ctlAdfree",
+
+        "ctlCatalogOn","ctlCatalogLayout","ctlCatalogGap","ctlCatalogLabels",
+        "ctlCatalogMode","ctlCatalogFollowSlot","ctlCatalogClickCycle","ctlCatalogYtCookies",
+        "ctlCatalogWxTiles","ctlCatalogWxRefreshSec","ctlCatalogMuted",
+
+        "ctlTitleOn","ctlTitleClientId","ctlTitleBroadcasterId","ctlTitleToken",
+        "ctlTitleTemplate","ctlTitleCooldown",
+
+        "ctlCountdownOn","ctlCountdownLabel","ctlCountdownTarget",
+
+        "ctlPreviewOn",
+
+        "ctlBgmOn","ctlBgmVol","ctlBgmTrack",
+
+        "ctlTwitchChannel","ctlVoteOn","ctlVoteOverlay","ctlChatOn","ctlChatHideCmd","ctlAlertsOn",
+        "ctlVoteWindow","ctlVoteAt","ctlVoteLead","ctlStayMins","ctlYtCookies","ctlVoteCmd",
+
+        "ctlAdsOn","ctlAdLead","ctlAdDur","ctlAdShowDuring","ctlAdChatText",
+
+        "ctlBotOn","ctlBotUser","ctlBotToken","ctlBotSayOnAd"
+      ];
+
+      const safeJsonParse = (s) => { try { return JSON.parse(String(s||"")) || null; } catch(_) { return null; } };
+      const safeJsonStringify = (o) => { try { return JSON.stringify(o); } catch(_) { return ""; } };
+
+      const getKey = () => {
+        try{
+          const u = new URL(location.href);
+          const k = (u.searchParams.get("key") || "").trim();
+          if(k) return k;
+        }catch(_){}
+        const fromInput = (getVal("ctlKey") || "").trim();
+        if(fromInput) return fromInput;
+        try{ return (localStorage.getItem(LS_LAST) || "").trim(); }catch(_){}
+        return "";
+      };
+
+      const loadUIForKey = (key) => {
+        if(!key) return null;
+        try{
+          const raw = localStorage.getItem(LS_UI(key)) || "";
+          return safeJsonParse(raw);
+        }catch(_){ return null; }
+      };
+
+      const saveUIForKey = (key, obj) => {
+        if(!key) return;
+        try{
+          localStorage.setItem(LS_UI(key), safeJsonStringify(obj || {}));
+          localStorage.setItem(LS_LAST, key);
+        }catch(_){}
+      };
+
+      const captureUI = () => {
+        const key = getKey();
+        if(!key) return;
+        const obj = {};
+        for(const id of FIELDS){
+          const el = qs("#"+id);
+          if(!el) continue;
+          obj[id] = String(el.value ?? "");
+        }
+        saveUIForKey(key, obj);
+      };
+
+      const applyUrlOverrides = () => {
+        // URL params útiles (sin tokens)
+        try{
+          const u = new URL(location.href);
+          const sp = u.searchParams;
+
+          const key = (sp.get("key") || "").trim();
+          if(key) setVal("ctlKey", key);
+
+          const twitch = (sp.get("twitch") || "").trim();
+          if(twitch) setVal("ctlTwitchChannel", twitch);
+
+          const botUser = (sp.get("botUser") || "").trim();
+          if(botUser) setVal("ctlBotUser", botUser);
+
+          const mins = sp.get("mins"); if(mins != null && mins !== "") setVal("ctlMins", mins);
+          const fit = sp.get("fit"); if(fit) setVal("ctlFit", fit);
+          const hud = sp.get("hud"); if(hud != null) setVal("ctlHud", (hud === "0" || hud === "off") ? "off" : "on");
+          const hudDetails = sp.get("hudDetails"); if(hudDetails) setVal("ctlHudDetails", hudDetails);
+          const autoskip = sp.get("autoskip"); if(autoskip != null) setVal("ctlAutoskip", (autoskip === "0" || autoskip === "off") ? "off" : "on");
+          const vote = sp.get("vote"); if(vote != null) setVal("ctlVoteOn", (vote === "0" || vote === "off") ? "off" : "on");
+          const chat = sp.get("chat"); if(chat != null) setVal("ctlChatOn", (chat === "0" || chat === "off") ? "off" : "on");
+          const alerts = sp.get("alerts"); if(alerts != null) setVal("ctlAlertsOn", (alerts === "0" || alerts === "off") ? "off" : "on");
+          const ads = sp.get("ads"); if(ads != null) setVal("ctlAdsOn", (ads === "0" || ads === "off") ? "off" : "on");
+        }catch(_){}
+      };
+
+      const restoreUI = () => {
+        // 1) Key primero (URL o lastKey)
+        const keyFromUrl = (() => { try{ return (new URL(location.href)).searchParams.get("key") || ""; }catch(_){ return ""; } })().trim();
+        const lastKey = (() => { try{ return (localStorage.getItem(LS_LAST) || ""); }catch(_){ return ""; } })().trim();
+        const key = keyFromUrl || lastKey || "";
+
+        if(key) setVal("ctlKey", key);
+
+        // 2) Restaurar UI guardada por KEY
+        const data = loadUIForKey(key);
+        if(data && typeof data === "object"){
+          for(const id of FIELDS){
+            if(!(id in data)) continue;
+            const el = qs("#"+id);
+            if(!el) continue;
+            el.value = String(data[id] ?? "");
+          }
+        }
+
+        // 3) URL siempre gana (si viene)
+        applyUrlOverrides();
+
+        // 4) Guarda lastKey
+        const finalKey = getKey();
+        if(finalKey){
+          try{ localStorage.setItem(LS_LAST, finalKey); }catch(_){}
+        }
+      };
+
+      const wirePersistence = () => {
+        // Guardado “ligero” con debounce
+        let t = 0;
+        const later = () => {
+          clearTimeout(t);
+          t = setTimeout(captureUI, 120);
+        };
+
+        for(const id of FIELDS){
+          const el = qs("#"+id);
+          if(!el) continue;
+          el.addEventListener("input", later, {passive:true});
+          el.addEventListener("change", later, {passive:true});
+        }
+
+        const btnKeyApply = qs("#ctlKeyApply");
+        if(btnKeyApply){
+          btnKeyApply.addEventListener("click", () => {
+            const k = (getVal("ctlKey") || "").trim();
+            if(!k) return;
+            try{ localStorage.setItem(LS_LAST, k); }catch(_){}
+            // cuando cambias KEY: restaura esa KEY (si existía) y aplica overrides
+            setTimeout(() => {
+              const data = loadUIForKey(k);
+              if(data && typeof data === "object"){
+                for(const id of FIELDS){
+                  if(!(id in data)) continue;
+                  const el = qs("#"+id);
+                  if(el) el.value = String(data[id] ?? "");
+                }
+              }
+              applyUrlOverrides();
+              captureUI();
+            }, 0);
+          });
+        }
+
+        const btnKeyClear = qs("#ctlKeyClear");
+        if(btnKeyClear){
+          btnKeyClear.addEventListener("click", () => {
+            setTimeout(captureUI, 0);
+          });
+        }
+
+        window.addEventListener("beforeunload", () => {
+          try{ captureUI(); }catch(_){}
+        });
+      };
+
+      const safeClick = (id) => {
+        const el = qs("#"+id);
+        if(el && typeof el.click === "function"){
+          try{ el.click(); return true; }catch(_){}
+        }
+        return false;
+      };
+
+      const autoApplyAll = () => {
+        // Ojo: esto requiere que control.js ya haya enganchado listeners.
+        // Por eso se llama en window.load con un pequeño delay.
+        const key = getKey();
+        if(!key) return;
+
+        // 1) Asegura KEY aplicada
+        safeClick("ctlKeyApply");
+
+        // 2) Aplica settings base
+        safeClick("ctlApplySettings");
+        safeClick("ctlApplyMins");
+
+        // 3) Aplica módulos si existen
+        safeClick("ctlVoteApply");
+        safeClick("ctlCatalogApply");
+        safeClick("ctlCountdownApply");
+
+        // Auto-title: solo si está ON
+        if(getVal("ctlTitleOn") === "on") safeClick("ctlTitleApply");
+
+        // Bot: SOLO si ON y hay credenciales guardadas
+        const botOn = getVal("ctlBotOn") === "on";
+        const botUser = (getVal("ctlBotUser") || "").trim();
+        const botTok  = (getVal("ctlBotToken") || "").trim();
+        if(botOn && botUser && botTok){
+          safeClick("ctlBotConnect");
+        }
+      };
+
+      // Ejecuta restore lo antes posible (antes de que control.js lea valores)
+      restoreUI();
+      wirePersistence();
+
+      // Auto-apply al terminar de cargar todo (control.js incluido)
+      window.addEventListener("load", () => {
+        // Espera un pelín por si control.js hace init asíncrono.
+        setTimeout(() => {
+          try{ autoApplyAll(); }catch(_){}
+        }, 220);
+      });
+    })();
+  </script>
+
   <!-- Scripts (cache-bust ALINEADO con APP_VERSION 2.3.8) -->
   <script defer src="./cams.js?v=2.3.8"></script>
   <script defer src="./music.js?v=2.3.8"></script>
@@ -844,9 +1078,9 @@
   <!-- ✅ Control principal -->
   <script defer src="./control.js?v=2.3.8"></script>
 
-  <!-- Opcionales -->
-  <script defer src="./catalogControl.js?v=2.3.8"></script>
-  <script defer src="./pointsControl.js?v=2.3.8"></script>
-  <script defer src="./rlcTickersControl.js?v=2.3.8"></script>
+  <!-- Opcionales (si faltan no rompen; solo avisarán en consola) -->
+  <script defer src="./catalogControl.js?v=2.3.8" onerror="console.warn('[RLC] catalogControl.js no encontrado')"></script>
+  <script defer src="./pointsControl.js?v=2.3.8" onerror="console.warn('[RLC] pointsControl.js no encontrado')"></script>
+  <script defer src="./rlcTickersControl.js?v=2.3.8" onerror="console.warn('[RLC] rlcTickersControl.js no encontrado')"></script>
 </body>
 </html>
