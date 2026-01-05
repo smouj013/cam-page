@@ -1,3 +1,13 @@
+<!-- obs-cam-panel.html — RLC OBS Cam Panel (Hardened + cams.js v2.3.8 compatible + NEWS optional)
+  ✅ Compatible con tu cams.js v2.3.8:
+     - CAM_LIST / CAM_CATALOG_LIST / CAM_NEWS_LIST
+     - Evento: rlc_cam_list_updated (detail.list/catalog/news/newsCatalog + flags)
+     - API: window.RLCCams.* (refresh/clearCache/setTarget/setAutoDiscovery/setValidateEmbed + News setters)
+     - Mensajes BC: CAMS_REFRESH / CAMS_CLEAR_CACHE / CAMS_SET_* (webcams + news)
+  ✅ Control por CMD/STATE multi-compat (v5→v1→legacy) + highlight cam activa
+  ✅ Panel de lista mejorado: vista MAIN/CAT/NEWS/NEWS_CATALOG, thumbs YouTube, tags, favs
+  ✅ Toggle News ON/OFF y opciones (mix/catalog/target) + “Aplicar y refrescar”
+-->
 <!doctype html>
 <html lang="es" data-theme="dark">
 <head>
@@ -6,7 +16,7 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#060812" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>RLC — OBS Cam Panel (Hardened)</title>
+  <title>RLC — OBS Cam Panel</title>
 
   <style>
     :root{
@@ -35,7 +45,7 @@
                   linear-gradient(180deg, var(--bg), var(--bg2));
       color:var(--txt);
     }
-    .wrap{padding:10px 10px 14px; max-width:980px; margin:0 auto;}
+    .wrap{padding:10px 10px 14px; max-width:1120px; margin:0 auto;}
     .top{
       display:flex; gap:10px; align-items:center; justify-content:space-between;
       padding:10px 12px; border-radius:var(--r);
@@ -69,10 +79,17 @@
     button:active{transform:translateY(1px)}
     button.primary{border-color:rgba(55,214,255,.35); background:rgba(55,214,255,.10);}
     button.danger{border-color:rgba(255,90,90,.35); background:rgba(255,90,90,.10);}
+    button.ok{border-color:rgba(25,226,138,.28); background:rgba(25,226,138,.10);}
     .row{
       margin-top:10px;
       display:grid;
-      grid-template-columns: 1.2fr .7fr .7fr .7fr;
+      grid-template-columns: 1.25fr .85fr .75fr .75fr;
+      gap:10px;
+    }
+    .row2{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns: 1fr 1fr;
       gap:10px;
     }
     .card{
@@ -100,9 +117,21 @@
       outline:none;
       font-weight:800;
     }
+    input[type="checkbox"]{ width:auto; }
     textarea{min-height:76px; resize:vertical; font-family:var(--mono); font-weight:700;}
     .mono{font-family:var(--mono)}
     .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
+    .grid2{display:grid; gap:10px; grid-template-columns: 1fr 1fr;}
+    .grid3{display:grid; gap:10px; grid-template-columns: 1fr 1fr 1fr;}
+    .tog{
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding:8px 10px; border:1px solid var(--stroke);
+      border-radius:14px; background:rgba(255,255,255,.04);
+    }
+    .tog .l{display:flex; flex-direction:column; gap:2px; min-width:0}
+    .tog .t{font-weight:1000; font-size:12px; color:rgba(255,255,255,.90)}
+    .tog .s{font-weight:900; font-size:12px; color:var(--mut)}
+    .tog input{transform:scale(1.1)}
     .listTop{
       margin-top:10px;
       display:flex; gap:10px; align-items:center; justify-content:space-between;
@@ -110,8 +139,10 @@
       border:1px solid var(--stroke);
       background:rgba(255,255,255,.04);
       border-radius:14px;
+      flex-wrap:wrap;
     }
     .listTop .meta{font-size:12px; color:var(--mut); font-weight:900}
+    .listTop .meta b{color:rgba(255,255,255,.88)}
     .list{
       margin-top:10px;
       display:grid;
@@ -129,16 +160,36 @@
       min-width:0;
     }
     .cam.active{border-color:rgba(55,214,255,.48); background:rgba(55,214,255,.08)}
-    .cam .mini{
+    .mini{
       flex:0 0 auto;
-      width:42px; height:42px;
-      border-radius:12px;
+      width:54px; height:54px;
+      border-radius:14px;
       border:1px solid var(--stroke2);
       background:rgba(0,0,0,.25);
       display:grid; place-items:center;
       font-weight:1000;
       color:rgba(255,255,255,.88);
       font-family:var(--mono);
+      position:relative;
+      overflow:hidden;
+    }
+    .mini img{
+      width:100%; height:100%;
+      object-fit:cover;
+      display:block;
+      opacity:.92;
+    }
+    .mini .badge{
+      position:absolute;
+      left:6px; top:6px;
+      font-size:11px;
+      font-weight:1000;
+      padding:3px 6px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.20);
+      background:rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
     }
     .cam .body{min-width:0; flex:1 1 auto}
     .t1{
@@ -167,6 +218,8 @@
     .tag.kind{border-color:rgba(255,255,255,.22); background:rgba(0,0,0,.22)}
     .tag.src{border-color:rgba(55,214,255,.22); background:rgba(55,214,255,.08)}
     .tag.place{border-color:rgba(255,206,87,.22); background:rgba(255,206,87,.08)}
+    .tag.news{border-color:rgba(255,90,90,.22); background:rgba(255,90,90,.10)}
+    .tag.alt{border-color:rgba(255,255,255,.18); background:rgba(0,0,0,.18)}
     .cam .actions{flex:0 0 auto; display:flex; flex-direction:column; gap:8px; align-items:stretch;}
     .smallBtn{padding:7px 9px; border-radius:12px; font-size:12px; font-weight:1000;}
     .star{border-color:rgba(255,206,87,.28); background:rgba(255,206,87,.10);}
@@ -186,16 +239,18 @@
       opacity:0; transform:translateY(8px);
       transition:opacity .18s ease, transform .18s ease;
       pointer-events:none;
-      max-width:min(520px, calc(100vw - 24px));
+      max-width:min(560px, calc(100vw - 24px));
+      z-index:9999;
     }
     .toast.on{opacity:1; transform:translateY(0)}
-    @media (max-width:860px){
+    @media (max-width:980px){
       .row{grid-template-columns:1fr 1fr;}
       .list{grid-template-columns:1fr;}
+      .row2{grid-template-columns:1fr;}
     }
   </style>
 
-  <!-- Carga cams.js si existe (ideal: window.CAM_LIST = [...]) -->
+  <!-- Carga cams.js (ideal: window.CAM_LIST, window.RLCCams, evento rlc_cam_list_updated) -->
   <script src="./cams.js"></script>
 </head>
 
@@ -214,6 +269,7 @@
         <button class="smallBtn" id="btnPrev">⟵ PREV</button>
         <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
         <button class="smallBtn" id="btnPlay">⏯ PLAY</button>
+        <button class="smallBtn" id="btnRefresh">↻ REFRESH (cams.js)</button>
         <button class="smallBtn" id="btnReload">↻ RECARGAR LISTA</button>
       </div>
     </div>
@@ -221,41 +277,130 @@
     <div class="row">
       <div class="card field">
         <label>Buscar</label>
-        <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube…" />
-        <div class="hint">Resalta la cámara activa si detecta <span class="mono">state</span>. Click “IR” manda comando al player.</div>
+        <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube, news…" />
+        <div class="hint">Resalta la cámara activa si detecta <span class="mono">state</span>. “IR” manda comando al player.</div>
       </div>
 
       <div class="card field">
-        <label>Filtro kind</label>
-        <select id="kind">
-          <option value="">Todos</option>
-          <option value="youtube">YouTube</option>
-          <option value="hls">HLS</option>
-          <option value="image">Image</option>
-          <option value="other">Otros</option>
-        </select>
-        <div class="hint">Si el player usa <span class="mono">?key=</span>, pon la misma aquí.</div>
+        <label>Vista + Filtro</label>
+        <div class="grid2">
+          <select id="view">
+            <option value="catalog">Catálogo (sin ALT)</option>
+            <option value="main">Main (puede incluir ALT)</option>
+            <option value="news">News</option>
+            <option value="newsCatalog">News (catálogo)</option>
+          </select>
+          <select id="kind">
+            <option value="">Todos</option>
+            <option value="youtube">YouTube</option>
+            <option value="hls">HLS</option>
+            <option value="other">Otros</option>
+          </select>
+        </div>
+        <div class="hint">Para que no se te “infle” la lista, usa <b>Catálogo</b> (sin ALT).</div>
       </div>
 
       <div class="card field">
         <label>Key (namespacing)</label>
         <input id="key" class="mono" placeholder="vacío = sin key" />
-        <div class="hint">allowLegacy: <span id="legacyTxt">1</span></div>
+        <div class="hint">allowLegacy: <span id="legacyTxt">1</span> · bus: v5→v1→legacy</div>
       </div>
 
       <div class="card field">
         <label>Player</label>
-        <div style="display:flex; gap:8px; align-items:center;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <button class="smallBtn" id="btnOpen">Abrir player</button>
           <button class="smallBtn" id="btnSync">Ir a activa</button>
+          <button class="smallBtn ok" id="btnSendCamsCfg">Aplicar config → (BC)</button>
         </div>
         <div class="hint">Si NO aparece state, probablemente OBS no comparte storage entre Dock y BrowserSource.</div>
       </div>
     </div>
 
+    <div class="row2">
+      <div class="card">
+        <div class="diag"><b>Opciones cams.js (webcams)</b></div>
+        <div class="grid3" style="margin-top:10px">
+          <div class="field">
+            <label>Target cams</label>
+            <input id="camsTarget" type="number" min="50" max="2500" step="10" value="650" class="mono"/>
+            <div class="hint">Equivale a <span class="mono">?camsTarget=</span></div>
+          </div>
+          <div class="tog">
+            <div class="l">
+              <div class="t">Auto-discovery</div>
+              <div class="s">Buscar más webcams LIVE</div>
+            </div>
+            <input id="camsDiscovery" type="checkbox" />
+          </div>
+          <div class="tog">
+            <div class="l">
+              <div class="t">Validar embed</div>
+              <div class="s">Más “limpio”, más requests</div>
+            </div>
+            <input id="camsValidate" type="checkbox" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+          <button class="smallBtn primary" id="btnApplyCams">Aplicar & Refresh</button>
+          <button class="smallBtn" id="btnClearCache">Limpiar cache</button>
+          <button class="smallBtn" id="btnPickFeatured">Random Featured (4)</button>
+        </div>
+        <div class="hint">Estas opciones usan <span class="mono">window.RLCCams</span> si existe; si no, se quedan en modo “solo lectura”.</div>
+      </div>
+
+      <div class="card">
+        <div class="diag"><b>Noticieros (opcional)</b> <span class="mono">camsNews=1</span></div>
+        <div class="grid3" style="margin-top:10px">
+          <div class="tog">
+            <div class="l">
+              <div class="t">News ENABLED</div>
+              <div class="s">Genera lista news aparte</div>
+            </div>
+            <input id="newsEnabled" type="checkbox" />
+          </div>
+          <div class="tog">
+            <div class="l">
+              <div class="t">Mix en CAM_LIST</div>
+              <div class="s">Meter news en main</div>
+            </div>
+            <input id="newsMix" type="checkbox" />
+          </div>
+          <div class="tog">
+            <div class="l">
+              <div class="t">News en catálogo</div>
+              <div class="s">Aparecen en “Catálogo”</div>
+            </div>
+            <input id="newsInCatalog" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="field">
+            <label>News target</label>
+            <input id="newsTarget" type="number" min="10" max="300" step="5" value="60" class="mono"/>
+            <div class="hint">Equivale a <span class="mono">?camsNewsTarget=</span></div>
+          </div>
+          <div class="field">
+            <label>Tip</label>
+            <div class="hint">
+              Para que el player cargue news desde URL: <span class="mono">?camsNews=1</span> (y opcional
+              <span class="mono">camsNewsMix=1</span> / <span class="mono">camsNewsCatalog=1</span>).
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+          <button class="smallBtn primary" id="btnApplyNews">Aplicar News & Refresh</button>
+          <button class="smallBtn" id="btnViewNews">Cambiar vista → NEWS</button>
+        </div>
+      </div>
+    </div>
+
     <div class="listTop">
       <div class="meta" id="countTxt">Cams: —</div>
-      <div style="display:flex; gap:8px; align-items:center;">
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button class="smallBtn" id="btnFavs">★ Solo favoritos</button>
         <button class="smallBtn danger" id="btnClearFavs">✕ Limpiar favs</button>
       </div>
@@ -264,7 +409,7 @@
     <div class="list" id="list"></div>
 
     <details>
-      <summary>Diagnóstico (por qué no llega al player)</summary>
+      <summary>Diagnóstico (por qué no llega al player / estado / buses)</summary>
       <div class="card" style="margin-top:10px">
         <div class="diag" id="diagTxt">—</div>
         <div style="margin-top:10px; display:grid; gap:10px; grid-template-columns:1fr 1fr;">
@@ -288,6 +433,10 @@
 (() => {
   "use strict";
 
+  // ───────────────────────── Guard anti doble carga ─────────────────────────
+  const LOAD_GUARD = "__RLC_OBS_CAM_PANEL_LOADED_V239";
+  try { if (window[LOAD_GUARD]) return; window[LOAD_GUARD] = true; } catch (_) {}
+
   // ───────────────────────── Utils ─────────────────────────
   const qs = (s, r=document) => r.querySelector(s);
   const now = ()=>Date.now();
@@ -296,7 +445,6 @@
 
   const cssEscape = (s)=>{
     try { return CSS.escape(String(s)); } catch(_){}
-    // fallback mínimo
     return String(s).replace(/["\\]/g, "\\$&");
   };
 
@@ -313,12 +461,14 @@
     toast._t = setTimeout(()=>el.classList.remove("on"), 1200);
   }
 
+  function clamp(n,a,b){ n=Number(n); if(!Number.isFinite(n)) n=a; return Math.max(a, Math.min(b, n)); }
+
   // ───────────────────────── Params ─────────────────────────
   const u = new URL(location.href);
+
   const allowLegacy = (u.searchParams.get("allowLegacy") == null)
     ? true
     : (u.searchParams.get("allowLegacy")==="1" || u.searchParams.get("allowLegacy")==="true");
-
   qs("#legacyTxt").textContent = allowLegacy ? "1" : "0";
 
   const KEY_STORE = "rlc_obs_panel_key_v1";
@@ -329,11 +479,9 @@
   const playerUrlParam = (u.searchParams.get("player") || "./index.html").trim();
   qs("#key").value = KEY;
 
-  // ───────────────────────── Candidate keys/channels ─────────────────────────
-  // Tu ecosistema ha usado: rlc_bus_v1, rlc_cmd_v1, rlc_state_v1 + “schema v5”.
-  // Aquí soportamos v5/v4/v3/v2/v1 + sin versión, con y sin :key.
-  const BUS_CANDIDATES = ["rlc_bus_v5","rlc_bus_v4","rlc_bus_v3","rlc_bus_v2","rlc_bus_v1","rlc_bus"];
-  const CMD_CANDIDATES = ["rlc_cmd_v5","rlc_cmd_v4","rlc_cmd_v3","rlc_cmd_v2","rlc_cmd_v1","rlc_cmd"];
+  // ───────────────────────── Candidate keys/channels (player/control) ─────────────────────────
+  const BUS_CANDIDATES   = ["rlc_bus_v5","rlc_bus_v4","rlc_bus_v3","rlc_bus_v2","rlc_bus_v1","rlc_bus"];
+  const CMD_CANDIDATES   = ["rlc_cmd_v5","rlc_cmd_v4","rlc_cmd_v3","rlc_cmd_v2","rlc_cmd_v1","rlc_cmd"];
   const STATE_CANDIDATES = ["rlc_state_v5","rlc_state_v4","rlc_state_v3","rlc_state_v2","rlc_state_v1","rlc_state"];
 
   const makeKeyList = (baseList)=>{
@@ -342,18 +490,16 @@
       if (KEY) out.push(`${b}:${KEY}`);
       out.push(b);
     }
-    // legacy “global” (sin key) extra si KEY está puesto
     if (allowLegacy && KEY){
       for (const b of baseList){
         if (!out.includes(b)) out.push(b);
       }
     }
-    // de-dup
     return Array.from(new Set(out));
   };
 
-  let BUS_KEYS = makeKeyList(BUS_CANDIDATES);
-  let CMD_KEYS = makeKeyList(CMD_CANDIDATES);
+  let BUS_KEYS   = makeKeyList(BUS_CANDIDATES);
+  let CMD_KEYS   = makeKeyList(CMD_CANDIDATES);
   let STATE_KEYS = makeKeyList(STATE_CANDIDATES);
 
   // ───────────────────────── UI refs ─────────────────────────
@@ -364,6 +510,7 @@
   const listEl = qs("#list");
   const qEl = qs("#q");
   const kindEl = qs("#kind");
+  const viewEl = qs("#view");
   const keyEl = qs("#key");
   const countTxt = qs("#countTxt");
 
@@ -371,10 +518,26 @@
   const btnNext = qs("#btnNext");
   const btnPlay = qs("#btnPlay");
   const btnReload = qs("#btnReload");
+  const btnRefresh = qs("#btnRefresh");
   const btnOpen = qs("#btnOpen");
   const btnSync = qs("#btnSync");
   const btnFavs = qs("#btnFavs");
   const btnClearFavs = qs("#btnClearFavs");
+
+  const camsTargetEl = qs("#camsTarget");
+  const camsDiscoveryEl = qs("#camsDiscovery");
+  const camsValidateEl = qs("#camsValidate");
+  const btnApplyCams = qs("#btnApplyCams");
+  const btnClearCache = qs("#btnClearCache");
+  const btnPickFeatured = qs("#btnPickFeatured");
+
+  const newsEnabledEl = qs("#newsEnabled");
+  const newsMixEl = qs("#newsMix");
+  const newsInCatalogEl = qs("#newsInCatalog");
+  const newsTargetEl = qs("#newsTarget");
+  const btnApplyNews = qs("#btnApplyNews");
+  const btnViewNews = qs("#btnViewNews");
+  const btnSendCamsCfg = qs("#btnSendCamsCfg");
 
   const diagTxt = qs("#diagTxt");
   const diagState = qs("#diagState");
@@ -384,7 +547,7 @@
   function lsGet(k){ try { return localStorage.getItem(k); } catch(_) { return null; } }
   function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(_){} }
 
-  // ───────────────────────── BroadcastChannels ─────────────────────────
+  // ───────────────────────── BroadcastChannels (player/control bus) ─────────────────────────
   let bcs = [];
   function closeChannels(){
     for (const c of bcs){ try { c.close(); } catch(_){} }
@@ -393,7 +556,6 @@
   function openChannels(){
     closeChannels();
     if (!("BroadcastChannel" in window)) return;
-
     for (const busName of BUS_KEYS){
       try{
         const bc = new BroadcastChannel(busName);
@@ -401,6 +563,27 @@
         bcs.push(bc);
       } catch(_){}
     }
+  }
+
+  // ───────────────────────── BroadcastChannel (cams.js control bus) ─────────────────────────
+  // cams.js escucha SIEMPRE "rlc_bus_v1" (sin namespace). Enviamos ahí y, por si acaso, también a "rlc_bus_v1:{KEY}".
+  let camsBC = null;
+  let camsBCKeyed = null;
+
+  function openCamsBC(){
+    try { if (camsBC) camsBC.close(); } catch(_){}
+    try { if (camsBCKeyed) camsBCKeyed.close(); } catch(_){}
+    camsBC = null; camsBCKeyed = null;
+
+    if (!("BroadcastChannel" in window)) return;
+
+    try { camsBC = new BroadcastChannel("rlc_bus_v1"); } catch(_){}
+    try { if (KEY) camsBCKeyed = new BroadcastChannel(`rlc_bus_v1:${KEY}`); } catch(_){}
+  }
+
+  function postCamsBC(msg){
+    try { if (camsBC) camsBC.postMessage(msg); } catch(_){}
+    try { if (camsBCKeyed) camsBCKeyed.postMessage(msg); } catch(_){}
   }
 
   // ───────────────────────── State parse (multi schema) ─────────────────────────
@@ -416,8 +599,6 @@
 
   function pickState(obj){
     if (!obj || typeof obj !== "object") return null;
-
-    // Key filtering: si viene con key explícita y no coincide, fuera
     if (KEY){
       const mk = String(obj.key||"").trim();
       if (mk && mk !== KEY) return null;
@@ -427,7 +608,6 @@
 
   function readState(){
     lastStateKeyUsed = "";
-
     for (const k of STATE_KEYS){
       const raw = lsGet(k);
       if (!raw) continue;
@@ -440,7 +620,6 @@
   }
 
   function extractCam(s){
-    // soporta varias formas: s.cam (obj), s.nowCam, s.currentCam, s.camId, etc.
     const cam = (s && typeof s.cam === "object" && s.cam) ? s.cam
       : (s && typeof s.nowCam === "object" && s.nowCam) ? s.nowCam
       : (s && typeof s.currentCam === "object" && s.currentCam) ? s.currentCam
@@ -464,8 +643,7 @@
       : (s && s.camKind) ? String(s.camKind)
       : "";
 
-    const source = (cam && cam.source) ? String(cam.source)
-      : "";
+    const source = (cam && cam.source) ? String(cam.source) : "";
 
     return { id, title, place, kind, source, raw: cam };
   }
@@ -495,8 +673,6 @@
 
   function onBus(msg, busName){
     if (!msg || typeof msg !== "object") return;
-
-    // Acepta “state” en varias formas
     const type = String(msg.type || msg.t || "").toLowerCase();
     if (type === "state"){
       const s = pickState(msg);
@@ -525,14 +701,13 @@
     }
   });
 
-  // ───────────────────────── Command send (multi compat) ─────────────────────────
+  // ───────────────────────── Command send (player/control) ─────────────────────────
   let lastSendAt = 0;
   let lastCmdRaw = "";
 
   function buildCmdPacket(cmd, payload){
     const t = now();
     const p = payload || {};
-    // Paquete “multi-compat”: el player puede mirar type o t, payload o p, cmd/op/action…
     const pkt = {
       type: "cmd",
       t: "cmd",
@@ -553,7 +728,7 @@
 
   function sendCmd(cmd, payload={}){
     const t = now();
-    if (t - lastSendAt < 60) return; // micro rate-limit
+    if (t - lastSendAt < 60) return;
     lastSendAt = t;
 
     const pkt = buildCmdPacket(cmd, payload);
@@ -561,12 +736,7 @@
     lastCmdRaw = raw;
     diagCmd.value = raw;
 
-    // Escribe en TODAS las keys candidatas (v5/v1/legacy)
-    for (const k of CMD_KEYS){
-      lsSet(k, raw);
-    }
-
-    // Broadcast en TODOS los canales candidatos
+    for (const k of CMD_KEYS) lsSet(k, raw);
     for (const bc of bcs){
       try { bc.postMessage(pkt); } catch(_){}
     }
@@ -575,10 +745,55 @@
     updateDiag();
   }
 
-  // ───────────────────────── CAM LIST ─────────────────────────
-  let cams = [];
-  let favOnly = false;
+  // ───────────────────────── cams.js list + update events ─────────────────────────
+  let lastCamsDetail = null;
 
+  function getListByView(){
+    const v = String(viewEl.value || "catalog");
+    if (v === "main") return Array.isArray(window.CAM_LIST) ? window.CAM_LIST : [];
+    if (v === "catalog") return Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : [];
+    if (v === "news") return Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : [];
+    if (v === "newsCatalog") {
+      if (lastCamsDetail && Array.isArray(lastCamsDetail.newsCatalog)) return lastCamsDetail.newsCatalog;
+      return Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : [];
+    }
+    return Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
+  }
+
+  function applyCamsUiFromDetail(d){
+    if (!d || typeof d !== "object") return;
+
+    if (typeof d.target === "number") camsTargetEl.value = String(clamp(d.target, 50, 2500) | 0);
+    if (typeof d.autoDiscovery === "boolean") camsDiscoveryEl.checked = d.autoDiscovery;
+    if (typeof d.validateEmbed === "boolean") camsValidateEl.checked = d.validateEmbed;
+
+    if (typeof d.newsEnabled === "boolean") newsEnabledEl.checked = d.newsEnabled;
+    if (typeof d.newsMix === "boolean") newsMixEl.checked = d.newsMix;
+    if (typeof d.newsInCatalog === "boolean") newsInCatalogEl.checked = d.newsInCatalog;
+    if (typeof d.newsTarget === "number") newsTargetEl.value = String(clamp(d.newsTarget, 10, 300) | 0);
+  }
+
+  window.addEventListener("rlc_cam_list_updated", (ev)=>{
+    lastCamsDetail = (ev && ev.detail) ? ev.detail : null;
+    applyCamsUiFromDetail(lastCamsDetail);
+    renderList();
+    updateDiag();
+  });
+
+  // Fallback: si cams.js no emitió aún, intentamos leer la API
+  function syncUiFromRLCCams(){
+    const api = window.RLCCams;
+    if (!api) return;
+
+    // Solo lo que sabemos obtener seguro:
+    try {
+      const t = api.getTarget && api.getTarget();
+      if (typeof t === "number") camsTargetEl.value = String(clamp(t, 50, 2500) | 0);
+    } catch(_){}
+  }
+
+  // ───────────────────────── Favorites ─────────────────────────
+  let favOnly = false;
   const FAV_KEY_BASE = "rlc_obs_favs_v1";
   const favStoreKey = ()=> KEY ? `${FAV_KEY_BASE}:${KEY}` : FAV_KEY_BASE;
 
@@ -591,51 +806,20 @@
   }
   let favs = loadFavs();
 
-  function getGlobalCamList(){
-    if (Array.isArray(window.CAM_LIST)) return window.CAM_LIST.slice();
-    try { if (typeof CAM_LIST !== "undefined" && Array.isArray(CAM_LIST)) return CAM_LIST.slice(); } catch(_){}
-    return null;
-  }
-
-  async function fetchEvalCams(path){
-    try {
-      const res = await fetch(path, { cache:"no-store" });
-      const code = await res.text();
-      const fn = new Function("window", code + "\n;return (window.CAM_LIST || (typeof CAM_LIST!=='undefined'?CAM_LIST:null));");
-      const out = fn(window);
-      if (Array.isArray(out)) return out.slice();
-    } catch(_){}
-    return null;
-  }
-
-  async function loadCams(){
-    let list = getGlobalCamList();
-    if (!list){
-      await new Promise(r=>setTimeout(r, 120));
-      list = getGlobalCamList();
-    }
-    if (!list){
-      const path = (u.searchParams.get("cams") || "./cams.js").trim();
-      list = await fetchEvalCams(path);
-    }
-    cams = Array.isArray(list) ? list.filter(Boolean) : [];
-    renderList();
-  }
-
   // ───────────────────────── Render list ─────────────────────────
   function camKindBadge(kind){
     const k = norm(kind);
     if (k === "youtube") return "YT";
     if (k === "hls") return "HLS";
-    if (k === "image") return "IMG";
     return "CAM";
   }
 
   function camText(c){
     return [
-      c.id, c.kind, c.title, c.place, c.source, c.originUrl,
+      c.id, c.kind, c.title, c.place, c.source, c.originUrl, c.url,
       (Array.isArray(c.tags) ? c.tags.join(" ") : (c.tags || "")),
-      (c.tag || ""), (c.category || ""), (c.categories || "")
+      (c.tag || ""), (c.category || ""), (c.categories || ""),
+      (c.isAlt ? "alt" : ""), (c.altOf || "")
     ].map(x=>String(x||"")).join(" ").toLowerCase();
   }
 
@@ -643,7 +827,7 @@
     const kf = norm(kindEl.value);
     if (!kf) return true;
     const ck = norm(c.kind);
-    if (kf === "other") return ck !== "youtube" && ck !== "hls" && ck !== "image";
+    if (kf === "other") return ck !== "youtube" && ck !== "hls";
     return ck === kf;
   }
 
@@ -653,16 +837,31 @@
     return camText(c).includes(q);
   }
 
-  function renderList(){
-    const filtered = cams
+  function renderList(customList=null){
+    const baseList = Array.isArray(customList) ? customList : getListByView();
+    const filtered = baseList
       .filter(c => c && c.id != null)
       .filter(kindFilterOk)
       .filter(queryOk)
       .filter(c => !favOnly || favs.has(String(c.id)));
 
-    countTxt.textContent = `Cams: ${filtered.length}/${cams.length}${favOnly ? " · ★ favs" : ""}`;
-    listEl.innerHTML = "";
+    const totalMain = (Array.isArray(window.CAM_LIST) ? window.CAM_LIST.length : 0);
+    const totalCat  = (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST.length : 0);
+    const totalNews = (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST.length : 0);
 
+    const v = String(viewEl.value || "catalog");
+    const vLabel = (v === "main") ? "MAIN"
+      : (v === "catalog") ? "CAT"
+      : (v === "news") ? "NEWS"
+      : (v === "newsCatalog") ? "NEWS_CAT"
+      : "LIST";
+
+    countTxt.innerHTML =
+      `Mostrando: <b>${filtered.length}</b> · vista <b>${vLabel}</b>` +
+      `${favOnly ? " · ★ favs" : ""}` +
+      ` · totals: main=${totalMain}, cat=${totalCat}, news=${totalNews}`;
+
+    listEl.innerHTML = "";
     const frag = document.createDocumentFragment();
 
     for (const c of filtered){
@@ -671,9 +870,30 @@
       el.className = "cam";
       el.dataset.id = id;
 
+      // mini (thumb + badge)
       const mini = document.createElement("div");
       mini.className = "mini";
-      mini.textContent = camKindBadge(c.kind);
+
+      const badge = document.createElement("div");
+      badge.className = "badge";
+      badge.textContent = camKindBadge(c.kind);
+      mini.appendChild(badge);
+
+      const thumb = (c && c.thumb) ? String(c.thumb) : "";
+      if (thumb) {
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.alt = "thumb";
+        img.src = thumb;
+        mini.appendChild(img);
+      } else {
+        const fallback = document.createElement("div");
+        fallback.style.fontSize = "12px";
+        fallback.style.opacity = ".9";
+        fallback.textContent = camKindBadge(c.kind);
+        mini.appendChild(fallback);
+      }
 
       const body = document.createElement("div");
       body.className = "body";
@@ -692,12 +912,11 @@
       const tagKind = document.createElement("div");
       tagKind.className = "tag kind";
       tagKind.textContent = (c.kind || "cam");
+      tags.appendChild(tagKind);
 
       const tagId = document.createElement("div");
       tagId.className = "tag";
       tagId.textContent = `id:${id}`;
-
-      tags.appendChild(tagKind);
       tags.appendChild(tagId);
 
       if (c.source){
@@ -713,6 +932,21 @@
         tags.appendChild(p);
       }
 
+      // tags extras
+      const isNews = Array.isArray(c.tags) ? c.tags.includes("news") : false;
+      if (isNews || (String(viewEl.value||"").includes("news"))) {
+        const n = document.createElement("div");
+        n.className = "tag news";
+        n.textContent = "NEWS";
+        tags.appendChild(n);
+      }
+      if (c.isAlt) {
+        const a = document.createElement("div");
+        a.className = "tag alt";
+        a.textContent = `ALT${c.altOf ? ":"+c.altOf : ""}`;
+        tags.appendChild(a);
+      }
+
       body.appendChild(t1);
       body.appendChild(t2);
       body.appendChild(tags);
@@ -725,7 +959,6 @@
       bGo.textContent = "IR";
       bGo.addEventListener("click", (ev)=>{
         ev.preventDefault();
-        // Comando principal
         sendCmd("GOTO", { id, camId:id, targetId:id });
       });
 
@@ -747,7 +980,7 @@
       bOpen.title = "Abrir originUrl";
       bOpen.addEventListener("click", (ev)=>{
         ev.preventDefault();
-        const url = c.originUrl || "";
+        const url = c.originUrl || c.url || "";
         if (url) window.open(url, "_blank", "noopener");
       });
 
@@ -785,6 +1018,92 @@
     if (el) el.scrollIntoView({ block:"center", behavior:"smooth" });
   }
 
+  // ───────────────────────── cams.js actions ─────────────────────────
+  function camsApi(){
+    return (window.RLCCams && typeof window.RLCCams === "object") ? window.RLCCams : null;
+  }
+
+  function camsRefresh(){
+    const api = camsApi();
+    if (api && typeof api.refresh === "function"){
+      try { api.refresh(); toast("cams.js → refresh()"); return; } catch(_){}
+    }
+    // fallback: BC msg (para player/otras pestañas)
+    postCamsBC({ type:"CAMS_REFRESH", ts: now(), key: KEY || "" });
+    toast("CAMS_REFRESH → BC");
+  }
+
+  function camsClearCache(){
+    const api = camsApi();
+    if (api && typeof api.clearCache === "function"){
+      try { api.clearCache(); toast("cams.js → clearCache()"); return; } catch(_){}
+    }
+    postCamsBC({ type:"CAMS_CLEAR_CACHE", ts: now(), key: KEY || "" });
+    toast("CAMS_CLEAR_CACHE → BC");
+  }
+
+  function applyCamsOptions(){
+    const api = camsApi();
+    const target = clamp(parseInt(camsTargetEl.value, 10), 50, 2500) | 0;
+    const autoDisc = !!camsDiscoveryEl.checked;
+    const validate = !!camsValidateEl.checked;
+
+    if (api){
+      try { api.setTarget && api.setTarget(target); } catch(_){}
+      try { api.setAutoDiscovery && api.setAutoDiscovery(autoDisc); } catch(_){}
+      try { api.setValidateEmbed && api.setValidateEmbed(validate); } catch(_){}
+    }
+
+    // También mandamos BC para sincronizar a otras páginas con cams.js
+    postCamsBC({ type:"CAMS_SET_TARGET", value: target, ts: now(), key: KEY || "" });
+    postCamsBC({ type:"CAMS_SET_AUTODISCOVERY", value: autoDisc, ts: now(), key: KEY || "" });
+    postCamsBC({ type:"CAMS_SET_VALIDATE", value: validate, ts: now(), key: KEY || "" });
+
+    camsRefresh();
+    toast(`Aplicado: target=${target} disc=${autoDisc?1:0} val=${validate?1:0}`);
+  }
+
+  function applyNewsOptions(){
+    const api = camsApi();
+    const en = !!newsEnabledEl.checked;
+    const mix = !!newsMixEl.checked;
+    const inCat = !!newsInCatalogEl.checked;
+    const nTarget = clamp(parseInt(newsTargetEl.value, 10), 10, 300) | 0;
+
+    if (api){
+      try { api.setNewsEnabled && api.setNewsEnabled(en); } catch(_){}
+      try { api.setNewsMix && api.setNewsMix(mix); } catch(_){}
+      try { api.setNewsInCatalog && api.setNewsInCatalog(inCat); } catch(_){}
+      try { api.setNewsTarget && api.setNewsTarget(nTarget); } catch(_){}
+    }
+
+    postCamsBC({ type:"CAMS_SET_NEWS_ENABLED", value: en, ts: now(), key: KEY || "" });
+    postCamsBC({ type:"CAMS_SET_NEWS_MIX", value: mix, ts: now(), key: KEY || "" });
+    postCamsBC({ type:"CAMS_SET_NEWS_CATALOG", value: inCat, ts: now(), key: KEY || "" });
+    postCamsBC({ type:"CAMS_SET_NEWS_TARGET", value: nTarget, ts: now(), key: KEY || "" });
+
+    camsRefresh();
+    toast(`News: en=${en?1:0} mix=${mix?1:0} cat=${inCat?1:0} target=${nTarget}`);
+  }
+
+  function pickFeatured4(){
+    const api = camsApi();
+    if (!api || typeof api.getCatalogFeatured !== "function"){
+      toast("RLCCams.getCatalogFeatured no disponible");
+      return;
+    }
+    try {
+      const items = api.getCatalogFeatured(4) || [];
+      if (Array.isArray(items) && items.length){
+        viewEl.value = "catalog";
+        renderList(items);
+        toast("Mostrando featured (4)");
+      }
+    } catch(_){
+      toast("Error obteniendo featured");
+    }
+  }
+
   // ───────────────────────── Controls ─────────────────────────
   btnNext.addEventListener("click", ()=>sendCmd("NEXT"));
   btnPrev.addEventListener("click", ()=>sendCmd("PREV"));
@@ -797,7 +1116,13 @@
     else sendCmd("TOGGLE_PLAY");
   });
 
-  btnReload.addEventListener("click", ()=>loadCams());
+  btnReload.addEventListener("click", ()=>{
+    // “recargar lista” = re-render inmediato (y si cams.js actualiza, el evento lo refresca)
+    renderList();
+    toast("Lista re-render");
+  });
+
+  btnRefresh.addEventListener("click", ()=>camsRefresh());
 
   btnOpen.addEventListener("click", ()=>{
     const base = playerUrlParam || "./index.html";
@@ -823,20 +1148,43 @@
 
   qEl.addEventListener("input", ()=>renderList());
   kindEl.addEventListener("change", ()=>renderList());
+  viewEl.addEventListener("change", ()=>renderList());
 
+  // Cams/News apply
+  btnApplyCams.addEventListener("click", ()=>applyCamsOptions());
+  btnClearCache.addEventListener("click", ()=>camsClearCache());
+  btnPickFeatured.addEventListener("click", ()=>pickFeatured4());
+
+  btnApplyNews.addEventListener("click", ()=>applyNewsOptions());
+  btnViewNews.addEventListener("click", ()=>{
+    viewEl.value = "news";
+    renderList();
+    toast("Vista → NEWS");
+  });
+
+  // Enviar config por BC “a lo bestia” (útil si el player está abierto y BC funciona)
+  btnSendCamsCfg.addEventListener("click", ()=>{
+    applyCamsOptions();
+    applyNewsOptions();
+    toast("Config enviada (BC) + refresh");
+  });
+
+  // Key change
   keyEl.addEventListener("change", ()=>{
     KEY = (keyEl.value || "").trim();
     localStorage.setItem(KEY_STORE, KEY);
 
-    // reconstruye listas con key nueva
-    BUS_KEYS = makeKeyList(BUS_CANDIDATES);
-    CMD_KEYS = makeKeyList(CMD_CANDIDATES);
+    BUS_KEYS   = makeKeyList(BUS_CANDIDATES);
+    CMD_KEYS   = makeKeyList(CMD_CANDIDATES);
     STATE_KEYS = makeKeyList(STATE_CANDIDATES);
 
     favs = loadFavs();
+
     openChannels();
-    loadCams();
+    openCamsBC();
+
     toast(KEY ? `key=${KEY}` : "key vacía");
+    renderList();
     updateDiag();
   });
 
@@ -850,18 +1198,29 @@
     const busInfo = ("BroadcastChannel" in window) ? `${bcs.length} canales` : "sin BroadcastChannel";
     const origin = location.origin;
 
+    const api = camsApi();
+    const camsVer = (api && api.version) ? String(api.version) : "(sin RLCCams)";
+    const totals = `CAM_LIST=${Array.isArray(window.CAM_LIST)?window.CAM_LIST.length:0}, ` +
+                   `CAT=${Array.isArray(window.CAM_CATALOG_LIST)?window.CAM_CATALOG_LIST.length:0}, ` +
+                   `NEWS=${Array.isArray(window.CAM_NEWS_LIST)?window.CAM_NEWS_LIST.length:0}`;
+
     diagTxt.innerHTML =
       `<b>origin</b>: ${origin}<br>`+
       `<b>KEY</b>: ${KEY ? `<span class="mono">${KEY}</span>` : "(vacía)"} · allowLegacy=${allowLegacy ? "1":"0"}<br>`+
       `<b>STATE</b>: ${foundState ? "sí" : "no"} · <b>age</b>: ${ageTxt} · <b>key usada</b>: <span class="mono">${stateKey}</span><br>`+
       `<b>CMD keys probadas</b>: <span class="mono">${CMD_KEYS.slice(0,6).join(", ")}</span>${CMD_KEYS.length>6?" …":""}<br>`+
       `<b>STATE keys probadas</b>: <span class="mono">${STATE_KEYS.slice(0,6).join(", ")}</span>${STATE_KEYS.length>6?" …":""}<br>`+
-      `<b>BUS</b>: ${busInfo} (probando v5→v1→legacy)`;
+      `<b>BUS</b>: ${busInfo} (player/control) · <b>cams.js</b>: <span class="mono">${camsVer}</span><br>`+
+      `<b>Listas</b>: ${totals}<br>`+
+      `<b>Tip</b>: si estás en OBS y no sincroniza, suele ser por aislamiento de storage/BC entre Dock y BrowserSource.`;
 
     const s = lastState || readState();
     diagState.value = s ? JSON.stringify(s, null, 2) : "";
-
     if (!diagCmd.value) diagCmd.value = lastCmdRaw || "";
+
+    // Si tenemos detalle del evento, refrescamos UI de toggles
+    if (lastCamsDetail) applyCamsUiFromDetail(lastCamsDetail);
+    else syncUiFromRLCCams();
   }
 
   function tick(){
@@ -873,7 +1232,6 @@
     }
 
     const age = now() - (lastSeenAt || 0);
-
     if (!lastSeenAt){
       setConn(null);
       statusTxt.textContent = "SIN STATE";
@@ -890,9 +1248,9 @@
 
   // ───────────────────────── Boot ─────────────────────────
   openChannels();
-  loadCams();
+  openCamsBC();
 
-  // primer state
+  // Estado inicial
   const s0 = readState();
   if (s0){
     lastState = s0;
@@ -901,8 +1259,15 @@
   } else {
     statusTxt.textContent = "SIN STATE";
   }
-  updateDiag();
 
+  // UI inicial cams.js (si ya está)
+  try {
+    // Si cams.js ya emitió antes de que montemos listener (raro), renderizamos igual.
+    renderList();
+    syncUiFromRLCCams();
+  } catch(_){}
+
+  updateDiag();
   setInterval(tick, 750);
 })();
 </script>
