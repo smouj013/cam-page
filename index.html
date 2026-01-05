@@ -1,11 +1,15 @@
-<!-- index.html — Random Live Cams (PLAYER) v2.3.8 (ADMIN CONTROL LISTEN HARDENED)
-  ✅ Escucha a control panel de forma robusta:
+<!-- index.html — Random Live Cams (PLAYER) v2.3.8 (HARDENED + KEYED BUS + REPAIR + DIAG)
+  ✅ Compatible con tu stack actual:
+     - styles.css, cams.js, music.js, weatherClock.js, rlcTickers.js, catalogView.js, app.js
+  ✅ Control panel robusto:
      - Legacy bus SIEMPRE: rlc_bus_v1
-     - Keyed bus dinámico: rlc_bus_v1:{key} (URL ?key= | localStorage rlc_last_key_v1 | msg.key detectado)
-     - Mirror LS: cmd/state/evt keyed <-> legacy
-     - Polling LS (cmd/state/evt) y reinyección a BC (por si BC/storage fallan)
-     - Acepta postMessage(cmd/state/event) same-origin
-  ✅ Cache-bust alineado a 2.3.8 en TODOS los assets
+     - Keyed bus dinámico: rlc_bus_v1:{key} (URL ?key= | localStorage rlc_last_key_v1 | msg.key)
+     - Mirror LS cmd/state/evt keyed <-> legacy
+     - Polling LS + reinyección a BC (por si BC/storage fallan)
+     - postMessage same-origin (cmd/state/event)
+  ✅ Version sentinel: alinear v=APP_VERSION sin borrar tokens
+  ✅ REPAIR MODE: ?repair=1 (limpia SW/caches/storage bajo demanda)
+  ✅ Diagnóstico en pantalla (window.error + unhandledrejection)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
@@ -21,63 +25,76 @@
   <title>Random Live Cams</title>
   <meta name="description" content="Random Live Cams — rotación de cámaras con HUD, votación por Twitch, chat overlay, alerts, ads notice, ticker y modo catálogo." />
 
-  <script>window.APP_VERSION = "2.3.8";</script>
+  <!-- ───────────────────────── VERSION ───────────────────────── -->
+  <script>
+    // Mantén esto alineado con tus assets locales (?v=)
+    window.APP_VERSION = "2.3.8";
+  </script>
 
-  <!-- ✅ Version sentinel: recarga suave al actualizar (NO borra storage / NO toca tokens) -->
+  <!-- ───────────────────────── VERSION SENTINEL ─────────────────────────
+       Recarga suave si cambia APP_VERSION (NO borra storage / NO toca tokens).
+       También pide update del SW si existiera uno registrado. -->
   <script>
     (() => {
       "use strict";
-      try{
+      try {
         const V = String(window.APP_VERSION || "");
-        if(!V) return;
+        if (!V) return;
 
         const K = "rlc_app_version_seen_v1";
-        const prev = (() => { try { return localStorage.getItem(K) || ""; } catch(_) { return ""; } })();
+        let prev = "";
+        try { prev = localStorage.getItem(K) || ""; } catch (_) {}
 
-        if(prev !== V){
-          try { localStorage.setItem(K, V); } catch(_){}
+        if (prev !== V) {
+          try { localStorage.setItem(K, V); } catch (_) {}
+
           const u = new URL(location.href);
-          if(!u.searchParams.has("v")){
+          if (!u.searchParams.has("v")) {
             u.searchParams.set("v", V);
             location.replace(u.toString());
             return;
           }
         }
 
-        if("serviceWorker" in navigator){
+        if ("serviceWorker" in navigator) {
           navigator.serviceWorker.getRegistration()
-            .then(reg => { try{ reg && reg.update && reg.update(); }catch(_){}})
-            .catch(()=>{});
+            .then(reg => { try { reg && reg.update && reg.update(); } catch (_) {} })
+            .catch(() => {});
         }
-      }catch(_){}
+      } catch (_) {}
     })();
   </script>
 
-  <!-- Cache-bust (alineado con APP_VERSION) -->
+  <!-- ───────────────────────── STYLES ───────────────────────── -->
   <link rel="stylesheet" href="./styles.css?v=2.3.8" />
 
-  <!-- REPAIR MODE: index.html?repair=1 -->
+  <!-- ───────────────────────── REPAIR MODE ─────────────────────────
+       index.html?repair=1
+       ⚠️ Esto SÍ limpia localStorage/sessionStorage (incluye tokens). Úsalo solo si quieres reset total. -->
   <script>
     (() => {
-      try{
+      "use strict";
+      try {
         const u = new URL(location.href);
-        if(!u.searchParams.has("repair")) return;
+        if (!u.searchParams.has("repair")) return;
 
         const go = async () => {
-          try{
-            if("serviceWorker" in navigator){
+          try {
+            if ("serviceWorker" in navigator) {
               const regs = await navigator.serviceWorker.getRegistrations();
               await Promise.all(regs.map(r => r.unregister()));
             }
-          }catch(_){}
-          try{
-            if(window.caches && caches.keys){
+          } catch (_) {}
+
+          try {
+            if (window.caches && caches.keys) {
               const keys = await caches.keys();
               await Promise.all(keys.map(k => caches.delete(k)));
             }
-          }catch(_){}
-          try{ localStorage.clear(); }catch(_){}
-          try{ sessionStorage.clear(); }catch(_){}
+          } catch (_) {}
+
+          try { localStorage.clear(); } catch (_) {}
+          try { sessionStorage.clear(); } catch (_) {}
 
           u.searchParams.delete("repair");
           u.searchParams.set("v", window.APP_VERSION || "repair");
@@ -85,25 +102,28 @@
         };
 
         go();
-      }catch(_){}
+      } catch (_) {}
     })();
   </script>
 
-  <link rel="preconnect" href="https://api.gdeltproject.org" crossorigin>
-  <link rel="preconnect" href="https://api.mymemory.translated.net" crossorigin>
-  <link rel="preconnect" href="https://api.allorigins.win" crossorigin>
-  <link rel="preconnect" href="https://r.jina.ai" crossorigin>
+  <!-- ───────────────────────── PRECONNECTS ───────────────────────── -->
+  <link rel="preconnect" href="https://api.gdeltproject.org" crossorigin />
+  <link rel="preconnect" href="https://api.mymemory.translated.net" crossorigin />
+  <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
+  <link rel="preconnect" href="https://r.jina.ai" crossorigin />
 
+  <!-- ───────────────────────── LIBS ───────────────────────── -->
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
   <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
 
-  <!-- ✅ ADMIN CONTROL COMPAT BRIDGE (PLAYER) — hardened -->
+  <!-- ───────────────────────── ADMIN CONTROL BRIDGE (PLAYER) ───────────────────────── -->
   <script>
     (() => {
       "use strict";
 
       const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
+      // Base keys
       const BUS_BASE   = "rlc_bus_v1";
       const CMD_BASE   = "rlc_cmd_v1";
       const STATE_BASE = "rlc_state_v1";
@@ -111,6 +131,7 @@
 
       const LAST_KEY_STORE = "rlc_last_key_v1";
 
+      // Loop protection
       const BRIDGE_TAG = "__rlcBridgeHop_v1";
       const SRC_TAG    = "__rlcBridgeSrc_v1";
       const MAX_HOPS   = 1;
@@ -132,7 +153,7 @@
         try { return safeStr(localStorage.getItem(LAST_KEY_STORE) || ""); } catch (_) { return ""; }
       }
 
-      // ✅ KEY: URL > lastKey (para que player "enganche" aunque lo abras sin ?key=)
+      // KEY: URL > lastKey (engancha aunque abras sin ?key=)
       let KEY = getUrlKey() || getLastKey();
 
       const BUS_LEGACY = BUS_BASE;
@@ -145,16 +166,22 @@
         const k = safeStr(key || "");
         return {
           key: k,
-          cmdKey:   k ? `${CMD_BASE}:${k}`   : CMD_BASE,
-          stateKey: k ? `${STATE_BASE}:${k}` : STATE_BASE,
-          evtKey:   k ? `${EVT_BASE}:${k}`   : EVT_BASE,
-          cmdLegacy: CMD_BASE,
+          cmdKey:     k ? `${CMD_BASE}:${k}`   : CMD_BASE,
+          stateKey:   k ? `${STATE_BASE}:${k}` : STATE_BASE,
+          evtKey:     k ? `${EVT_BASE}:${k}`   : EVT_BASE,
+          cmdLegacy:   CMD_BASE,
           stateLegacy: STATE_BASE,
-          evtLegacy: EVT_BASE
+          evtLegacy:   EVT_BASE
         };
       }
 
       let K = computeKeys(KEY);
+
+      // Poll state (se resetea al cambiar KEY para no “comerse” el primer cmd)
+      const POLL_MS = 250;
+      let lastCmdRaw = "";
+      let lastStateRaw = "";
+      let lastEvtRaw = "";
 
       function exposeDebug() {
         try {
@@ -174,37 +201,46 @@
         BUS_MAIN = `${BUS_BASE}:${KEY}`;
         K = computeKeys(KEY);
 
+        // reset poll memory para que el primer snapshot “entre”
+        lastCmdRaw = "";
+        lastStateRaw = "";
+        lastEvtRaw = "";
+
         try { localStorage.setItem(LAST_KEY_STORE, KEY); } catch (_) {}
 
         if (canBC) {
-          try { if (bcMain) bcMain.close(); } catch(_) {}
-          try { bcMain = new BroadcastChannel(BUS_MAIN); } catch(_) { bcMain = null; }
+          try { if (bcMain) bcMain.close(); } catch (_) {}
+          try { bcMain = new BroadcastChannel(BUS_MAIN); } catch (_) { bcMain = null; }
           if (bcMain) {
-            try { bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch(_) {}
+            try { bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch (_) {}
           }
         }
+
         exposeDebug();
         return true;
       }
 
       function cloneMsg(msg) {
-        try { return structuredClone(msg); } catch (_) { return Object.assign({}, msg); }
+        try { return structuredClone(msg); }
+        catch (_) { return Object.assign({}, msg); }
       }
 
       function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+      function readLS(k) { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } }
 
       function mirrorToStorage(msg) {
         if (!isObj(msg)) return;
+
         const type = String(msg.type || "").toLowerCase();
 
-        // ✅ si viene key dentro del msg y aún no teníamos KEY, adoptarla
+        // Si viene key dentro del msg y aún no teníamos KEY, adoptarla
         if (!KEY) {
           const mk = safeStr(msg.key || "");
           if (mk) ensureKey(mk);
         }
 
         let raw = "";
-        try { raw = JSON.stringify(msg); } catch(_) { return; }
+        try { raw = JSON.stringify(msg); } catch (_) { return; }
 
         if (type === "cmd") {
           lsSet(K.cmdKey, raw);
@@ -227,7 +263,7 @@
         out[BRIDGE_TAG] = hop + 1;
         out[SRC_TAG] = fromTag || out[SRC_TAG] || "bridge";
 
-        // ✅ añade key si existe
+        // añade key si existe
         if (KEY && !out.key) out.key = KEY;
 
         try { targetBc.postMessage(out); } catch (_) {}
@@ -263,10 +299,10 @@
         else forward(bcMain, msg, "legacy->main");
       }
 
-      try { if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onAnyBusMessage(ev, false)); } catch(_) {}
-      try { if (bcMain)   bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch(_) {}
+      try { if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onAnyBusMessage(ev, false)); } catch (_) {}
+      try { if (bcMain)   bcMain.addEventListener("message", (ev) => onAnyBusMessage(ev, true)); } catch (_) {}
 
-      // ✅ Acepta postMessage desde preview/control (same-origin), y lo mete en el bus + storage
+      // Acepta postMessage desde preview/control (same-origin), y lo mete en el bus + storage
       window.addEventListener("message", (ev) => {
         try {
           if (ev.origin && ev.origin !== location.origin) return;
@@ -278,7 +314,6 @@
         const t = String(msg.type || "").toLowerCase();
         if (t !== "cmd" && t !== "state" && t !== "event") return;
 
-        // si llega key y aún no tenemos, adoptarla
         const mk = safeStr(msg.key || "");
         if (mk) ensureKey(mk);
 
@@ -291,63 +326,58 @@
         mirrorToStorage(msg);
 
         // post a BCs
-        try { if (bcMain)   bcMain.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
-        try { if (bcLegacy) bcLegacy.postMessage(Object.assign({}, msg, { key: KEY || msg.key || "" })); } catch (_) {}
+        const out = Object.assign({}, msg, { key: KEY || msg.key || "" });
+        try { if (bcMain)   bcMain.postMessage(out); } catch (_) {}
+        try { if (bcLegacy) bcLegacy.postMessage(out); } catch (_) {}
       }, { passive: true });
 
-      // ✅ Polling LS: reinyección a BC para que app.js vea el cmd aunque BC/storage no disparen.
-      // (Esto NO ejecuta nada por sí mismo: solo republíca al canal que ya escucha tu app.js)
-      const POLL_MS = 250;
-      let lastCmdRaw = "";
-      let lastStateRaw = "";
-      let lastEvtRaw = "";
-
-      function readLS(k){ try { return localStorage.getItem(k) || ""; } catch(_) { return ""; } }
-
+      // Polling LS: reinyección a BC para que app.js vea cmd/state/event aunque BC/storage no disparen.
+      // (Esto NO ejecuta nada por sí mismo: solo re-publica al canal que ya escucha tu app.js)
       function injectFromLS(raw) {
         if (!raw) return;
+
         let msg = null;
-        try { msg = JSON.parse(raw); } catch(_) { return; }
+        try { msg = JSON.parse(raw); } catch (_) { return; }
         if (!isObj(msg)) return;
 
-        // Si trae key y no hay KEY, adoptarla
         const mk = safeStr(msg.key || "");
         if (mk && !KEY) ensureKey(mk);
 
-        // Si KEY y msg trae otra key, ignora
         if (KEY && mk && mk !== KEY) return;
 
-        // Evita loops: marca fuente LS
+        // evita loops: marca fuente LS
         if (msg[SRC_TAG] === "ls-poll") return;
 
         const out = Object.assign({}, msg);
         out[SRC_TAG] = "ls-poll";
         if (KEY && !out.key) out.key = KEY;
 
-        try { if (bcMain)   bcMain.postMessage(out); } catch(_) {}
-        try { if (bcLegacy) bcLegacy.postMessage(out); } catch(_) {}
+        try { if (bcMain)   bcMain.postMessage(out); } catch (_) {}
+        try { if (bcLegacy) bcLegacy.postMessage(out); } catch (_) {}
       }
 
       function pollOnce() {
-        // ✅ Prioriza KEYED si existe, si no, legacy
+        // Prioriza KEYED si existe, si no, legacy
         const cmdRaw   = readLS(K.cmdKey)   || readLS(K.cmdLegacy);
         const stateRaw = readLS(K.stateKey) || readLS(K.stateLegacy);
         const evtRaw   = readLS(K.evtKey)   || readLS(K.evtLegacy);
 
-        if (cmdRaw && cmdRaw !== lastCmdRaw)   { lastCmdRaw = cmdRaw; injectFromLS(cmdRaw); }
-        if (stateRaw && stateRaw !== lastStateRaw) { lastStateRaw = stateRaw; injectFromLS(stateRaw); }
-        if (evtRaw && evtRaw !== lastEvtRaw)   { lastEvtRaw = evtRaw; injectFromLS(evtRaw); }
+        if (cmdRaw && cmdRaw !== lastCmdRaw)         { lastCmdRaw = cmdRaw; injectFromLS(cmdRaw); }
+        if (stateRaw && stateRaw !== lastStateRaw)   { lastStateRaw = stateRaw; injectFromLS(stateRaw); }
+        if (evtRaw && evtRaw !== lastEvtRaw)         { lastEvtRaw = evtRaw; injectFromLS(evtRaw); }
       }
 
       // storage event (útil entre pestañas)
       window.addEventListener("storage", (e) => {
         if (!e || !e.key) return;
-        // si cambia last key, podemos adoptar
+
+        // si cambia last key, podemos adoptar (solo si aún no hay KEY)
         if (e.key === LAST_KEY_STORE && !KEY) {
           const k = safeStr(e.newValue || "");
           if (k) ensureKey(k);
           return;
         }
+
         // si cambian cmd/state/evt, fuerza inject
         if (e.key === K.cmdKey || e.key === K.cmdLegacy) injectFromLS(e.newValue || "");
         if (e.key === K.stateKey || e.key === K.stateLegacy) injectFromLS(e.newValue || "");
@@ -364,19 +394,28 @@
       } catch (_) {}
 
       // Arranca polling
-      try { setInterval(pollOnce, POLL_MS); } catch(_) {}
+      try { setInterval(pollOnce, POLL_MS); } catch (_) {}
 
       // Guarda last key si venía por URL (para ayudar al control)
-      try { if (getUrlKey()) localStorage.setItem(LAST_KEY_STORE, getUrlKey()); } catch(_) {}
+      try {
+        const uk = getUrlKey();
+        if (uk) localStorage.setItem(LAST_KEY_STORE, uk);
+      } catch (_) {}
     })();
   </script>
 
-  <!-- HARDEN: layers + ticker SIEMPRE por encima -->
+  <!-- ───────────────────────── HARDEN: LAYERS + TICKERS TOP ───────────────────────── -->
   <style>
-    html,body{height:100%}
-    body{margin:0}
+    html, body { height: 100%; }
+    body { margin: 0; }
 
-    body{min-height:100vh; min-height:100svh; min-height:100dvh; overflow:hidden; overscroll-behavior:none;}
+    body{
+      min-height:100vh;
+      min-height:100svh;
+      min-height:100dvh;
+      overflow:hidden;
+      overscroll-behavior:none;
+    }
 
     #stage{
       isolation:isolate;
@@ -386,21 +425,24 @@
       height:100svh;
       height:100dvh;
     }
-    #stage .layer{position:absolute;inset:0}
-    #stage .layer-media{z-index:1}
-    #fallback{z-index:5; pointer-events:auto}
-    #stage .layer-ui{z-index:10}
+    #stage .layer{ position:absolute; inset:0; }
+    #stage .layer-media{ z-index:1; }
+    #rlcCatalog{ position:absolute; inset:0; z-index:2; display:none; pointer-events:none; }
+    #rlcCatalog.on{ display:block; pointer-events:auto; }
+    #fallback{ z-index:5; pointer-events:auto; }
+    #stage .layer-ui{ z-index:10; }
 
+    /* Tickers SIEMPRE arriba */
     #rlcNewsTicker{
       position:fixed!important;
-      left:10px!important;right:10px!important;
+      left:10px!important; right:10px!important;
       top:var(--rlcNewsTop, var(--rlcTickerTop,10px))!important;
       z-index:2147483647!important;
       pointer-events:none!important;
     }
     #rlcEconTicker{
       position:fixed!important;
-      left:10px!important;right:10px!important;
+      left:10px!important; right:10px!important;
       top:var(--rlcEconTop,
         calc(
           var(--rlcNewsTop, var(--rlcTickerTop,10px))
@@ -412,54 +454,58 @@
       pointer-events:none!important;
     }
 
-    #rlcCatalog{position:absolute;inset:0;z-index:2;display:none;pointer-events:none}
-    #rlcCatalog.on{display:block;pointer-events:auto}
-
+    /* Countdown overlay */
     #rlcCountdown{
-      position:absolute;z-index:50;
+      position:absolute; z-index:50;
       top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset, 0px));
       right:max(14px, env(safe-area-inset-right));
-      display:flex;flex-direction:column;gap:6px;
-      padding:10px 12px;border-radius:14px;
+      display:flex; flex-direction:column; gap:6px;
+      padding:10px 12px; border-radius:14px;
       background:linear-gradient(180deg,
         var(--news-bg-top, rgba(10,14,22,.72)),
         var(--news-bg-bot, rgba(10,14,22,.86))
       );
       border:1px solid var(--stroke, rgba(255,255,255,.12));
-      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
       box-shadow:0 18px 55px rgba(0,0,0,.55);
       color:rgba(255,255,255,.94);
       max-width:min(340px, calc(100vw - 24px));
-      overflow:hidden;pointer-events:none;
+      overflow:hidden;
+      pointer-events:none;
     }
-    #rlcCountdown.hidden{display:none}
+    #rlcCountdown.hidden{ display:none; }
     #rlcCountdown .lbl{
       font:950 12px/1 ui-sans-serif,system-ui;
-      letter-spacing:.14em;opacity:.92;text-transform:uppercase;
-      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-      display:flex;align-items:center;gap:8px
+      letter-spacing:.14em;
+      opacity:.92;
+      text-transform:uppercase;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      display:flex; align-items:center; gap:8px;
     }
     #rlcCountdown .lbl::before{
-      content:"";width:8px;height:8px;border-radius:999px;
+      content:"";
+      width:8px; height:8px; border-radius:999px;
       background:var(--news-red, #ff375f);
-      box-shadow:0 0 0 3px rgba(255,55,95,.18),0 0 16px rgba(255,55,95,.45)
+      box-shadow:0 0 0 3px rgba(255,55,95,.18), 0 0 16px rgba(255,55,95,.45);
     }
     #rlcCountdown .time{
       font:950 20px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      letter-spacing:.02em;font-variant-numeric:tabular-nums
+      letter-spacing:.02em;
+      font-variant-numeric:tabular-nums;
     }
-    #rlcCountdown.tr{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px));right:max(14px, env(safe-area-inset-right));left:auto;bottom:auto}
-    #rlcCountdown.tl{top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px));left:max(14px, env(safe-area-inset-left));right:auto;bottom:auto}
-    #rlcCountdown.br{bottom:max(14px, env(safe-area-inset-bottom));right:max(14px, env(safe-area-inset-right));top:auto;left:auto}
-    #rlcCountdown.bl{bottom:max(14px, env(safe-area-inset-bottom));left:max(14px, env(safe-area-inset-left));top:auto;right:auto}
+    #rlcCountdown.tr{ top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px)); right:max(14px, env(safe-area-inset-right)); left:auto; bottom:auto; }
+    #rlcCountdown.tl{ top:calc(max(12px, env(safe-area-inset-top)) + var(--ui-top-offset,0px)); left:max(14px, env(safe-area-inset-left)); right:auto; bottom:auto; }
+    #rlcCountdown.br{ bottom:max(14px, env(safe-area-inset-bottom)); right:max(14px, env(safe-area-inset-right)); top:auto; left:auto; }
+    #rlcCountdown.bl{ bottom:max(14px, env(safe-area-inset-bottom)); left:max(14px, env(safe-area-inset-left)); top:auto; right:auto; }
 
+    /* Diag overlay */
     #rlcDiag{
       position:fixed; inset:14px;
       z-index:2147483645;
       display:none;
       pointer-events:auto;
     }
-    #rlcDiag.on{display:block}
+    #rlcDiag.on{ display:block; }
     #rlcDiag .card{
       max-width:980px;
       margin:0 auto;
@@ -496,20 +542,24 @@
 <body class="mode-player">
   <main id="app" class="app" role="application" aria-label="Random Live Cams">
     <section id="stage" class="stage" aria-label="Reproductor de cámara">
-      <!-- Media Layer -->
+      <!-- ───────── MEDIA LAYER ───────── -->
       <div class="layer layer-media" aria-hidden="true">
         <div id="rlcCatalog" aria-hidden="true"></div>
 
-        <iframe id="frame" class="media hidden" title="Live Cam"
+        <iframe
+          id="frame"
+          class="media hidden"
+          title="Live Cam"
           referrerpolicy="strict-origin-when-cross-origin"
-          allow="autoplay; encrypted-media; picture-in-picture"
-          allowfullscreen></iframe>
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowfullscreen
+        ></iframe>
 
         <video id="video" class="media hidden" autoplay muted playsinline webkit-playsinline></video>
-        <img id="img" class="media hidden" alt="Webcam snapshot" />
+        <img id="img" class="media hidden" alt="Webcam snapshot" decoding="async" />
       </div>
 
-      <!-- Fallback -->
+      <!-- ───────── FALLBACK ───────── -->
       <div id="fallback" class="fallback hidden" role="status" aria-live="polite">
         <div class="fallbackCard">
           <div class="fallbackTitle">No se puede mostrar esta cámara aquí</div>
@@ -518,13 +568,15 @@
         </div>
       </div>
 
-      <!-- UI Layer -->
+      <!-- ───────── UI LAYER ───────── -->
       <div class="layer layer-ui" aria-label="Overlays">
+        <!-- HUD -->
         <div id="hud" class="hud hud--collapsed" aria-label="HUD stream">
           <div class="hudBar">
             <div class="hudLeft" id="hudLeft">
               <div class="badge" id="badgeLive">LIVE</div>
               <div class="hudTitle" id="hudTitle" data-title="Cargando…" data-marquee="0">Cargando…</div>
+
               <div id="rlcHudWx" class="wxOff" aria-live="polite">
                 <span id="rlcHudWxIcon" aria-hidden="true">🌡️</span>
                 <span id="rlcHudWxTemp" class="wxTemp">—°C</span>
@@ -539,10 +591,16 @@
             </div>
           </div>
 
-          <div class="progress" aria-hidden="true"><div id="progressBar" class="progressBar"></div></div>
+          <div class="progress" aria-hidden="true">
+            <div id="progressBar" class="progressBar"></div>
+          </div>
 
           <div id="hudDetails" class="hudDetails">
-            <div class="hudRow"><div class="hudLabel">Lugar</div><div class="hudValue" id="hudPlace">—</div></div>
+            <div class="hudRow">
+              <div class="hudLabel">Lugar</div>
+              <div class="hudValue" id="hudPlace">—</div>
+            </div>
+
             <div class="hudRow">
               <div class="hudLabel">Fuente</div>
               <div class="hudValue">
@@ -551,6 +609,7 @@
                 <a id="hudOrigin" class="hudLink" href="#" target="_blank" rel="noopener">Origen</a>
               </div>
             </div>
+
             <div class="hudFooter">
               <span id="hudIndex">—</span>
               <span class="dot">•</span>
@@ -603,252 +662,314 @@
     </noscript>
   </main>
 
-  <!-- ✅ Ticker roots -->
+  <!-- ───────────────────────── TICKER ROOTS ───────────────────────── -->
   <div id="rlcNewsTicker" aria-label="News ticker" aria-live="polite"></div>
   <div id="rlcEconTicker" aria-label="Econ ticker" aria-live="polite"></div>
 
-  <!-- ✅ Diagnóstico (si peta JS) -->
+  <!-- ───────────────────────── DIAGNÓSTICO ───────────────────────── -->
   <div id="rlcDiag" aria-live="polite">
     <div class="card">
       <div class="hdr">Diagnóstico (PLAYER)</div>
       <pre id="rlcDiagText"></pre>
-      <div class="tip">Tip: prueba <b>index.html?repair=1</b> para limpiar cachés.</div>
+      <div class="tip">Tip: prueba <b>index.html?repair=1</b> para limpiar cachés y reset total.</div>
     </div>
   </div>
 
   <!-- Captura errores JS y los muestra en pantalla (PLAYER) -->
   <script>
     (() => {
+      "use strict";
       const qs = (s) => document.querySelector(s);
+
       const showDiag = (msg) => {
         const box = qs("#rlcDiag");
         const pre = qs("#rlcDiagText");
-        if (pre) pre.textContent = msg;
+        if (pre) pre.textContent = String(msg || "");
         if (box) box.classList.add("on");
       };
+
       window.addEventListener("error", (e) => {
-        const lines = [
-          `[${new Date().toISOString()}] window.error`,
-          `message: ${String(e.message || "")}`,
-          `file: ${String(e.filename || "")}:${String(e.lineno || "")}:${String(e.colno || "")}`,
-          `stack: ${e.error && e.error.stack ? e.error.stack : "(no stack)"}`
-        ];
-        showDiag(lines.join("\n"));
+        try {
+          const lines = [
+            `[${new Date().toISOString()}] window.error`,
+            `message: ${String(e.message || "")}`,
+            `file: ${String(e.filename || "")}:${String(e.lineno || "")}:${String(e.colno || "")}`,
+            `stack: ${e.error && e.error.stack ? e.error.stack : "(no stack)"}`
+          ];
+          showDiag(lines.join("\n"));
+        } catch (_) {}
       });
+
       window.addEventListener("unhandledrejection", (e) => {
-        const r = e.reason;
-        const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
-        showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
+        try {
+          const r = e.reason;
+          const text = (r && (r.stack || r.message)) ? (r.stack || r.message) : String(r);
+          showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
+        } catch (_) {}
       });
     })();
   </script>
 
-  <!-- Data -->
+  <!-- ───────────────────────── DATA + MODULES ───────────────────────── -->
   <script defer src="./cams.js?v=2.3.8"></script>
   <script defer src="./music.js?v=2.3.8"></script>
-
-  <!-- Weather + hora -->
   <script defer src="./weatherClock.js?v=2.3.8"></script>
-
-  <!-- tickers -->
   <script defer src="./rlcTickers.js?v=2.3.8"></script>
-
-  <!-- Catálogo CCTV -->
   <script defer src="./catalogView.js?v=2.3.8"></script>
-
-  <!-- Main player -->
   <script defer src="./app.js?v=2.3.8"></script>
 
-  <!-- Countdown bootstrap (permite cfg desde control via BC/LS) -->
+  <!-- ───────────────────────── COUNTDOWN BOOTSTRAP ─────────────────────────
+       Permite cfg desde control vía BC/LS + parámetros URL.
+       ✅ Compat legacy: acepta mensajes sin key en legacy bus. -->
   <script>
     (() => {
       "use strict";
-      const g=(typeof globalThis!=="undefined")?globalThis:window;
-      const LOAD_GUARD="__RLC_COUNTDOWN_BOOT_V110";
-      try{if(g[LOAD_GUARD]) return; g[LOAD_GUARD]=true;}catch(_){}
-      const BUS_BASE="rlc_bus_v1", CD_KEY_BASE="rlc_countdown_cfg_v1";
-      const qs=(s,r=document)=>r.querySelector(s);
-      const safeStr=(v)=>(typeof v==="string")?v.trim():"";
 
-      function parseParams(){
-        const u=new URL(location.href);
-        const countdown=safeStr(u.searchParams.get("countdown")||"");
-        const key=safeStr(u.searchParams.get("key")||"") || (()=>{try{return safeStr(localStorage.getItem("rlc_last_key_v1")||"")}catch(_){return ""}})();
-        const toA=safeStr(u.searchParams.get("countdownTo")||"");
-        const toB=safeStr(u.searchParams.get("countTo")||"");
-        const toC=safeStr(u.searchParams.get("countdownTarget")||"");
-        const labelA=safeStr(u.searchParams.get("countdownLabel")||"");
-        const labelB=safeStr(u.searchParams.get("countLabel")||"");
-        const posA=safeStr(u.searchParams.get("countdownPos")||"");
-        const posB=safeStr(u.searchParams.get("countPos")||"");
-        return {key,countdown,countdownTo:toC||toA||toB,countdownLabel:labelA||labelB,countdownPos:posA||posB};
-      }
-      const P=parseParams();
-      const KEY=P.key;
-      const BUS=KEY?`${BUS_BASE}:${KEY}`:BUS_BASE;
-      const BUS_LEGACY=BUS_BASE;
-      const CD_KEY=KEY?`${CD_KEY_BASE}:${KEY}`:CD_KEY_BASE;
-      const CD_KEY_LEGACY=CD_KEY_BASE;
+      const g = (typeof globalThis !== "undefined") ? globalThis : window;
+      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V110";
+      try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
-      const bcMain=("BroadcastChannel" in window)?new BroadcastChannel(BUS):null;
-      const bcLegacy=(("BroadcastChannel" in window)&&KEY)?new BroadcastChannel(BUS_LEGACY):null;
+      const BUS_BASE = "rlc_bus_v1";
+      const CD_KEY_BASE = "rlc_countdown_cfg_v1";
+      const LAST_KEY_STORE = "rlc_last_key_v1";
 
-      function keyOk(msg,isMain){if(!KEY) return true; if(isMain) return true; return (msg&&msg.key===KEY);}
+      const qs = (s, r = document) => r.querySelector(s);
+      const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
 
-      const DEFAULTS={enabled:false,label:"FIN DE AÑO",targetMs:0,targetIso:"",position:"tr",hideHudWhenCatalog:true};
+      function parseParams() {
+        const u = new URL(location.href);
+        const countdown = safeStr(u.searchParams.get("countdown") || "");
 
-      function readJson(key){
-        try{
-          const raw=localStorage.getItem(key);
-          if(!raw) return null;
-          const obj=JSON.parse(raw);
-          return (obj&&typeof obj==="object")?obj:null;
-        }catch(_){return null}
+        const keyFromUrl = safeStr(u.searchParams.get("key") || "");
+        const keyFromStore = (() => { try { return safeStr(localStorage.getItem(LAST_KEY_STORE) || ""); } catch (_) { return ""; } })();
+        const key = keyFromUrl || keyFromStore;
+
+        const toA = safeStr(u.searchParams.get("countdownTo") || "");
+        const toB = safeStr(u.searchParams.get("countTo") || "");
+        const toC = safeStr(u.searchParams.get("countdownTarget") || "");
+
+        const labelA = safeStr(u.searchParams.get("countdownLabel") || "");
+        const labelB = safeStr(u.searchParams.get("countLabel") || "");
+
+        const posA = safeStr(u.searchParams.get("countdownPos") || "");
+        const posB = safeStr(u.searchParams.get("countPos") || "");
+
+        return {
+          key,
+          countdown,
+          countdownTo: toC || toA || toB,
+          countdownLabel: labelA || labelB,
+          countdownPos: posA || posB
+        };
       }
 
-      function normalizeCfg(inCfg){
-        const c=Object.assign({},DEFAULTS,inCfg||{});
-        c.enabled=(c.enabled===true);
-        c.label=safeStr(c.label||DEFAULTS.label).slice(0,60)||DEFAULTS.label;
-        c.position=(c.position==="tl"||c.position==="tr"||c.position==="bl"||c.position==="br")?c.position:"tr";
-        c.hideHudWhenCatalog=(c.hideHudWhenCatalog!==false);
+      const P = parseParams();
+      const KEY = P.key;
 
-        const ms=(typeof c.targetMs==="number")?c.targetMs:parseInt(String(c.targetMs||"0"),10);
-        c.targetMs=Number.isFinite(ms)?Math.max(0,ms):0;
-        c.targetIso=safeStr(c.targetIso||"");
+      const BUS = KEY ? `${BUS_BASE}:${KEY}` : BUS_BASE;
+      const BUS_LEGACY = BUS_BASE;
 
-        if(!c.targetMs && safeStr(c.targetIso).match(/^\d{10,13}$/)){
-          const n=parseInt(c.targetIso,10);
-          if(Number.isFinite(n)) c.targetMs=(String(n).length===10)?(n*1000):n;
-          c.targetIso="";
+      const CD_KEY = KEY ? `${CD_KEY_BASE}:${KEY}` : CD_KEY_BASE;
+      const CD_KEY_LEGACY = CD_KEY_BASE;
+
+      const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS) : null;
+      const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
+
+      // ✅ Compat legacy: si viene sin key, aceptamos.
+      function keyOk(msg, isMain) {
+        if (!KEY) return true;
+        if (isMain) return true; // el canal principal ya está namespaced por KEY
+        const mk = safeStr(msg && msg.key || "");
+        if (!mk) return true;    // legacy control viejo
+        return mk === KEY;
+      }
+
+      const DEFAULTS = {
+        enabled: false,
+        label: "FIN DE AÑO",
+        targetMs: 0,
+        targetIso: "",
+        position: "tr",
+        hideHudWhenCatalog: true
+      };
+
+      function readJson(key) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) return null;
+          const obj = JSON.parse(raw);
+          return (obj && typeof obj === "object") ? obj : null;
+        } catch (_) { return null; }
+      }
+
+      function normalizeCfg(inCfg) {
+        const c = Object.assign({}, DEFAULTS, inCfg || {});
+        c.enabled = (c.enabled === true);
+
+        c.label = safeStr(c.label || DEFAULTS.label).slice(0, 60) || DEFAULTS.label;
+        c.position = (c.position === "tl" || c.position === "tr" || c.position === "bl" || c.position === "br") ? c.position : "tr";
+        c.hideHudWhenCatalog = (c.hideHudWhenCatalog !== false);
+
+        const ms = (typeof c.targetMs === "number") ? c.targetMs : parseInt(String(c.targetMs || "0"), 10);
+        c.targetMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+        c.targetIso = safeStr(c.targetIso || "");
+
+        // Permite timestamp en targetIso (10 o 13 dígitos)
+        if (!c.targetMs && /^\d{10,13}$/.test(c.targetIso)) {
+          const n = parseInt(c.targetIso, 10);
+          if (Number.isFinite(n)) c.targetMs = (String(n).length === 10) ? (n * 1000) : n;
+          c.targetIso = "";
         }
+
         return c;
       }
 
-      function cfgFromUrlParams(){
-        const on=(P.countdown==="1"||P.countdown==="true");
-        if(!on && !P.countdownTo && !P.countdownLabel) return null;
+      function cfgFromUrlParams() {
+        const on = (P.countdown === "1" || P.countdown === "true");
+        if (!on && !P.countdownTo && !P.countdownLabel) return null;
 
-        let targetMs=0;
-        const rawTo=safeStr(P.countdownTo||"");
-        if(rawTo){
-          if(/^\d{10,13}$/.test(rawTo)){
-            const n=parseInt(rawTo,10);
-            if(Number.isFinite(n)) targetMs=(String(n).length===10)?(n*1000):n;
-          }else{
-            const d=new Date(rawTo);
-            const ms=d.getTime();
-            if(Number.isFinite(ms)&&ms>0) targetMs=ms;
+        let targetMs = 0;
+        const rawTo = safeStr(P.countdownTo || "");
+
+        if (rawTo) {
+          if (/^\d{10,13}$/.test(rawTo)) {
+            const n = parseInt(rawTo, 10);
+            if (Number.isFinite(n)) targetMs = (String(n).length === 10) ? (n * 1000) : n;
+          } else {
+            const d = new Date(rawTo);
+            const ms = d.getTime();
+            if (Number.isFinite(ms) && ms > 0) targetMs = ms;
           }
         }
-        return normalizeCfg({enabled:on||!!targetMs,label:P.countdownLabel||DEFAULTS.label,targetMs,position:P.countdownPos||"tr"});
+
+        return normalizeCfg({
+          enabled: on || !!targetMs,
+          label: P.countdownLabel || DEFAULTS.label,
+          targetMs,
+          position: P.countdownPos || "tr"
+        });
       }
 
-      function loadCfg(){
-        const stored=readJson(CD_KEY)||readJson(CD_KEY_LEGACY);
-        const urlCfg=cfgFromUrlParams();
-        return normalizeCfg(stored||urlCfg||DEFAULTS);
+      function loadCfg() {
+        const stored = readJson(CD_KEY) || readJson(CD_KEY_LEGACY);
+        const urlCfg = cfgFromUrlParams();
+        return normalizeCfg(stored || urlCfg || DEFAULTS);
       }
 
-      let CFG=loadCfg();
-      const root=qs("#rlcCountdown"), elLbl=qs("#rlcCountdownLabel"), elTime=qs("#rlcCountdownTime"), hud=qs("#hud");
+      let CFG = loadCfg();
 
-      function setPos(pos){
-        if(!root) return;
-        root.classList.remove("tr","tl","br","bl");
-        root.classList.add(pos||"tr");
+      const root = qs("#rlcCountdown");
+      const elLbl = qs("#rlcCountdownLabel");
+      const elTime = qs("#rlcCountdownTime");
+      const hud = qs("#hud");
+
+      let targetMs = 0;
+
+      function setPos(pos) {
+        if (!root) return;
+        root.classList.remove("tr", "tl", "br", "bl");
+        root.classList.add(pos || "tr");
       }
 
-      function show(on){
-        if(!root) return;
-        root.classList.toggle("hidden",!on);
+      function show(on) {
+        if (!root) return;
+        root.classList.toggle("hidden", !on);
       }
 
-      function nextNewYearLocalMs(){
-        try{const now=new Date();const y=now.getFullYear()+1;return new Date(y,0,1,0,0,0,0).getTime();}catch(_){return 0}
+      function nextNewYearLocalMs() {
+        try {
+          const now = new Date();
+          const y = now.getFullYear() + 1;
+          return new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+        } catch (_) { return 0; }
       }
 
-      let targetMs=0;
+      function applyCfg(cfg) {
+        CFG = normalizeCfg(cfg);
 
-      function applyCfg(cfg){
-        CFG=normalizeCfg(cfg);
-        if(elLbl) elLbl.textContent=CFG.label||DEFAULTS.label;
-        setPos(CFG.position||"tr");
+        if (elLbl) elLbl.textContent = CFG.label || DEFAULTS.label;
+        setPos(CFG.position || "tr");
 
-        targetMs=CFG.targetMs||0;
-        if(!targetMs && CFG.targetIso){
-          const d=new Date(CFG.targetIso);
-          const ms=d.getTime();
-          if(Number.isFinite(ms)&&ms>0) targetMs=ms;
+        targetMs = CFG.targetMs || 0;
+        if (!targetMs && CFG.targetIso) {
+          const d = new Date(CFG.targetIso);
+          const ms = d.getTime();
+          if (Number.isFinite(ms) && ms > 0) targetMs = ms;
         }
-        if(!targetMs && CFG.enabled) targetMs=nextNewYearLocalMs();
+        if (!targetMs && CFG.enabled) targetMs = nextNewYearLocalMs();
 
-        show(!!(CFG.enabled && targetMs>0));
+        show(!!(CFG.enabled && targetMs > 0));
       }
 
-      function fmtRemain(ms){
-        ms=Math.max(0,ms|0);
-        const sec=(ms/1000)|0;
-        const d=(sec/86400)|0;
-        const h=((sec%86400)/3600)|0;
-        const m=((sec%3600)/60)|0;
-        const s=sec%60;
-        const pad=(n)=>String(n).padStart(2,"0");
-        if(d>0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
+      function fmtRemain(ms) {
+        ms = Math.max(0, ms | 0);
+        const sec = (ms / 1000) | 0;
+        const d = (sec / 86400) | 0;
+        const h = ((sec % 86400) / 3600) | 0;
+        const m = ((sec % 3600) / 60) | 0;
+        const s = sec % 60;
+
+        const pad = (n) => String(n).padStart(2, "0");
+        if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
         return `${pad(h)}:${pad(m)}:${pad(s)}`;
       }
 
-      function isCatalogOn(){
-        const c=qs("#rlcCatalog");
+      function isCatalogOn() {
+        const c = qs("#rlcCatalog");
         return !!(c && c.classList.contains("on"));
       }
 
-      function tick(){
-        try{
-          if(hud && CFG.hideHudWhenCatalog){
-            hud.style.display=isCatalogOn()?"none":"";
+      function tick() {
+        try {
+          if (hud && CFG.hideHudWhenCatalog) {
+            hud.style.display = isCatalogOn() ? "none" : "";
           }
-        }catch(_){}
-        if(!root || root.classList.contains("hidden")) return;
-        if(!targetMs) return;
+        } catch (_) {}
 
-        const ms=targetMs-Date.now();
-        if(ms<=0){
-          if(elTime) elTime.textContent="🎉 00:00:00";
-          if(elLbl) elLbl.textContent="FELIZ AÑO NUEVO";
+        if (!root || root.classList.contains("hidden")) return;
+        if (!targetMs) return;
+
+        const ms = targetMs - Date.now();
+        if (ms <= 0) {
+          if (elTime) elTime.textContent = "🎉 00:00:00";
+          if (elLbl) elLbl.textContent = "FELIZ AÑO NUEVO";
           return;
         }
-        if(elTime) elTime.textContent=fmtRemain(ms);
+
+        if (elTime) elTime.textContent = fmtRemain(ms);
       }
 
-      function onBusMessage(msg,isMain){
-        if(!msg||typeof msg!=="object") return;
+      function onBusMessage(msg, isMain) {
+        if (!msg || typeof msg !== "object") return;
 
-        if(msg.type==="COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg==="object"){
-          if(!keyOk(msg,isMain)) return;
-          applyCfg(msg.cfg);return;
+        if (msg.type === "COUNTDOWN_CFG" && msg.cfg && typeof msg.cfg === "object") {
+          if (!keyOk(msg, isMain)) return;
+          applyCfg(msg.cfg);
+          return;
         }
-        if(msg.type==="cmd" && (msg.cmd==="COUNTDOWN_SET"||msg.name==="COUNTDOWN_SET") && msg.payload && typeof msg.payload==="object"){
-          if(!keyOk(msg,isMain)) return;
-          applyCfg(msg.payload);return;
+
+        if (msg.type === "cmd" && (msg.cmd === "COUNTDOWN_SET" || msg.name === "COUNTDOWN_SET") && msg.payload && typeof msg.payload === "object") {
+          if (!keyOk(msg, isMain)) return;
+          applyCfg(msg.payload);
+          return;
         }
       }
 
-      if(bcMain) bcMain.addEventListener("message",(ev)=>onBusMessage(ev?.data,true));
-      if(bcLegacy) bcLegacy.addEventListener("message",(ev)=>onBusMessage(ev?.data,false));
+      if (bcMain) bcMain.addEventListener("message", (ev) => onBusMessage(ev?.data, true));
+      if (bcLegacy) bcLegacy.addEventListener("message", (ev) => onBusMessage(ev?.data, false));
 
-      window.addEventListener("storage",(e)=>{
-        if(!e||!e.key) return;
-        if(e.key===CD_KEY||e.key===CD_KEY_LEGACY) applyCfg(loadCfg());
+      window.addEventListener("storage", (e) => {
+        if (!e || !e.key) return;
+        if (e.key === CD_KEY || e.key === CD_KEY_LEGACY) applyCfg(loadCfg());
       });
 
-      function boot(){
+      function boot() {
         applyCfg(loadCfg());
         tick();
-        setInterval(tick,250);
+        setInterval(tick, 250);
       }
 
-      if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot,{once:true});
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
       else boot();
     })();
   </script>

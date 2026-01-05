@@ -1,30 +1,49 @@
-/* app.js — RLC Player v2.3.8 PRO
-   ✅ ADMIN PANEL RELIABILITY FIX (CLAVE):
-      - Polling de comandos (localStorage) para casos donde "storage" no dispara (iframes/misma pestaña)
-      - Dedup ROBUSTO cross-canal (BC/LS/postMessage) sin duplicar ejecuciones
-      - Dedup por “firma” estable: permite mismo ts si payload cambia
-      - Fallback por postMessage (mismo origin)
-      - Aliases extra típicos de botones de control (HUD/SETTINGS/APPLY)
-   ✅ Mantiene TODO lo de v2.3.6/2.3.7:
-      - Auto voto por remaining + PRE (voteUi)
-      - ADS lead→live fix + hint duration
-      - TAGVOTE_START/STOP + refresh tags
-      - parseParams robusto, safeHide, schema state v5
+/* app.js — RLC Player v2.3.9 PRO (ADMIN COMMANDS HOTFIX)
+   ✅ FIX CRÍTICO (por lo que NO te iban los botones del panel admin):
+      - NO usar (x | 0) con timestamps (Date.now()) → overflow 32-bit → comandos descartados.
+      - Ahora ts se trata como Number (ms) y se aceptan ts/tsMs/t/seq.
+   ✅ Mantiene TODO lo tuyo (v2.3.8 PRO) + refuerzos:
+      - Polling LS + BC + postMessage
+      - Dedup robusto por firma + ventana temporal
+      - Más aliases de cmd (HUD/PLAYPAUSE/NEXTCAM/etc.)
+      - Bad-cache (until) sin overflow
 */
 
 (() => {
   "use strict";
 
+  // ───────────────────────── Base / version ─────────────────────────
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
-  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.8");
-  const VDIG = VERSION.replace(/\D/g, "") || "238";
+
+  const VERSION = String((typeof g !== "undefined" && g.APP_VERSION) ? g.APP_VERSION : "2.3.9");
+  const VDIG = VERSION.replace(/\D/g, "") || "239";
 
   const LOAD_GUARD = `__RLC_PLAYER_LOADED_V${VDIG}_PRO`;
   try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
   // ───────────────────────── Helpers ─────────────────────────
   const qs = (s) => document.querySelector(s);
+
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  const isObj = (x) => !!x && typeof x === "object";
+
+  const safeJson = (raw, fallback = null) => {
+    try { return JSON.parse(raw); } catch (_) { return fallback; }
+  };
+
+  const toNum = (v, def = 0) => {
+    const n = (typeof v === "number") ? v : Number(v);
+    return Number.isFinite(n) ? n : def;
+  };
+
+  const toInt = (v, def = 0) => {
+    const n = parseInt(String(v ?? ""), 10);
+    return Number.isFinite(n) ? n : def;
+  };
+
+  const nowMs = () => Date.now();
+
   const pad2 = (n) => String(n).padStart(2, "0");
   const fmtMMSS = (sec) => {
     sec = Math.max(0, sec | 0);
@@ -32,6 +51,7 @@
     const s = sec - m * 60;
     return `${pad2(m)}:${pad2(s)}`;
   };
+
   const setShown = (el, show) => {
     if (!el) return;
     const on = !!show;
@@ -45,10 +65,8 @@
       } catch (_) {}
     }
   };
-  const safeJson = (raw, fallback = null) => {
-    try { return JSON.parse(raw); } catch (_) { return fallback; }
-  };
-  const isObj = (x) => !!x && typeof x === "object";
+
+  const safeStr = (x) => { try { return String(x ?? ""); } catch (_) { return ""; } };
 
   // ───────────────────────── News Ticker bridge (SAFE) ─────────────────────────
   const TICKER_EVT = "RLC_PLAYER_EVENT";
@@ -70,7 +88,7 @@
   }
 
   function tickerState(state, force) {
-    const now = Date.now();
+    const now = nowMs();
     if (!force && (now - lastTickerStateAt) < 950) return;
     lastTickerStateAt = now;
     tickerNotify("STATE", state);
@@ -108,9 +126,9 @@
     const legacyParam = u.searchParams.get("legacy");
     const allowLegacy = (legacyParam != null) ? parseBoolParam(legacyParam, true) : true;
 
-    const startTimeoutMs = clamp(parseInt(u.searchParams.get("startTimeoutMs") || "20000", 10) || 20000, 3000, 90000);
-    const stallTimeoutMs = clamp(parseInt(u.searchParams.get("stallTimeoutMs") || "25000", 10) || 25000, 4000, 120000);
-    const maxStalls = clamp(parseInt(u.searchParams.get("maxStalls") || "3", 10) || 3, 1, 8);
+    const startTimeoutMs = clamp(toInt(u.searchParams.get("startTimeoutMs") || "20000", 20000), 3000, 90000);
+    const stallTimeoutMs = clamp(toInt(u.searchParams.get("stallTimeoutMs") || "25000", 25000), 4000, 120000);
+    const maxStalls = clamp(toInt(u.searchParams.get("maxStalls") || "3", 3), 1, 8);
 
     const ytCookiesParam = u.searchParams.get("ytCookies");
     const ytSessionParam = u.searchParams.get("ytSession");
@@ -118,7 +136,7 @@
     const ytCookies = ytCookiesExplicit ? parseBoolParam((ytCookiesParam ?? ytSessionParam), true) : true;
 
     return {
-      mins: clamp(parseInt(u.searchParams.get("mins") || "5", 10) || 5, 1, 120),
+      mins: clamp(toInt(u.searchParams.get("mins") || "5", 5), 1, 120),
       fit: (u.searchParams.get("fit") || "cover"),
       hud: parseBoolParam(u.searchParams.get("hud") ?? "1", true),
       seed: u.searchParams.get("seed") || "",
@@ -132,19 +150,19 @@
       ytCookiesExplicit,
 
       bgm: parseBoolParam(u.searchParams.get("bgm") ?? "1", true),
-      bgmVol: clamp(parseFloat(u.searchParams.get("bgmVol") || "0.22") || 0.22, 0, 1),
+      bgmVol: clamp(toNum(u.searchParams.get("bgmVol") || "0.22", 0.22), 0, 1),
 
       vote: voteExplicit ? parseBoolParam(voteParam, true) : parseBoolParam(u.searchParams.get("vote") ?? "0", false),
       voteExplicit,
       twitch: twitchRaw,
       twitchExplicit,
 
-      voteWindow: clamp(parseInt(u.searchParams.get("voteWindow") || "60", 10) || 60, 5, 180),
-      voteAt: clamp(parseInt(u.searchParams.get("voteAt") || "60", 10) || 60, 5, 600),
-      voteLead: clamp(parseInt(u.searchParams.get("voteLead") || "5", 10) || 5, 0, 30),
-      voteUi: clamp(parseInt(u.searchParams.get("voteUi") || "0", 10) || 0, 0, 300),
+      voteWindow: clamp(toInt(u.searchParams.get("voteWindow") || "60", 60), 5, 180),
+      voteAt: clamp(toInt(u.searchParams.get("voteAt") || "60", 60), 5, 600),
+      voteLead: clamp(toInt(u.searchParams.get("voteLead") || "5", 5), 0, 30),
+      voteUi: clamp(toInt(u.searchParams.get("voteUi") || "0", 0), 0, 300),
 
-      stayMins: clamp(parseInt(u.searchParams.get("stayMins") || "5", 10) || 5, 1, 120),
+      stayMins: clamp(toInt(u.searchParams.get("stayMins") || "5", 5), 1, 120),
 
       voteCmd: (u.searchParams.get("voteCmd") || "!next,!cam|!stay,!keep").trim(),
       voteOverlay: parseBoolParam(u.searchParams.get("voteOverlay") ?? "1", true),
@@ -153,19 +171,19 @@
       chatExplicit,
       chatHideCommands: parseBoolParam(u.searchParams.get("chatHideCommands"), true),
       chatHideExplicit: (u.searchParams.get("chatHideCommands") != null),
-      chatMax: clamp(parseInt(u.searchParams.get("chatMax") || "7", 10) || 7, 3, 12),
+      chatMax: clamp(toInt(u.searchParams.get("chatMax") || "7", 7), 3, 12),
       chatMaxExplicit: (u.searchParams.get("chatMax") != null),
-      chatTtl: clamp(parseInt(u.searchParams.get("chatTtl") || "12", 10) || 12, 5, 30),
+      chatTtl: clamp(toInt(u.searchParams.get("chatTtl") || "12", 12), 5, 30),
       chatTtlExplicit: (u.searchParams.get("chatTtl") != null),
 
       alerts: alertsExplicit ? parseBoolParam(alertsParam ?? "1", true) : parseBoolParam(u.searchParams.get("alerts") ?? "1", true),
       alertsExplicit,
-      alertsMax: clamp(parseInt(u.searchParams.get("alertsMax") || "3", 10) || 3, 1, 6),
-      alertsTtl: clamp(parseInt(u.searchParams.get("alertsTtl") || "8", 10) || 8, 3, 20),
+      alertsMax: clamp(toInt(u.searchParams.get("alertsMax") || "3", 3), 1, 6),
+      alertsTtl: clamp(toInt(u.searchParams.get("alertsTtl") || "8", 8), 3, 20),
 
       ads: adsExplicit ? parseBoolParam(adsParam ?? "1", true) : parseBoolParam((u.searchParams.get("ads") ?? u.searchParams.get("ad") ?? "1"), true),
       adsExplicit,
-      adLead: clamp(parseInt(u.searchParams.get("adLead") || "30", 10) || 30, 0, 300),
+      adLead: clamp(toInt(u.searchParams.get("adLead") || "30", 30), 0, 300),
       adShowDuring: parseBoolParam(u.searchParams.get("adShowDuring") ?? "1", true),
       adChatText: (u.searchParams.get("adChatText") || "⚠️ Anuncio en breve… ¡gracias por apoyar el canal! 💜"),
 
@@ -203,7 +221,7 @@
         return (t >>> 0) / 4294967296;
       };
     }
-    const seed = seedStr ? seedStr : String(Date.now());
+    const seed = seedStr ? seedStr : String(nowMs());
     const h = xmur3(seed);
     return sfc32(h(), h(), h(), h());
   }
@@ -224,7 +242,8 @@
   const STATE_KEY_BASE = "rlc_state_v1";
   const EVT_KEY_BASE = "rlc_evt_v1";
 
-  const KEY = String(P.key || "").trim();
+  const KEY = safeStr(P.key).trim();
+  const KEY_L = KEY.toLowerCase();
   const OWNER_MODE = !!KEY;
   const ALLOW_LEGACY = !!P.allowLegacy;
 
@@ -334,7 +353,7 @@
   // ───────────────────────── Emit EVENTS ─────────────────────────
   let lastEvtAt = 0;
   function emitEvent(name, payload = {}) {
-    const now = Date.now();
+    const now = nowMs();
     lastEvtAt = Math.max(lastEvtAt + 1, now);
     const evt = { type: "event", ts: lastEvtAt, name: String(name || ""), payload: payload || {} };
     if (KEY) evt.key = KEY;
@@ -353,14 +372,21 @@
   let banned = loadSetMerged([BAN_KEY, BAN_KEY_LEGACY]);
 
   let badMap = {};
-  function loadBad() { const obj = loadJsonFirst([BAD_KEY, BAD_KEY_LEGACY], {}); badMap = (obj && typeof obj === "object") ? obj : {}; }
-  function saveBad() { lsSet(BAD_KEY, JSON.stringify(badMap || {})); lsSet(BAD_KEY_LEGACY, JSON.stringify(badMap || {})); }
+  function loadBad() {
+    const obj = loadJsonFirst([BAD_KEY, BAD_KEY_LEGACY], {});
+    badMap = (obj && typeof obj === "object") ? obj : {};
+  }
+  function saveBad() {
+    lsSet(BAD_KEY, JSON.stringify(badMap || {}));
+    lsSet(BAD_KEY_LEGACY, JSON.stringify(badMap || {}));
+  }
   function purgeBad() {
-    const now = Date.now();
+    const now = nowMs();
     let dirty = false;
     for (const k of Object.keys(badMap || {})) {
       const it = badMap[k];
-      if (!it || (it.until && now >= it.until)) { delete badMap[k]; dirty = true; }
+      const until = toNum(it?.until, 0);
+      if (!it || (until && now >= until)) { delete badMap[k]; dirty = true; }
     }
     if (dirty) saveBad();
   }
@@ -368,16 +394,15 @@
     if (!id) return false;
     const it = badMap[id];
     if (!it) return false;
-    const until = it.until | 0;
+    const until = toNum(it.until, 0);
     if (!until) return false;
-    if (Date.now() >= until) return false;
-    return true;
+    return nowMs() < until;
   }
   function markBad(id, reason) {
     if (!id) return;
-    const now = Date.now();
+    const now = nowMs();
     const prev = badMap[id] || {};
-    const fails = clamp(((prev.fails | 0) || 0) + 1, 1, 999);
+    const fails = clamp((toInt(prev.fails, 0) || 0) + 1, 1, 999);
     const mult = clamp(fails, 1, 12);
     const cooldown = clamp(BAD_BASE_COOLDOWN_MS * mult, BAD_BASE_COOLDOWN_MS, BAD_MAX_COOLDOWN_MS);
     badMap[id] = { fails, until: now + cooldown, last: now, reason: String(reason || "fail") };
@@ -449,7 +474,7 @@
   function remainingSeconds() {
     if (!playing) return Math.max(0, pausedRemaining | 0);
     if (!roundEndsAt) return Math.max(0, segmentSeconds | 0);
-    const ms = roundEndsAt - Date.now();
+    const ms = roundEndsAt - nowMs();
     return Math.max(0, Math.ceil(ms / 1000));
   }
 
@@ -469,7 +494,7 @@
     voteTriggeredForSegment = false;
 
     if (playing) {
-      roundEndsAt = Date.now() + s * 1000;
+      roundEndsAt = nowMs() + s * 1000;
       pausedRemaining = 0;
     } else {
       roundEndsAt = 0;
@@ -486,7 +511,7 @@
     voteTriggeredForSegment = false;
 
     if (playing) {
-      roundEndsAt = Date.now() + rem * 1000;
+      roundEndsAt = nowMs() + rem * 1000;
       pausedRemaining = 0;
     } else {
       roundEndsAt = 0;
@@ -508,7 +533,7 @@
       playing = true;
       const rem = clamp(pausedRemaining | 0, 0, Math.max(1, segmentSeconds | 0));
       pausedRemaining = 0;
-      roundEndsAt = Date.now() + Math.max(1, rem) * 1000;
+      roundEndsAt = nowMs() + Math.max(1, rem) * 1000;
     }
     setCountdownUI();
     postState({ reason: "play_toggle" });
@@ -528,8 +553,21 @@
   }
 
   // ───────────────────────── Comms ─────────────────────────
+  let cmdSeq = 0;
+
   function busSendCmd(cmd, payload = {}) {
-    const msg = { type: "cmd", ts: Date.now(), cmd: String(cmd || ""), payload: payload || {} };
+    const ts = nowMs();
+    cmdSeq = (cmdSeq + 1) >>> 0;
+
+    const msg = {
+      type: "cmd",
+      ts,        // ms
+      tsMs: ts,  // compat
+      t: ts,     // compat
+      seq: cmdSeq,
+      cmd: String(cmd || ""),
+      payload: payload || {}
+    };
     if (KEY) msg.key = KEY;
 
     const raw = JSON.stringify(msg);
@@ -549,6 +587,7 @@
 
   let lastBotCmdAt = 0;
   let twitchChannel = "";
+
   function botSay(text) {
     if (!OWNER_MODE) return false;
     if (!twitchChannel) return false;
@@ -556,7 +595,7 @@
     const msg = String(text || "").trim();
     if (!msg) return false;
 
-    const now = Date.now();
+    const now = nowMs();
     if ((now - lastBotCmdAt) < 1400) return false;
     lastBotCmdAt = now;
 
@@ -577,14 +616,14 @@
     try { if (stallTimer) clearTimeout(stallTimer); } catch (_) {}
     startTimer = null;
     stallTimer = null;
-    lastProgressAt = Date.now();
+    lastProgressAt = nowMs();
     stallCount = 0;
     startedOk = false;
   }
 
   function healthProgress(tok) {
     if (tok !== playToken) return;
-    lastProgressAt = Date.now();
+    lastProgressAt = nowMs();
     startedOk = true;
     stallCount = 0;
     try { if (startTimer) clearTimeout(startTimer); } catch (_) {}
@@ -605,7 +644,7 @@
     try { if (stallTimer) clearTimeout(stallTimer); } catch (_) {}
     stallTimer = setTimeout(() => {
       if (tok !== playToken) return;
-      const age = Date.now() - (lastProgressAt || 0);
+      const age = nowMs() - (lastProgressAt || 0);
       if (age >= (stallTimeoutMs | 0)) healthFail(tok, cam, `stall_timeout_${reason}`);
     }, clamp((stallTimeoutMs | 0), 2000, 120000));
   }
@@ -788,7 +827,7 @@
     el.appendChild(body);
 
     alertsList.appendChild(el);
-    alertItems.push({ el, ts: Date.now() });
+    alertItems.push({ el, ts: nowMs() });
 
     while (alertItems.length > alertsMax) {
       const old = alertItems.shift();
@@ -833,7 +872,12 @@
       adRoot = document.createElement("div");
       adRoot.id = "rlcAdRoot";
       adRoot.className = "rlcAdRoot";
-      adRoot.innerHTML = '<div class="rlcAdCard"><div class="rlcAdPill">ADS</div><div class="rlcAdMsg"><div class="rlcAdTitle" id="rlcAdTitle">Anuncio</div><div class="rlcAdTime" id="rlcAdTime">—</div><div class="rlcAdBar"><i id="rlcAdBar"></i></div></div></div>';
+      adRoot.innerHTML =
+        '<div class="rlcAdCard"><div class="rlcAdPill">ADS</div><div class="rlcAdMsg">' +
+        '<div class="rlcAdTitle" id="rlcAdTitle">Anuncio</div>' +
+        '<div class="rlcAdTime" id="rlcAdTime">—</div>' +
+        '<div class="rlcAdBar"><i id="rlcAdBar"></i></div>' +
+        "</div></div>";
       document.body.appendChild(adRoot);
     }
     adTitleEl = document.getElementById("rlcAdTitle");
@@ -864,7 +908,7 @@
 
     adActive = true; adPhase = "lead"; adShow();
     adTotalLead = Math.max(1, left);
-    adLeadEndsAt = Date.now() + left * 1000;
+    adLeadEndsAt = nowMs() + left * 1000;
 
     if (adTitleEl) adTitleEl.textContent = "Anuncio en…";
     if (adTimeEl) adTimeEl.textContent = fmtMMSS(left);
@@ -878,7 +922,7 @@
     if (!adsEnabled) return;
     ensureAdsUI();
 
-    const now = Date.now();
+    const now = nowMs();
     let d = (durationSec | 0) || 0;
     if (d <= 0) d = (adLiveHintSec | 0) || 0;
     if (d <= 0) d = 30;
@@ -905,7 +949,7 @@
 
   function adTick() {
     if (!adsEnabled || !adActive) return;
-    const now = Date.now();
+    const now = nowMs();
 
     if (adPhase === "lead") {
       const left = Math.max(0, Math.ceil((adLeadEndsAt - now) / 1000));
@@ -939,7 +983,9 @@
 
     window.addEventListener("message", (ev) => {
       const origin = String(ev.origin || "");
-      const okOrigin = /(^https:\/\/)(www\.)?youtube\.com$/.test(origin) || /(^https:\/\/)(www\.)?youtube-nocookie\.com$/.test(origin);
+      const okOrigin =
+        /(^https:\/\/)(www\.)?youtube\.com$/.test(origin) ||
+        /(^https:\/\/)(www\.)?youtube-nocookie\.com$/.test(origin);
       if (!okOrigin) return;
 
       let data = ev.data;
@@ -967,7 +1013,7 @@
         const st = (data.info != null) ? (data.info | 0) : -999;
         ytLastState = st;
         if (st === 0) { emitEvent("YT_ENDED", {}); healthFail(tok, cam, "yt_ended"); return; }
-        if (st === 1 || st === 3) { ytLastGoodAt = Date.now(); healthProgress(tok); return; }
+        if (st === 1 || st === 3) { ytLastGoodAt = nowMs(); healthProgress(tok); return; }
         return;
       }
 
@@ -977,7 +1023,7 @@
         if (ct != null) {
           if (ct > (ytLastTime + 0.08)) {
             ytLastTime = ct;
-            ytLastGoodAt = Date.now();
+            ytLastGoodAt = nowMs();
             healthProgress(tok);
           }
         }
@@ -993,7 +1039,7 @@
   function ytHandshake(tok) {
     ytExpectTok = tok;
     bindYtMessagesOnce();
-    if (!ytPlayerId) ytPlayerId = "rlcYt_" + String(Date.now());
+    if (!ytPlayerId) ytPlayerId = "rlcYt_" + String(nowMs());
 
     ytLastState = -999; ytLastTime = 0; ytLastGoodAt = 0;
 
@@ -1097,7 +1143,7 @@
     bubble.appendChild(t);
     chatList.appendChild(bubble);
 
-    chatItems.push({ el: bubble, ts: Date.now() });
+    chatItems.push({ el: bubble, ts: nowMs() });
     while (chatItems.length > chatMax) {
       const old = chatItems.shift();
       try { old?.el?.remove?.(); } catch (_) {}
@@ -1212,7 +1258,7 @@
     voters = new Set();
     voteSessionActive = true;
 
-    const now = Date.now();
+    const now = nowMs();
 
     preEndsAt = 0;
     leadEndsAt = 0;
@@ -1279,7 +1325,7 @@
     setShown(voteBox, show);
     if (!show) return;
 
-    const now = Date.now();
+    const now = nowMs();
     const yes0 = [...cmdYes][0] || "!next";
     const no0 = [...cmdNo][0] || "!stay";
 
@@ -1333,7 +1379,7 @@
 
   function tryCallVote(userId) {
     if (!OWNER_MODE || !twitchChannel) return;
-    const now = Date.now();
+    const now = nowMs();
     if (now < callVoteCooldownUntil) return;
 
     purgeReqMap(callVoteUsers, now);
@@ -1435,7 +1481,9 @@
       tagVoteBox.id = "rlcTagVoteBox";
       tagVoteBox.className = "rlcTagVoteBox";
       tagVoteBox.innerHTML =
-        '<div class="rlcTagVoteCard"><div class="rlcTagVoteTop"><div class="rlcTagVoteTitle">🎲 Vota un tag para la próxima cámara</div><div class="rlcTagVoteTime" id="rlcTagVoteTime">00:30</div></div>' +
+        '<div class="rlcTagVoteCard"><div class="rlcTagVoteTop">' +
+        '<div class="rlcTagVoteTitle">🎲 Vota un tag para la próxima cámara</div>' +
+        '<div class="rlcTagVoteTime" id="rlcTagVoteTime">00:30</div></div>' +
         '<div class="rlcTagVoteHint">Vota con: !1  !2  !3</div><div class="rlcTagRows">' +
         '<div class="rlcTagRow"><div class="rlcTagName" id="rlcTagT1">—</div><div class="rlcTagBar"><i id="rlcTagB1"></i></div><div class="rlcTagNum" id="rlcTagN1">0</div></div>' +
         '<div class="rlcTagRow"><div class="rlcTagName" id="rlcTagT2">—</div><div class="rlcTagBar"><i id="rlcTagB2"></i></div><div class="rlcTagNum" id="rlcTagN2">0</div></div>' +
@@ -1463,7 +1511,7 @@
     setShown(tagVoteBox, show);
     if (!show) return;
 
-    const now = Date.now();
+    const now = nowMs();
     const rem = Math.max(0, Math.ceil((tagVoteEndsAt - now) / 1000));
     if (tagVoteTimeEl) tagVoteTimeEl.textContent = fmtMMSS(rem);
 
@@ -1509,7 +1557,7 @@
     tagVoteTags = tags;
     tagVoteCounts = [0, 0, 0];
     tagVoteVoters = new Set();
-    tagVoteEndsAt = Date.now() + 30 * 1000;
+    tagVoteEndsAt = nowMs() + 30 * 1000;
 
     alertsPush("info", "Tag Vote", `Vota con !1 !2 !3 · ${tags.join(" / ")}`);
     botSay(`🎲 TagVote iniciado: 1) ${tags[0]}  2) ${tags[1]}  3) ${tags[2]}  (vota con !1 !2 !3)`);
@@ -1548,7 +1596,7 @@
 
   function tryTagVoteRequest(userId) {
     if (!OWNER_MODE || !twitchChannel) return;
-    const now = Date.now();
+    const now = nowMs();
     if (now < tagReqCooldownUntil) return;
 
     purgeReqMap(tagReqUsers, now);
@@ -1686,7 +1734,7 @@
 
   let lastHelpAt = 0;
   function sendHelp() {
-    const now = Date.now();
+    const now = nowMs();
     if ((now - lastHelpAt) < 18000) return;
     lastHelpAt = now;
 
@@ -1791,9 +1839,9 @@
     const end = clamp(+targetVol || 0, 0, 1);
     const dur = clamp(ms | 0, 0, 2000);
     if (dur <= 0) { try { el.volume = end; } catch (_) {} return; }
-    const t0 = Date.now();
+    const t0 = nowMs();
     const timer = setInterval(() => {
-      const k = clamp((Date.now() - t0) / dur, 0, 1);
+      const k = clamp((nowMs() - t0) / dur, 0, 1);
       const v = start + (end - start) * k;
       try { el.volume = clamp(v, 0, 1); } catch (_) {}
       if (k >= 1) { try { clearInterval(timer); } catch (_) {} }
@@ -1863,7 +1911,7 @@
 
     try {
       tickerNotify("CAM", {
-        ts: Date.now(),
+        ts: nowMs(),
         key: KEY || "",
         idx: idx,
         total: Math.max(1, cams.length || 1),
@@ -1906,7 +1954,7 @@
         (origin ? `&origin=${encodeURIComponent(origin)}` : "") +
         `&widgetid=1`;
 
-      ytPlayerId = "rlcYt_" + String(tok) + "_" + String(Date.now());
+      ytPlayerId = "rlcYt_" + String(tok) + "_" + String(nowMs());
 
       if (frame) {
         frame.onload = () => { ytHandshake(tok); };
@@ -1930,7 +1978,7 @@
         const u = cam.url || "";
         if (!u) { healthFail(tok, cam, "image_no_url"); return; }
         const sep = (u.indexOf("?") >= 0) ? "&" : "?";
-        if (img) img.src = `${u}${sep}t=${Date.now()}`;
+        if (img) img.src = `${u}${sep}t=${nowMs()}`;
       };
 
       if (img) {
@@ -2024,7 +2072,7 @@
   }
 
   function setRoundMins(mins) {
-    const m = clamp(parseInt(mins, 10) || 5, 1, 120);
+    const m = clamp(toInt(mins, 5), 1, 120);
     roundSeconds = m * 60;
 
     const rem = remainingSeconds();
@@ -2072,7 +2120,7 @@
   // ───────────────────────── State publish ─────────────────────────
   let lastPostAt = 0;
   function postState(extra = {}, force = true) {
-    const now = Date.now();
+    const now = nowMs();
     if (!force) { if ((now - lastPostAt) < 500) return; }
     lastPostAt = now;
 
@@ -2151,38 +2199,58 @@
   }
 
   // ───────────────────────── Commands (ADMIN HARDENED) ─────────────────────────
-  // ✅ FIX: dedupe cross-canal SIN prefijos "ls:/bc:/pm:" (evita dobles ejecuciones)
-  // ✅ FIX: ventana de dedupe rápida para casos donde BC y LS generen ts distintos
-  let lastCmdTs = 0;
+  // 🔥 FIX CLAVE: NO overflow timestamps (no |0). Acepta ts/tsMs/t/seq.
+  let lastCmdTs = 0;      // ms
+  let lastCmdSeq = 0;     // uint
   let lastCmdSig = "";
   let lastCmdSeenAt = 0;
-  const CMD_DEDUPE_WINDOW_MS = 250;
+  const CMD_DEDUPE_WINDOW_MS = 350;
 
-  function safeStr(x) { try { return String(x ?? ""); } catch (_) { return ""; } }
+  function keysEqual(a, b) {
+    const A = safeStr(a).trim();
+    const B = safeStr(b).trim();
+    if (!A || !B) return A === B;
+    return A === B || A.toLowerCase() === B.toLowerCase();
+  }
 
   function cmdSigFrom(msg) {
-    // Firma estable: cmd|key|payload (sin ts) -> dedupe cross-canal
-    const cmd = safeStr(msg?.cmd).trim().toUpperCase();
-    const key = safeStr(msg?.key).trim();
+    const cmd = safeStr(msg?.cmd ?? msg?.command ?? msg?.action).trim().toUpperCase();
+    const key = safeStr(msg?.key ?? msg?.k ?? "").trim();
     let payloadRaw = "";
-    try { payloadRaw = JSON.stringify(msg?.payload ?? null); } catch (_) { payloadRaw = safeStr(msg?.payload); }
+    const payload = (msg?.payload ?? msg?.data ?? msg?.body ?? null);
+    try { payloadRaw = JSON.stringify(payload); } catch (_) { payloadRaw = safeStr(payload); }
     return `${cmd}|${key}|${payloadRaw}`;
   }
 
-  function cmdKeyOk(msg, isMainChannel) {
-    // Si el player NO está namespaced (sin KEY), acepta todo.
+  function cmdKeyOk(msg) {
     if (!KEY) return true;
 
-    // Si el mensaje trae key, debe coincidir SIEMPRE.
-    const mk = safeStr(msg?.key).trim();
-    if (mk) return mk === KEY;
+    const mk = safeStr(msg?.key ?? msg?.k ?? "").trim();
+    if (mk) return keysEqual(mk, KEY);
 
-    // Si no trae key, solo lo aceptamos si allowLegacy.
     return !!ALLOW_LEGACY;
   }
 
-  function applyCommand(cmd, payload) {
+  function normalizeCmdName(cmd) {
     const C = String(cmd || "").trim().toUpperCase();
+    if (!C) return "";
+
+    // Aliases extra típicos
+    if (C === "SKIP" || C === "NEXTCAM" || C === "NEXT_CAM") return "NEXT";
+    if (C === "BACK" || C === "PREVCAM" || C === "PREV_CAM") return "PREV";
+    if (C === "PLAYPAUSE" || C === "TOGGLEPLAY" || C === "TOGGLE_PLAYBACK") return "TOGGLE_PLAY";
+
+    if (C === "HUD") return "HUD_TOGGLE";
+    if (C === "TOGGLEHUD") return "HUD_TOGGLE";
+    if (C === "SHOWHUD") return "HUD_SHOW";
+    if (C === "HIDEHUD") return "HUD_HIDE";
+
+    if (C === "SETTINGS_APPLY") return "APPLY";
+    return C;
+  }
+
+  function applyCommand(cmd, payload) {
+    const C = normalizeCmdName(cmd);
 
     switch (C) {
       case "NEXT": nextCam("cmd"); break;
@@ -2454,7 +2522,6 @@
         postState({ reason: "yt_cookies" });
       } break;
 
-      // ✅ Botón “Aplicar ajustes” típico del panel admin
       case "APPLY":
       case "APPLY_SETTINGS":
       case "SETTINGS": {
@@ -2462,6 +2529,7 @@
           if (payload.mins != null) setRoundMins(payload.mins);
           if (payload.fit != null) setFit(String(payload.fit));
           if (payload.autoskip != null) autoskip = !!payload.autoskip;
+
           if (payload.adfree != null) {
             const want = !!payload.adfree;
             const prev = modeAdfree;
@@ -2474,6 +2542,7 @@
               playCam(cams[idx]);
             }
           }
+
           if (payload.hudHidden != null) setHudHidden(!!payload.hudHidden);
           if (payload.hudCollapsed != null) setHudCollapsed(!!payload.hudCollapsed);
 
@@ -2507,55 +2576,97 @@
     }
   }
 
-  function handleCmdMsg(msg, isMainChannel, sig = "") {
-    if (!msg || typeof msg !== "object") return;
-    if (msg.type !== "cmd") return;
-    if (!cmdKeyOk(msg, !!isMainChannel)) return;
+  function extractCmdAndPayload(msg) {
+    if (!msg) return { cmd: "", payload: {} };
+    if (typeof msg === "string") return { cmd: msg, payload: {} };
+    const cmd = msg.cmd ?? msg.command ?? msg.action ?? "";
+    const payload = msg.payload ?? msg.data ?? msg.body ?? {};
+    return { cmd: String(cmd || ""), payload: payload || {} };
+  }
 
-    const ts = (msg.ts | 0) || 0;
+  function readMsgTsMs(msg) {
+    // Acepta múltiples campos de timestamp en ms.
+    const ts = toNum(msg?.tsMs, NaN);
+    if (Number.isFinite(ts) && ts > 0) return ts;
+    const t = toNum(msg?.t, NaN);
+    if (Number.isFinite(t) && t > 0) return t;
+    const ts2 = toNum(msg?.ts, NaN);
+    if (Number.isFinite(ts2) && ts2 > 0) return ts2;
+    return 0;
+  }
+
+  function readMsgSeq(msg) {
+    const s = toNum(msg?.seq, 0);
+    return (Number.isFinite(s) && s > 0) ? s : 0;
+  }
+
+  function handleCmdMsg(msg, sig = "") {
+    if (!msg) return;
+
+    // Compat: si llega "NEXT" como string por postMessage
+    if (typeof msg === "string") {
+      applyCommand(msg, {});
+      return;
+    }
+
+    if (typeof msg !== "object") return;
+
+    // Compat: algunos mandan {cmd:"NEXT"} sin type
+    const type = String(msg.type || "").toLowerCase();
+    if (type && type !== "cmd") return;
+
+    if (!cmdKeyOk(msg)) return;
+
     const s = sig || cmdSigFrom(msg);
-    const nowSeen = Date.now();
+    const nowSeen = nowMs();
 
-    // ✅ Dedup rápida cross-canal (por si BC/LS llegan con ts distinto)
+    // Dedup rápida cross-canal (BC/LS/PM)
     if (s && s === lastCmdSig && (nowSeen - (lastCmdSeenAt || 0)) < CMD_DEDUPE_WINDOW_MS) return;
 
-    // ✅ Orden por ts (no re-ejecutar viejos) + permite mismo ts si firma distinta
-    if (ts) {
+    const ts = readMsgTsMs(msg);   // ms, sin overflow
+    const seq = readMsgSeq(msg);
+
+    // Orden: preferimos seq si existe, si no ts.
+    if (seq) {
+      if (seq < lastCmdSeq) return;
+      if (seq === lastCmdSeq && s && s === lastCmdSig) return;
+      lastCmdSeq = seq;
+    } else if (ts) {
       if (ts < lastCmdTs) return;
       if (ts === lastCmdTs && s && s === lastCmdSig) return;
       lastCmdTs = ts;
     } else {
+      // sin ts/seq: dedup por firma
       if (s && s === lastCmdSig) return;
     }
 
     lastCmdSig = s || lastCmdSig;
     lastCmdSeenAt = nowSeen;
 
-    const cmd = String(msg.cmd || "");
-    const payload = msg.payload || {};
+    const { cmd, payload } = extractCmdAndPayload(msg);
     applyCommand(cmd, payload);
   }
 
-  function readCmdFromStorage(keyName, isMainChannel) {
+  function readCmdFromStorage(keyName) {
     const raw = lsGet(keyName);
     if (!raw) return;
     const msg = safeJson(raw, null);
     if (!msg) return;
-    handleCmdMsg(msg, isMainChannel, cmdSigFrom(msg));
+    handleCmdMsg(msg, cmdSigFrom(msg));
   }
 
-  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, true, cmdSigFrom(ev?.data)); } catch (_) {}
-  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, false, cmdSigFrom(ev?.data)); } catch (_) {}
+  try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, cmdSigFrom(ev?.data)); } catch (_) {}
+  try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, cmdSigFrom(ev?.data)); } catch (_) {}
 
-  // ✅ Fallback extra por postMessage (mismo origin)
+  // postMessage fallback (mismo origin)
   window.addEventListener("message", (ev) => {
     try {
       const originOk = String(ev.origin || "") === String(location.origin || "");
       if (!originOk) return;
       const d = ev.data;
-      const msg = (typeof d === "string") ? safeJson(d, null) : d;
+      const msg = (typeof d === "string") ? safeJson(d, d) : d;
       if (!msg) return;
-      if (msg.type === "cmd") handleCmdMsg(msg, true, cmdSigFrom(msg));
+      handleCmdMsg(msg, cmdSigFrom(msg));
     } catch (_) {}
   }, false);
 
@@ -2563,8 +2674,8 @@
     const k = String(e.key || "");
     if (!k) return;
 
-    if (k === CMD_KEY) readCmdFromStorage(CMD_KEY, true);
-    else if (k === CMD_KEY_LEGACY) readCmdFromStorage(CMD_KEY_LEGACY, false);
+    if (k === CMD_KEY) readCmdFromStorage(CMD_KEY);
+    else if (k === CMD_KEY_LEGACY) readCmdFromStorage(CMD_KEY_LEGACY);
 
     if (!P.twitchExplicit && (k === BOT_STORE_KEY || k === BOT_STORE_KEY_BASE)) {
       const ch = readBotCfgChannel();
@@ -2576,14 +2687,14 @@
     }
   });
 
-  // ✅ Polling de comandos: hace que los botones funcionen incluso si storage-event no dispara
-  const CMD_POLL_MS = 300;
+  // Polling de comandos (Admin buttons incluso si storage-event no dispara)
+  const CMD_POLL_MS = 250;
   let cmdPollTimer = null;
   function startCmdPolling() {
     try { if (cmdPollTimer) clearInterval(cmdPollTimer); } catch (_) {}
     cmdPollTimer = setInterval(() => {
-      readCmdFromStorage(CMD_KEY, true);
-      readCmdFromStorage(CMD_KEY_LEGACY, false);
+      readCmdFromStorage(CMD_KEY);
+      readCmdFromStorage(CMD_KEY_LEGACY);
     }, CMD_POLL_MS);
   }
 
@@ -2593,7 +2704,7 @@
       const cam = cams[idx] || {};
       const data = {
         v: 5,
-        ts: Date.now(),
+        ts: nowMs(),
         key: KEY || "",
         version: VERSION,
         curId: cam.id || "",
@@ -2705,7 +2816,7 @@
     setCountdownUI();
 
     if (voteSessionActive) {
-      const now = Date.now();
+      const now = nowMs();
 
       if (votePhase === "pre" && preEndsAt && now >= preEndsAt) {
         if (voteLeadActiveSec > 0) votePhase = "lead";
@@ -2721,14 +2832,14 @@
       if (voteEndsAt && now >= voteEndsAt) voteFinish();
     }
 
-    if (tagVoteActive && tagVoteEndsAt && Date.now() >= tagVoteEndsAt) tagVoteFinish();
+    if (tagVoteActive && tagVoteEndsAt && nowMs() >= tagVoteEndsAt) tagVoteFinish();
 
     adTick();
 
     try {
       const cam = cams[idx] || null;
       if (playing && autoskip && cam && cam.kind === "youtube" && startedOk) {
-        const age = Date.now() - (lastProgressAt || 0);
+        const age = nowMs() - (lastProgressAt || 0);
         if (age > (stallTimeoutMs | 0)) healthStall(playToken, cam, "yt_no_progress");
       }
     } catch (_) {}
@@ -2873,13 +2984,13 @@
     try { if (saveTimer) clearInterval(saveTimer); } catch (_) {}
     saveTimer = setInterval(savePlayerState, 3500);
 
-    // ✅ Arranca polling de comandos para admin buttons
     startCmdPolling();
 
     postState({ reason: "boot" }, true);
 
-    readCmdFromStorage(CMD_KEY, true);
-    readCmdFromStorage(CMD_KEY_LEGACY, false);
+    // Lee una vez al arrancar
+    readCmdFromStorage(CMD_KEY);
+    readCmdFromStorage(CMD_KEY_LEGACY);
   }
 
   window.addEventListener("beforeunload", () => {
