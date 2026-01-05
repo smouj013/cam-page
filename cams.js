@@ -698,12 +698,122 @@
   ];
 
   // NEWS seeds (solo si activas camsNews=1). Son pocos a propósito: discovery hace el “gordo”.
-  // Puedes añadir tus propios canales aquí cuando quieras.
+  // ✅ LIVE NEWS reales (YouTube). Incluye youtubeId + originUrl para máxima compat.
+  // Nota: IDs live de YouTube pueden rotar si reinician stream, pero estos suelen ser bastante estables.
   const NEWS_RAW = [
-    // Ejemplos genéricos (si alguno cae, el discovery lo compensa):
-    { id:"news_world_generic_1", title:"World News — Live", place:"", source:"YouTube Live", kind:"youtube", youtubeId:"", originUrl:"", tags:["news"] },
-    { id:"news_world_generic_2", title:"Breaking News — Live", place:"", source:"YouTube Live", kind:"youtube", youtubeId:"", originUrl:"", tags:["news"] }
+    // ── INTERNATIONAL (EN) ─────────────────────────────────────────────
+    {
+      id: "news_dw_en_live",
+      title: "DW News — LIVE",
+      place: "Global",
+      source: "DW News (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "IelcB6lHrCs",
+      originUrl: "https://www.youtube.com/watch?v=IelcB6lHrCs",
+      tags: ["news", "live", "international"]
+    },
+    {
+      id: "news_france24_en_live",
+      title: "FRANCE 24 English — LIVE",
+      place: "Global",
+      source: "FRANCE 24 (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "4BYQ9LmU_kg",
+      originUrl: "https://www.youtube.com/watch?v=4BYQ9LmU_kg",
+      tags: ["news", "live", "international"]
+    },
+    {
+      id: "news_aljazeera_en_live",
+      title: "Al Jazeera English — LIVE",
+      place: "Global",
+      source: "Al Jazeera English (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "-upyPouRrB8",
+      originUrl: "https://www.youtube.com/watch?v=-upyPouRrB8",
+      tags: ["news", "live", "international"]
+    },
+    {
+      id: "news_euronews_en_live",
+      title: "euronews (English) — LIVE",
+      place: "Europe • Global",
+      source: "euronews (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "NiRIbKwAejk",
+      originUrl: "https://www.youtube.com/watch?v=NiRIbKwAejk",
+      tags: ["news", "live", "europe"]
+    },
+    {
+      id: "news_euronews_ru_live",
+      title: "euronews (Русский) — LIVE",
+      place: "Europe • Global",
+      source: "euronews (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "lwYzwdBiaho",
+      originUrl: "https://www.youtube.com/watch?v=lwYzwdBiaho",
+      tags: ["news", "live", "europe"]
+    },
+
+    // ── BUSINESS / MARKETS ─────────────────────────────────────────────
+    {
+      id: "news_bloomberg_live",
+      title: "Bloomberg — LIVE",
+      place: "Global Markets",
+      source: "Bloomberg (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "n40IY8nFoBE",
+      originUrl: "https://www.youtube.com/watch?v=n40IY8nFoBE",
+      tags: ["news", "live", "markets", "business"]
+    },
+
+    // ── WORLD (ALT FEEDS) ──────────────────────────────────────────────
+    {
+      id: "news_trt_world_live",
+      title: "TRT World — LIVE",
+      place: "Global",
+      source: "TRT World (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "MP_v7yUp168",
+      originUrl: "https://www.youtube.com/watch?v=MP_v7yUp168",
+      tags: ["news", "live", "international"]
+    },
+    {
+      id: "news_sky_au_live",
+      title: "Sky News Australia — LIVE",
+      place: "Australia • World",
+      source: "Sky News Australia (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "z_yt8hvVfNc",
+      originUrl: "https://www.youtube.com/watch?v=z_yt8hvVfNc",
+      tags: ["news", "live", "australia"]
+    },
+
+    // ── ESPAÑOL ────────────────────────────────────────────────────────
+    {
+      id: "news_dw_es_live",
+      title: "DW Español — EN VIVO",
+      place: "Global",
+      source: "DW Español (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "Z3aUG4z_fQk",
+      originUrl: "https://www.youtube.com/watch?v=Z3aUG4z_fQk",
+      tags: ["news", "live", "es"]
+    },
+    {
+      id: "news_france24_es_live",
+      title: "FRANCE 24 Español — EN VIVO",
+      place: "Global",
+      source: "FRANCE 24 Español (YouTube Live)",
+      kind: "youtube",
+      youtubeId: "8WvTckU1kNE",
+      originUrl: "https://www.youtube.com/watch?v=8WvTckU1kNE",
+      tags: ["news", "live", "es"]
+    },
+
+    // ── FALLBACKS “genéricos” (por si alguno cae; discovery compensa) ──
+    { id:"news_world_generic_1", title:"World News — LIVE", place:"", source:"YouTube Live", kind:"youtube", youtubeId:"", originUrl:"", tags:["news","live"] },
+    { id:"news_world_generic_2", title:"Breaking News — LIVE", place:"", source:"YouTube Live", kind:"youtube", youtubeId:"", originUrl:"", tags:["news","live"] }
   ];
+
 
   // ─────────────────────────────────────────────────────────────
   // 2) SANITIZAR + EXPORTAR (VIDEO ONLY)
