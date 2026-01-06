@@ -8,6 +8,10 @@
         * HLS: en onplaying
         * Image: en onload
       - Evita anunciar cams que fallan/son saltadas.
+   ✅ AÑADIDO (pedido):
+      - Auto-cambio de CATEGORÍA vía bot cuando la cam realmente arranca (real play).
+      - Layout anti-solape: Chat/Alerts/Ads se recolocan para evitar taparse con tickers/vote/tagVote.
+      - Comandos extra: ALERT_PUSH y CHAT_PUSH (para follows/subs externos).
    ✅ Mantiene TODO lo tuyo (v2.3.8 PRO) + refuerzos:
       - Polling LS + BC + postMessage
       - Dedup robusto por firma + ventana temporal
@@ -146,6 +150,14 @@
     const sayCamExplicit = (sayCamParam != null);
     const sayCam = sayCamExplicit ? parseBoolParam(sayCamParam, true) : false;
 
+    // ✅ Nuevo (pedido): auto categoría
+    const autoCatParam = (u.searchParams.get("autoCategory") ?? u.searchParams.get("botCategory") ?? u.searchParams.get("setCategory") ?? null);
+    const autoCategoryExplicit = (autoCatParam != null);
+    const autoCategory = autoCategoryExplicit ? parseBoolParam(autoCatParam, true) : false;
+
+    // ✅ Opcional: categoría fija por URL (?category=Just%20Chatting)
+    const categoryName = (u.searchParams.get("category") ?? u.searchParams.get("cat") ?? "").trim();
+
     return {
       mins: clamp(toInt(u.searchParams.get("mins") || "5", 5), 1, 120),
       fit: (u.searchParams.get("fit") || "cover"),
@@ -204,7 +216,12 @@
 
       // new
       sayCam,
-      sayCamExplicit
+      sayCamExplicit,
+
+      // category
+      autoCategory,
+      autoCategoryExplicit,
+      categoryName
     };
   }
 
@@ -477,6 +494,7 @@
     if (hudDetails) hudDetails.style.display = collapsed ? "none" : "";
     lsSet(HUD_COLLAPSE_KEY, collapsed ? "1" : "0");
     postState({ reason: "hud_collapsed" });
+    scheduleLayout();
   }
 
   function setHudHidden(v) {
@@ -484,6 +502,7 @@
     if (hud) hud.classList.toggle("hidden", hidden);
     lsSet(HUD_HIDE_KEY, hidden ? "1" : "0");
     postState({ reason: "hud_hidden" });
+    scheduleLayout();
   }
 
   function remainingSeconds() {
@@ -565,6 +584,8 @@
     else if (kind === "hls") { if (video) video.classList.remove("hidden"); }
     else if (kind === "image") { if (img) img.classList.remove("hidden"); }
     else { if (fallback) fallback.classList.remove("hidden"); }
+
+    scheduleLayout();
   }
 
   // ───────────────────────── Comms ─────────────────────────
@@ -618,6 +639,70 @@
     return true;
   }
 
+  // ───────────────────────── Auto Category (NEW) ─────────────────────────
+  const CAT_DEFAULT = "Just Chatting";
+  let autoCategoryEnabled = (P.autoCategoryExplicit ? !!P.autoCategory : OWNER_MODE);
+  let categoryStaticName = String(P.categoryName || "").trim();
+
+  const CAT_COOLDOWN_MS = 75 * 1000;     // anti-spam Helix
+  const CAT_REPEAT_MS = 8 * 60 * 1000;  // si es la misma, no repetir en breve
+  let lastCatName = "";
+  let lastCatAt = 0;
+
+  function pickCategoryForCam(cam) {
+    const explicit =
+      String(cam?.twitchCategory ?? cam?.categoryName ?? cam?.category ?? cam?.twitchCat ?? "").trim();
+    if (explicit) return explicit;
+
+    const s = (
+      String(cam?.title || "") + " " +
+      String(cam?.place || "") + " " +
+      String(cam?.source || "") + " " +
+      String((Array.isArray(cam?.tags) ? cam.tags.join(" ") : (cam?.tags || "")) || "")
+    ).toLowerCase();
+
+    // Heurística simple y segura:
+    // - Cams "de calle/webcam/cctv" → IRL
+    // - News/política → Just Chatting (más estable)
+    if (/\b(webcam|live\s*cam|cctv|traffic|street|road|highway|airport|station|port|harbor|plaza|downtown|beach)\b/.test(s)) return "IRL";
+    if (/\b(news|breaking|gdelt|reuters|cnn|bbc|dw|guardian|ap\s|associated\spress|politic)\b/.test(s)) return "Just Chatting";
+
+    return CAT_DEFAULT;
+  }
+
+  function botSetCategory(name, cam, why = "") {
+    if (!OWNER_MODE || !twitchChannel) return false;
+
+    const n = String(name || "").trim();
+    if (!n) return false;
+
+    const now = nowMs();
+    if (n === lastCatName && (now - lastCatAt) < CAT_REPEAT_MS) return false;
+    if ((now - lastCatAt) < CAT_COOLDOWN_MS) return false;
+
+    lastCatName = n;
+    lastCatAt = now;
+
+    // Comando al bot/control (tu worker/control decide cómo aplicar Helix)
+    busSendCmd("BOT_SET_CATEGORY", {
+      name: n,
+      category: n,
+      channel: twitchChannel,
+      camId: String(cam?.id ?? ""),
+      why: String(why || "")
+    });
+
+    // Evento extra (por si tu lado escucha events en vez de cmds)
+    emitEvent("BOT_SET_CATEGORY", {
+      name: n,
+      channel: twitchChannel,
+      camId: String(cam?.id ?? ""),
+      why: String(why || "")
+    });
+
+    return true;
+  }
+
   // ───────────────────────── “Say cam on real play” (NEW) ─────────────────────────
   // Default: ON en OWNER_MODE salvo que ?sayCam=0
   let sayCamEnabled = (P.sayCamExplicit ? !!P.sayCam : OWNER_MODE);
@@ -626,6 +711,10 @@
   let announceDone = false;
   let announceCamId = "";
   let announceKind = "";
+
+  // categoría: 1 vez por token
+  let catToken = 0;
+  let catDone = false;
 
   function camAnnounceText(cam) {
     const t = String(cam?.title || "Live Cam").trim();
@@ -636,7 +725,6 @@
     if (p) msg += ` — ${p}`;
     if (s) msg += ` · ${s}`;
 
-    // Extra: índice (útil)
     try {
       const total = Math.max(1, cams.length || 1);
       msg += `  (${idx + 1}/${total})`;
@@ -650,6 +738,9 @@
     announceDone = false;
     announceCamId = String(cam?.id ?? "");
     announceKind = String(cam?.kind ?? "");
+
+    catToken = tok | 0;
+    catDone = false;
   }
 
   function maybeAnnounceCam(tok, cam, why = "") {
@@ -683,6 +774,24 @@
       source: String(cam.source ?? ""),
       why: String(why || "")
     });
+  }
+
+  function maybeAutoCategory(tok, cam, why = "") {
+    if (!autoCategoryEnabled) return;
+    if (!OWNER_MODE || !twitchChannel) return;
+    if (!cam) return;
+    if ((tok | 0) !== (catToken | 0)) return;
+    if (catDone) return;
+
+    catDone = true;
+    const cat = categoryStaticName || pickCategoryForCam(cam);
+    botSetCategory(cat, cam, why);
+  }
+
+  function onRealPlay(tok, cam, why = "") {
+    // cuando realmente está reproduciendo/mostrando:
+    maybeAnnounceCam(tok, cam, why);
+    maybeAutoCategory(tok, cam, why);
   }
 
   // ───────────────────────── Health watchdog ─────────────────────────
@@ -847,7 +956,7 @@
     const st = document.createElement("style");
     st.id = "rlcAlertsStyles";
     st.textContent =
-      ".rlcAlertsRoot{position:fixed;left:max(12px,env(safe-area-inset-left));top:max(12px,env(safe-area-inset-top));width:min(420px,calc(100vw - 24px));z-index:10000;pointer-events:none;display:none}" +
+      ".rlcAlertsRoot{position:fixed;left:max(12px,env(safe-area-inset-left));top:max(12px,env(safe-area-inset-top));width:min(420px,calc(100vw - 24px));z-index:10000;pointer-events:none;display:none;isolation:isolate}" +
       ".rlcAlertsRoot.alerts--on{display:block!important}.rlcAlertsList{display:flex;flex-direction:column;gap:10px}" +
       ".rlcAlert{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:16px;background:rgba(10,14,20,.56);border:1px solid rgba(255,255,255,.12);box-shadow:0 14px 40px rgba(0,0,0,.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transform:translateY(-6px);opacity:0;animation:rlcAlertIn .18s ease-out forwards}" +
       "@keyframes rlcAlertIn{to{transform:translateY(0);opacity:1}}.rlcAlert.rlcAlertOut{animation:rlcAlertOut .28s ease-in forwards}" +
@@ -876,6 +985,7 @@
     }
     alertsRoot.classList.toggle("alerts--on", !!alertsEnabled);
     try { alertsRoot.style.display = alertsEnabled ? "" : "none"; } catch (_) {}
+    scheduleLayout();
   }
 
   function alertsPush(type, title, text) {
@@ -916,6 +1026,8 @@
       try { old?.el?.remove?.(); } catch (_) {}
     }
 
+    scheduleLayout();
+
     setTimeout(() => {
       try { el.classList.add("rlcAlertOut"); } catch (_) {}
       setTimeout(() => { try { el.remove(); } catch (_) {} }, 320);
@@ -938,7 +1050,7 @@
     const st = document.createElement("style");
     st.id = "rlcAdsStyles";
     st.textContent =
-      ".rlcAdRoot{position:fixed;left:50%;top:max(14px,env(safe-area-inset-top));transform:translateX(-50%);width:min(640px,calc(100vw - 24px));z-index:10001;pointer-events:none;display:none}" +
+      ".rlcAdRoot{position:fixed;left:50%;top:max(14px,env(safe-area-inset-top));transform:translateX(-50%);width:min(640px,calc(100vw - 24px));z-index:10001;pointer-events:none;display:none;isolation:isolate}" +
       ".rlcAdCard{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:18px;background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.12);box-shadow:0 16px 46px rgba(0,0,0,.40);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}" +
       ".rlcAdPill{flex:0 0 auto;padding:6px 10px;border-radius:999px;font-weight:900;font-size:12px;letter-spacing:.2px;background:rgba(255,96,96,.18);border:1px solid rgba(255,96,96,.25);color:rgba(255,255,255,.95)}" +
       ".rlcAdMsg{min-width:0;flex:1 1 auto}.rlcAdTitle{font-weight:900;font-size:14px;color:rgba(255,255,255,.95);line-height:1.15}.rlcAdTime{margin-top:2px;font-size:12.5px;color:rgba(255,255,255,.85)}" +
@@ -965,6 +1077,7 @@
     adTitleEl = document.getElementById("rlcAdTitle");
     adTimeEl = document.getElementById("rlcAdTime");
     adBarEl = document.getElementById("rlcAdBar");
+    scheduleLayout();
   }
 
   function adHide(noEvent = false) {
@@ -974,12 +1087,14 @@
     adLiveHintSec = 0;
     if (adRoot) adRoot.classList.remove("on");
     if (wasActive && !noEvent) emitEvent("AD_AUTO_CLEAR", {});
+    scheduleLayout();
   }
 
   function adShow() {
     if (!adsEnabled) return;
     ensureAdsUI();
     if (adRoot) adRoot.classList.add("on");
+    scheduleLayout();
   }
 
   function adStartLead(secondsLeft, durationHintSec = 0) {
@@ -998,6 +1113,7 @@
 
     alertsPush("ad", "Anuncio en breve", `Empieza en ${fmtMMSS(left)}`);
     emitEvent("AD_AUTO_NOTICE", { leadSec: left, durationHintSec: (adLiveHintSec | 0) || 0 });
+    scheduleLayout();
   }
 
   function adStartLive(durationSec) {
@@ -1027,6 +1143,7 @@
 
     if (adShowDuring) alertsPush("ad", "Anuncio", `En curso (${fmtMMSS(d)})`);
     emitEvent("AD_AUTO_BEGIN", { durationSec: d });
+    scheduleLayout();
   }
 
   function adTick() {
@@ -1109,8 +1226,8 @@
             ytLastGoodAt = nowMs();
             healthProgress(tok);
 
-            // ✅ Anuncia SOLO cuando hay progreso real (se está viendo/reproduciendo)
-            maybeAnnounceCam(tok, cam, "yt_time_progress");
+            // ✅ Solo cuando hay progreso real (se está viendo/reproduciendo)
+            onRealPlay(tok, cam, "yt_time_progress");
           }
         }
         return;
@@ -1148,7 +1265,6 @@
   let chatList = null;
   let chatItems = [];
 
-  // ✅ CHAT FIX: layout robusto (nombre arriba + mensaje abajo), wrap correcto, contraste y text-shadow
   function injectChatStylesOnce() {
     if (document.getElementById("rlcChatStyles")) return;
     const st = document.createElement("style");
@@ -1189,6 +1305,7 @@
       chatList.className = "rlcChatList";
       chatRoot.appendChild(chatList);
     }
+    scheduleLayout();
   }
 
   function chatClear() { try { chatItems.forEach(it => it.el?.remove?.()); } catch (_) {} chatItems = []; }
@@ -1206,6 +1323,7 @@
     }
     ensureIrc();
     postState({ reason: "chat_toggle" });
+    scheduleLayout();
   }
 
   function isHiddenChatCommand(msg) {
@@ -1256,11 +1374,75 @@
       try { old?.el?.remove?.(); } catch (_) {}
     }
 
+    scheduleLayout();
+
     setTimeout(() => {
       try { bubble.classList.add("rlcChatFade"); } catch (_) {}
       setTimeout(() => { try { bubble.remove(); } catch (_) {} }, 300);
     }, Math.max(3000, chatTtlSec * 1000));
   }
+
+  // ───────────────────────── Layout anti-solape (NEW) ─────────────────────────
+  let layoutRaf = 0;
+  let lastLayoutAt = 0;
+
+  function isElVisible(el) {
+    if (!el) return false;
+    try {
+      if (el.classList && el.classList.contains("hidden")) return false;
+      const cs = window.getComputedStyle(el);
+      if (!cs) return false;
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+      const r = el.getBoundingClientRect();
+      return (r.width > 0 && r.height > 0);
+    } catch (_) { return false; }
+  }
+
+  function scheduleLayout() {
+    if (layoutRaf) return;
+    layoutRaf = requestAnimationFrame(() => {
+      layoutRaf = 0;
+      layoutOverlays();
+    });
+  }
+
+  function layoutOverlays() {
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+
+    // empuja alerts/ads por debajo de tickers (si existen)
+    let topBlock = 0;
+    const t1 = document.getElementById("rlcNewsTicker");
+    const t2 = document.getElementById("rlcEconTicker");
+    if (isElVisible(t1)) topBlock = Math.max(topBlock, t1.getBoundingClientRect().bottom);
+    if (isElVisible(t2)) topBlock = Math.max(topBlock, t2.getBoundingClientRect().bottom);
+
+    const topAlerts = Math.max(12, Math.ceil(topBlock + 12));
+    const topAds = Math.max(14, Math.ceil(topBlock + 14));
+
+    try { if (alertsRoot) alertsRoot.style.top = `${topAlerts}px`; } catch (_) {}
+    try { if (adRoot) adRoot.style.top = `${topAds}px`; } catch (_) {}
+
+    // empuja chat por encima de overlays de abajo (vote/tagVote)
+    let bottomPad = 0;
+    try {
+      const list = [voteBox, document.getElementById("rlcTagVoteBox")].filter(Boolean);
+      for (const el of list) {
+        if (!isElVisible(el)) continue;
+        const r = el.getBoundingClientRect();
+        const overlap = Math.max(0, Math.ceil(vh - r.top + 10)); // + gap
+        bottomPad = Math.max(bottomPad, overlap);
+      }
+    } catch (_) {}
+
+    const chatBottom = Math.max(12, 12 + (bottomPad | 0));
+    try { if (chatRoot) chatRoot.style.bottom = `${chatBottom}px`; } catch (_) {}
+
+    lastLayoutAt = nowMs();
+  }
+
+  window.addEventListener("resize", scheduleLayout);
+  window.addEventListener("orientationchange", scheduleLayout);
+  document.addEventListener("visibilitychange", scheduleLayout);
 
   // ───────────────────────── VOTE + IRC ─────────────────────────
   let voteEnabled = !!P.vote;
@@ -1322,6 +1504,7 @@
     votesYes = 0; votesNo = 0;
     voters = new Set();
     renderVote();
+    scheduleLayout();
   }
 
   function recalcVoteScheduleForSegment(segTotalSec) {
@@ -1386,6 +1569,7 @@
 
       voteEndsAt = voteStartsAt + w * 1000;
       renderVote();
+      scheduleLayout();
       return;
     }
 
@@ -1395,6 +1579,7 @@
       voteStartsAt = leadEndsAt;
       voteEndsAt = voteStartsAt + w * 1000;
       renderVote();
+      scheduleLayout();
       return;
     }
 
@@ -1402,6 +1587,7 @@
     voteStartsAt = now;
     voteEndsAt = now + w * 1000;
     renderVote();
+    scheduleLayout();
   }
 
   function restartStaySegment() {
@@ -1409,6 +1595,7 @@
     startRound(sec);
     voteTriggeredForSegment = false;
     postState({ reason: "stay" });
+    scheduleLayout();
   }
 
   function voteFinish() {
@@ -1418,6 +1605,7 @@
     voteSessionActive = false;
     votePhase = "idle";
     renderVote();
+    scheduleLayout();
 
     if (y === 0 && n === 0) { nextCam("vote_no_votes"); return; }
     if (y === n) { nextCam("vote_tie"); return; }
@@ -1430,7 +1618,7 @@
     const show = voteOverlay && voteEnabled && !!twitchChannel && voteSessionActive;
 
     setShown(voteBox, show);
-    if (!show) return;
+    if (!show) { scheduleLayout(); return; }
 
     const now = nowMs();
     const yes0 = [...cmdYes][0] || "!next";
@@ -1444,6 +1632,7 @@
       if (voteNoN) voteNoN.textContent = "0";
       if (voteYesFill) voteYesFill.style.width = "0%";
       if (voteNoFill) voteNoFill.style.width = "0%";
+      scheduleLayout();
       return;
     }
 
@@ -1455,6 +1644,7 @@
       if (voteNoN) voteNoN.textContent = "0";
       if (voteYesFill) voteYesFill.style.width = "0%";
       if (voteNoFill) voteNoFill.style.width = "0%";
+      scheduleLayout();
       return;
     }
 
@@ -1468,6 +1658,8 @@
     const total = Math.max(1, votesYes + votesNo);
     if (voteYesFill) voteYesFill.style.width = `${((votesYes / total) * 100).toFixed(1)}%`;
     if (voteNoFill) voteNoFill.style.width = `${((votesNo / total) * 100).toFixed(1)}%`;
+
+    scheduleLayout();
   }
 
   // ───────────────────────── Protected “request vote” ─────────────────────────
@@ -1503,6 +1695,7 @@
       const yes0 = [...cmdYes][0] || "!next";
       const no0 = [...cmdNo][0] || "!stay";
       botSay(`🗳️ Votación iniciada por el chat: ${yes0} (cambiar) / ${no0} (mantener) · ${voteWindowSegSec}s`);
+      scheduleLayout();
     }
   }
 
@@ -1568,7 +1761,7 @@
     const st = document.createElement("style");
     st.id = "rlcTagVoteStyles";
     st.textContent =
-      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none;display:none}" +
+      ".rlcTagVoteBox{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(520px,calc(100vw - 24px));z-index:10002;pointer-events:none;display:none;isolation:isolate}" +
       ".rlcTagVoteCard{background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.12);border-radius:18px;box-shadow:0 16px 46px rgba(0,0,0,.40);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 14px}" +
       ".rlcTagVoteTop{display:flex;justify-content:space-between;align-items:center;gap:12px}.rlcTagVoteTitle{font-weight:900;font-size:13px;color:rgba(255,255,255,.95)}" +
       ".rlcTagVoteTime{font-weight:900;font-size:12px;color:rgba(255,255,255,.85)}.rlcTagVoteHint{margin-top:4px;font-size:12px;color:rgba(255,255,255,.78)}" +
@@ -1608,6 +1801,7 @@
     tagVoteN1 = document.getElementById("rlcTagN1");
     tagVoteN2 = document.getElementById("rlcTagN2");
     tagVoteN3 = document.getElementById("rlcTagN3");
+    scheduleLayout();
   }
 
   function tagVoteRender() {
@@ -1616,7 +1810,7 @@
     const show = tagVoteActive && tagVoteTags.length === 3;
 
     setShown(tagVoteBox, show);
-    if (!show) return;
+    if (!show) { scheduleLayout(); return; }
 
     const now = nowMs();
     const rem = Math.max(0, Math.ceil((tagVoteEndsAt - now) / 1000));
@@ -1635,6 +1829,8 @@
     if (tagVoteB1) tagVoteB1.style.width = `${(100 * a / total).toFixed(1)}%`;
     if (tagVoteB2) tagVoteB2.style.width = `${(100 * b / total).toFixed(1)}%`;
     if (tagVoteB3) tagVoteB3.style.width = `${(100 * c / total).toFixed(1)}%`;
+
+    scheduleLayout();
   }
 
   function pick3Tags() {
@@ -1669,6 +1865,7 @@
     alertsPush("info", "Tag Vote", `Vota con !1 !2 !3 · ${tags.join(" / ")}`);
     botSay(`🎲 TagVote iniciado: 1) ${tags[0]}  2) ${tags[1]}  3) ${tags[2]}  (vota con !1 !2 !3)`);
     tagVoteRender();
+    scheduleLayout();
   }
 
   function tagVoteFinish() {
@@ -1699,6 +1896,7 @@
       botSay(`✅ Tag ganador: ${tag}. Pero no encontré cams filtradas con ese tag (saltando random)…`);
       nextCam("tagvote_no_cam");
     }
+    scheduleLayout();
   }
 
   function tryTagVoteRequest(userId) {
@@ -2039,7 +2237,7 @@
     playToken++;
     const tok = playToken;
 
-    // ✅ Reset anuncio “solo cuando se ve”
+    // ✅ Reset announce/category “solo cuando se ve”
     resetCamAnnounce(tok, cam);
 
     if (cam.kind === "youtube") {
@@ -2075,6 +2273,7 @@
       }
 
       postState({ reason: "play_youtube" });
+      scheduleLayout();
       return;
     }
 
@@ -2094,7 +2293,7 @@
       if (img) {
         img.onload = () => {
           healthProgress(tok);
-          maybeAnnounceCam(tok, cam, "image_onload");
+          onRealPlay(tok, cam, "image_onload");
         };
         img.onerror = () => { if (!autoskip) return; img.onerror = null; healthFail(tok, cam, "image_error"); };
       }
@@ -2102,6 +2301,7 @@
       setSnap();
       imgTimer = setInterval(setSnap, refreshMs);
       postState({ reason: "play_image" });
+      scheduleLayout();
       return;
     }
 
@@ -2119,7 +2319,7 @@
 
       video.onplaying = () => {
         healthProgress(tok);
-        maybeAnnounceCam(tok, cam, "hls_onplaying");
+        onRealPlay(tok, cam, "hls_onplaying");
       };
 
       video.ontimeupdate = () => healthProgress(tok);
@@ -2132,6 +2332,7 @@
         try { video.src = url; } catch (_) {}
         safePlayVideo();
         postState({ reason: "play_hls_native" });
+        scheduleLayout();
         return;
       }
 
@@ -2150,18 +2351,21 @@
         } catch (_) { healthFail(tok, cam, "hls_exception"); return; }
 
         postState({ reason: "play_hls_hlsjs" });
+        scheduleLayout();
         return;
       }
 
       showFallback(cam, "HLS no soportado aquí.");
       if (autoskip) setTimeout(() => healthFail(tok, cam, "hls_unsupported"), 700);
       postState({ reason: "play_hls_unsupported" });
+      scheduleLayout();
       return;
     }
 
     showFallback(cam, "Tipo no soportado.");
     postState({ error: "unsupported" });
     if (autoskip) setTimeout(() => nextCam("unsupported"), 900);
+    scheduleLayout();
   }
 
   function nextCam(reason) {
@@ -2197,6 +2401,7 @@
     const next = Math.min(rem || roundSeconds, roundSeconds);
     startRound(next);
     postState({ reason: "set_mins" });
+    scheduleLayout();
   }
 
   function goToId(id) {
@@ -2226,6 +2431,10 @@
 
     sayCamEnabled = (P.sayCamExplicit ? !!P.sayCam : OWNER_MODE);
 
+    // category
+    autoCategoryEnabled = (P.autoCategoryExplicit ? !!P.autoCategory : OWNER_MODE);
+    categoryStaticName = String(P.categoryName || "").trim();
+
     applyFilters();
     setFit("cover");
     setRoundMins(5);
@@ -2235,6 +2444,7 @@
     adHide(true);
     playCam(cams[idx]);
     postState({ reason: "reset" });
+    scheduleLayout();
   }
 
   // ───────────────────────── State publish ─────────────────────────
@@ -2303,8 +2513,12 @@
 
       tagVote: { active: tagVoteActive ? 1 : 0 },
 
-      // ✅ nuevo
+      // announce
       sayCam: sayCamEnabled ? 1 : 0,
+
+      // category
+      autoCategory: autoCategoryEnabled ? 1 : 0,
+      category: categoryStaticName || "",
 
       ...extra
     };
@@ -2389,12 +2603,14 @@
       case "FIT":
         setFit(String(payload?.fit ?? payload?.value ?? payload ?? "cover"));
         postState({ reason: "set_fit" });
+        scheduleLayout();
         break;
 
       case "RESHUFFLE":
       case "SHUFFLE":
         reshuffle();
         postState({ reason: "reshuffle" });
+        scheduleLayout();
         break;
 
       case "GOTO":
@@ -2402,6 +2618,7 @@
         if (payload?.id != null) goToId(String(payload.id));
         else if (payload != null) goToId(String(payload));
         postState({ reason: "goto" });
+        scheduleLayout();
         break;
 
       case "BAN_CURRENT":
@@ -2410,34 +2627,40 @@
         const id = String(payload?.id ?? cam.id ?? "");
         if (id) banId(id);
         postState({ reason: "ban" });
+        scheduleLayout();
       } break;
 
       case "HUD_HIDE":
       case "HIDE_HUD":
         setHudHidden(true);
         postState({ reason: "hud_hide" });
+        scheduleLayout();
         break;
 
       case "HUD_SHOW":
       case "SHOW_HUD":
         setHudHidden(false);
         postState({ reason: "hud_show" });
+        scheduleLayout();
         break;
 
       case "HUD_TOGGLE":
       case "TOGGLE_HUD":
         setHudHidden(!hud?.classList?.contains?.("hidden"));
         postState({ reason: "hud_toggle" });
+        scheduleLayout();
         break;
 
       case "HUD_COLLAPSE":
         setHudCollapsed(true);
         postState({ reason: "hud_collapse" });
+        scheduleLayout();
         break;
 
       case "HUD_EXPAND":
         setHudCollapsed(false);
         postState({ reason: "hud_expand" });
+        scheduleLayout();
         break;
 
       case "HUD_TOGGLE_DETAILS":
@@ -2445,12 +2668,14 @@
         const collapsed = !!hud?.classList?.contains?.("hud--collapsed");
         setHudCollapsed(!collapsed);
         postState({ reason: "hud_toggle_details" });
+        scheduleLayout();
       } break;
 
       case "SET_AUTOSKIP":
       case "AUTOSKIP":
         autoskip = !!(payload?.enabled ?? payload?.value ?? payload);
         postState({ reason: "autoskip" });
+        scheduleLayout();
         break;
 
       case "SET_MODE":
@@ -2470,6 +2695,7 @@
           playCam(cams[idx]);
         }
         postState({ reason: "mode" });
+        scheduleLayout();
       } break;
 
       case "SET_TWITCH":
@@ -2478,6 +2704,7 @@
         twitchChannel = ch;
         ensureIrc();
         postState({ reason: "twitch" });
+        scheduleLayout();
       } break;
 
       case "SET_SAYCAM":
@@ -2486,6 +2713,28 @@
       case "SAY_CAM":
         sayCamEnabled = !!(payload?.enabled ?? payload?.value ?? payload ?? true);
         postState({ reason: "say_cam" }, true);
+        scheduleLayout();
+        break;
+
+      // ✅ nuevo: control auto categoría
+      case "SET_AUTOCATEGORY":
+      case "AUTO_CATEGORY":
+      case "AUTOCATEGORY":
+        autoCategoryEnabled = !!(payload?.enabled ?? payload?.value ?? payload ?? true);
+        if (payload && typeof payload === "object" && payload.name != null) {
+          categoryStaticName = String(payload.name || "").trim();
+        }
+        postState({ reason: "auto_category" }, true);
+        scheduleLayout();
+        break;
+
+      case "SET_CATEGORY":
+      case "CATEGORY":
+        categoryStaticName = String(payload?.name ?? payload?.category ?? payload?.value ?? payload ?? "").trim();
+        // si viene como categoría fija, la pedimos ya (anti spam integrado)
+        botSetCategory(categoryStaticName || CAT_DEFAULT, cams[idx] || null, "manual_cmd");
+        postState({ reason: "category" }, true);
+        scheduleLayout();
         break;
 
       case "SET_VOTE":
@@ -2506,6 +2755,7 @@
         ensureIrc();
         voteReset();
         postState({ reason: "vote" });
+        scheduleLayout();
       } break;
 
       case "START_VOTE":
@@ -2516,12 +2766,14 @@
         const ui = (payload?.uiSec != null) ? clamp(payload.uiSec | 0, 0, 300) : 0;
         voteStartSequence(w, lead, ui);
         postState({ reason: "vote_start" });
+        scheduleLayout();
       } break;
 
       case "STOP_VOTE":
       case "VOTE_STOP":
         voteReset();
         postState({ reason: "vote_stop" });
+        scheduleLayout();
         break;
 
       case "SET_CHAT":
@@ -2537,6 +2789,17 @@
         }
         ensureIrc();
         postState({ reason: "chat" });
+        scheduleLayout();
+      } break;
+
+      // ✅ extra: push directo de chat desde bot/sistema
+      case "CHAT_PUSH":
+      case "CHAT_ADD": {
+        const user = String(payload?.user ?? payload?.name ?? payload?.from ?? "SYSTEM");
+        const text = String(payload?.text ?? payload?.msg ?? payload?.message ?? "");
+        if (text) chatAdd(user, text);
+        postState({ reason: "chat_push" }, false);
+        scheduleLayout();
       } break;
 
       case "SET_ALERTS":
@@ -2551,6 +2814,18 @@
         ensureAlertsUI();
         ensureIrc();
         postState({ reason: "alerts" });
+        scheduleLayout();
+      } break;
+
+      // ✅ extra: push directo de alertas (follows/subs externos)
+      case "ALERT_PUSH":
+      case "ALERT": {
+        const type = String(payload?.type ?? "info");
+        const title = String(payload?.title ?? "Alerta");
+        const text = String(payload?.text ?? payload?.msg ?? payload?.message ?? "");
+        alertsPush(type, title, text);
+        postState({ reason: "alert_push" }, false);
+        scheduleLayout();
       } break;
 
       case "SET_ADS":
@@ -2565,22 +2840,26 @@
         }
         if (!adsEnabled) adHide(true);
         postState({ reason: "ads" });
+        scheduleLayout();
       } break;
 
       case "AD_NOTICE": {
         const leadSec = payload?.leadSec ?? payload?.secondsLeft ?? adLeadDefaultSec;
         const durHint = payload?.durationSec ?? payload?.duration ?? payload?.durSec ?? 0;
         adStartLead(leadSec, durHint);
+        scheduleLayout();
       } break;
 
       case "AD_BEGIN":
         adStartLive(payload?.durationSec ?? payload?.duration ?? 0);
         if (adChatText) botSay(adChatText);
+        scheduleLayout();
         break;
 
       case "AD_CLEAR":
       case "AD_END":
         adHide(false);
+        scheduleLayout();
         break;
 
       case "TAGVOTE_START":
@@ -2588,6 +2867,7 @@
         tagVoteStart();
         ensureIrc();
         postState({ reason: "tagvote_start" });
+        scheduleLayout();
         break;
 
       case "TAGVOTE_STOP":
@@ -2599,6 +2879,7 @@
         tagVoteRender();
         ensureIrc();
         postState({ reason: "tagvote_stop" });
+        scheduleLayout();
         break;
 
       case "SET_BGM":
@@ -2607,27 +2888,33 @@
         if (!bgmEnabled) bgmPause();
         else bgmPlay();
         postState({ reason: "bgm" });
+        scheduleLayout();
         break;
 
       case "SET_BGM_VOL":
       case "BGM_VOL":
         bgmSetVol(payload?.vol ?? payload?.value ?? payload);
+        scheduleLayout();
         break;
 
       case "BGM_PLAYPAUSE":
         bgmPlayPause();
+        scheduleLayout();
         break;
 
       case "BGM_NEXT":
         bgmNext();
+        scheduleLayout();
         break;
 
       case "BGM_PREV":
         bgmPrev();
+        scheduleLayout();
         break;
 
       case "BGM_SHUFFLE":
         bgmShuffle();
+        scheduleLayout();
         break;
 
       case "SET_HEALTH":
@@ -2638,6 +2925,7 @@
           if (payload.maxStalls != null) maxStalls = clamp(payload.maxStalls | 0, 1, 8);
         }
         postState({ reason: "health" });
+        scheduleLayout();
         break;
 
       case "SET_YT_COOKIES":
@@ -2649,6 +2937,7 @@
         const cam = cams[idx] || {};
         if (cam.kind === "youtube") playCam(cam);
         postState({ reason: "yt_cookies" });
+        scheduleLayout();
       } break;
 
       case "APPLY":
@@ -2661,6 +2950,13 @@
 
           if (payload.sayCam != null || payload.say_cam != null) {
             sayCamEnabled = !!(payload.sayCam ?? payload.say_cam);
+          }
+
+          if (payload.autoCategory != null || payload.auto_category != null) {
+            autoCategoryEnabled = !!(payload.autoCategory ?? payload.auto_category);
+          }
+          if (payload.category != null) {
+            categoryStaticName = String(payload.category || "").trim();
           }
 
           if (payload.adfree != null) {
@@ -2693,14 +2989,17 @@
         }
         ensureIrc();
         postState({ reason: "apply" }, true);
+        scheduleLayout();
       } break;
 
       case "RESET":
         resetState();
+        scheduleLayout();
         break;
 
       case "PING":
         postState({ reason: "ping" }, true);
+        scheduleLayout();
         break;
 
       default:
@@ -2809,6 +3108,7 @@
         twitchChannel = ch;
         ensureIrc();
         postState({ reason: "bot_cfg_channel" });
+        scheduleLayout();
       }
     }
   });
@@ -2868,8 +3168,11 @@
 
         bgm: { enabled: !!bgmEnabled, vol: +bgmVol || 0, idx: bgmIdx | 0, playing: !!bgmPlaying },
 
-        // new
-        sayCam: !!sayCamEnabled
+        sayCam: !!sayCamEnabled,
+
+        // category
+        autoCategory: !!autoCategoryEnabled,
+        category: categoryStaticName || ""
       };
 
       const raw = JSON.stringify(data);
@@ -2990,6 +3293,10 @@
       else nextCam("timer");
     }
 
+    // layout “self-heal” cada ~1s
+    const now = nowMs();
+    if ((now - lastLayoutAt) > 950) scheduleLayout();
+
     postState({}, false);
   }
 
@@ -3014,6 +3321,14 @@
     if (P.sayCamExplicit) sayCamEnabled = !!P.sayCam;
     else if (saved && typeof saved.sayCam === "boolean") sayCamEnabled = !!saved.sayCam;
     else sayCamEnabled = OWNER_MODE;
+
+    // category
+    if (P.autoCategoryExplicit) autoCategoryEnabled = !!P.autoCategory;
+    else if (saved && typeof saved.autoCategory === "boolean") autoCategoryEnabled = !!saved.autoCategory;
+    else autoCategoryEnabled = OWNER_MODE;
+
+    if (P.categoryName) categoryStaticName = String(P.categoryName || "").trim();
+    else if (saved && typeof saved.category === "string") categoryStaticName = String(saved.category || "").trim();
 
     if (saved && typeof saved === "object") {
       if (saved.playing != null) playing = !!saved.playing;
@@ -3122,6 +3437,8 @@
 
     readCmdFromStorage(CMD_KEY);
     readCmdFromStorage(CMD_KEY_LEGACY);
+
+    scheduleLayout();
   }
 
   window.addEventListener("beforeunload", () => {
