@@ -11,6 +11,7 @@
       - Fallback CSS “noticiero” suave (sin pisar tu theme)
       - Sources ampliadas (20+ por defecto)
       - PERF: rota fuentes y usa subset activo por refresh (evita 20+ fetch simultáneos)
+      - ✅ SPEED PRO: speed configurable entre 5 y 50 (más lento por defecto)
 */
 
 (() => {
@@ -495,7 +496,7 @@
     const DEFAULTS = {
       enabled: true,
       lang: "auto",           // auto|es|en
-      speedPxPerSec: 55,      // 20..140
+      speedPxPerSec: 28,      // ✅ 5..50 (más lento por defecto)
       refreshMins: 12,        // 3..60
       topPx: 10,              // 0..180
       hideOnVote: true,
@@ -546,7 +547,10 @@
       const out = {};
       if (P.ticker === "1" || P.ticker === "true") out.enabled = true;
       if (P.tickerLang === "es" || P.tickerLang === "en" || P.tickerLang === "auto") out.lang = P.tickerLang;
-      if (P.tickerSpeed) out.speedPxPerSec = clamp(num(P.tickerSpeed, DEFAULTS.speedPxPerSec), 5, 140);
+
+      // ✅ speed 5..50
+      if (P.tickerSpeed) out.speedPxPerSec = clamp(num(P.tickerSpeed, DEFAULTS.speedPxPerSec), 5, 50);
+
       if (P.tickerRefresh) out.refreshMins = clamp(num(P.tickerRefresh, DEFAULTS.refreshMins), 3, 60);
       if (P.tickerTop) out.topPx = clamp(num(P.tickerTop, DEFAULTS.topPx), 0, 180);
       if (P.tickerHideOnVote === "0") out.hideOnVote = false;
@@ -577,7 +581,10 @@
       const c = Object.assign({}, inCfg || {});
       c.enabled = (c.enabled !== false);
       c.lang = (c.lang === "es" || c.lang === "en" || c.lang === "auto") ? c.lang : "auto";
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 140);
+
+      // ✅ speed 5..50
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 50);
+
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 60);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 180);
       c.hideOnVote = (c.hideOnVote !== false);
@@ -978,7 +985,11 @@
 
       if (w > vw * 1.05) {
         root.setAttribute("data-marquee", "1");
-        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+
+        // ✅ speed 5..50 => permite duraciones más largas
+        const pxps = clamp(num(CFG.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 50);
+        const durSec = clamp(w / Math.max(5, pxps), 12, 600);
+
         root.style.setProperty("--rlcTickerDur", `${durSec}s`);
       } else {
         root.setAttribute("data-marquee", "0");
@@ -1179,7 +1190,7 @@
 
     const DEFAULTS = {
       enabled: true,
-      speedPxPerSec: 60,   // 20..140
+      speedPxPerSec: 30,   // ✅ 5..50 (más lento por defecto)
       refreshMins: 2,      // 1..20
       topPx: 10,           // 0..180
       hideOnVote: true,
@@ -1264,7 +1275,10 @@
     function normalizeCfg(inCfg) {
       const c = Object.assign({}, inCfg || {});
       c.enabled = (c.enabled !== false);
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 20, 140);
+
+      // ✅ speed 5..50
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 50);
+
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 20);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 180);
       c.hideOnVote = (c.hideOnVote !== false);
@@ -1282,7 +1296,10 @@
 
     function cfgFromUrl() {
       const out = {};
-      if (P.econSpeed) out.speedPxPerSec = clamp(num(P.econSpeed, DEFAULTS.speedPxPerSec), 20, 140);
+
+      // ✅ speed 5..50
+      if (P.econSpeed) out.speedPxPerSec = clamp(num(P.econSpeed, DEFAULTS.speedPxPerSec), 5, 50);
+
       if (P.econRefresh) out.refreshMins = clamp(num(P.econRefresh, DEFAULTS.refreshMins), 1, 20);
       if (P.econTop) out.topPx = clamp(num(P.econTop, DEFAULTS.topPx), 0, 180);
       if (P.econHideOnVote === "0") out.hideOnVote = false;
@@ -1630,7 +1647,11 @@
 
       if (w > vw * 1.05) {
         root.setAttribute("data-marquee", "1");
-        const durSec = clamp(w / Math.max(20, CFG.speedPxPerSec), 12, 220);
+
+        // ✅ speed 5..50 => permite duraciones más largas
+        const pxps = clamp(num(CFG.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 50);
+        const durSec = clamp(w / Math.max(5, pxps), 12, 600);
+
         root.style.setProperty("--rlcTickerDur", `${durSec}s`);
       } else {
         root.setAttribute("data-marquee", "0");

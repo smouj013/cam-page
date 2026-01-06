@@ -10,10 +10,10 @@
    ✅ Controles de “escala”/tamaño de barra y texto
       - tickerUiScale / tickerBarH / tickerFontPx (NEWS)
       - econUiScale / econBarH / econFontPx (ECON)
-   ✅ v2.3.9+:
-      - Default NEWS sources: 20+ ids
-      - Default ECON clocks: más países/zonas
-      - Copy URL: escribe params “legacy+new” (tickerUiScale y tickerScale, etc.)
+   ✅ ✅ COMPAT con rlcTickers.js actualizado:
+      - Speed clamp 5..50 (NEWS y ECON)
+      - Inputs UI con min/max correctos
+      - Copy URL escribe params para que el player los lea y aplique bien
 */
 
 (() => {
@@ -361,24 +361,27 @@
     const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
     const CFG_KEY_LEGACY = CFG_KEY_BASE;
 
-    // ✅ Catálogo (IDs que soporta el player)
+    // ✅ Catálogo REAL (alineado con rlcTickers.js v2.3.9)
     const NEWS_SOURCE_CATALOG = [
       "gdelt",
-      "bbc","dw","guardian",
-      "aljazeera","reuters_world","ap_world",
-      "france24","skynews","abcnews","cbsnews","nbcnews","cnn_world",
-      "cnbc_world","wsj_world","ft_world",
-      "thehill_world","politico_world",
-      "economist_world","time_world","huffpost_world","axios_world",
+      "bbc","dw","guardian","aljazeera",
+      "reuters_world","ap_world",
+      "cnn_world","abcnews","cbsnews","nbcnews",
+      "cnbc_world","ft_world","wsj_world","economist_world",
+      "politico_world","thehill_world","time_world","huffpost_world","axios_world",
       "gnews_world","gnews_us","gnews_eu","gnews_latam",
       "gnews_business","gnews_markets","gnews_tech","gnews_science","gnews_climate","gnews_health",
       "gnews_reuters","gnews_ap","gnews_cnn","gnews_bloomberg","gnews_nyt","gnews_ft","gnews_aljazeera"
     ];
 
+    // ✅ IMPORTANTE: speed clamp 5..50 para compat con player actualizado
+    const SPEED_MIN = 5;
+    const SPEED_MAX = 50;
+
     const DEFAULTS = {
       enabled: true,
       lang: "auto",
-      speedPxPerSec: 55,
+      speedPxPerSec: 30,   // ✅ más lento por defecto (y dentro de 5..50)
       refreshMins: 12,
       topPx: 10,
       hideOnVote: true,
@@ -386,13 +389,13 @@
       bilingual: true,
       translateMax: 10,
 
-      // ✅ +20 sources por defecto
+      // ✅ +20 sources por defecto (alineado con player)
       sources: [
         "gdelt",
         "bbc","dw","guardian",
         "aljazeera","reuters_world","ap_world",
-        "france24","skynews","abcnews","cbsnews","nbcnews","cnn_world",
-        "cnbc_world","ft_world",
+        "cnn_world","cnbc_world","ft_world","wsj_world",
+        "politico_world","thehill_world","economist_world","time_world","axios_world",
         "gnews_world","gnews_us","gnews_eu","gnews_latam",
         "gnews_business","gnews_markets","gnews_tech"
       ],
@@ -431,7 +434,8 @@
       const lang = safeStr(c.lang);
       c.lang = (lang === "es" || lang === "en" || lang === "auto") ? lang : "auto";
 
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 160);
+      // ✅ 5..50
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), SPEED_MIN, SPEED_MAX);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 3, 90);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 160);
       c.hideOnVote = (c.hideOnVote !== false);
@@ -477,8 +481,8 @@
           </div>
 
           <div class="rlcCtlRow">
-            <label>Speed (px/s)</label>
-            <input id="ctlTickerSpeed" type="number" min="5" max="160" step="1" />
+            <label>Speed (px/s) — ${SPEED_MIN}-${SPEED_MAX}</label>
+            <input id="ctlTickerSpeed" type="number" min="${SPEED_MIN}" max="${SPEED_MAX}" step="1" />
           </div>
 
           <div class="rlcCtlRow">
@@ -561,6 +565,7 @@
         <div class="rlcCtlHint">
           Tip: si en el player “solo ves dos rayas”, suele ser CSS/altura.
           Con <b>Bar height</b> + <b>Font</b> lo dejas perfecto sin glitches.
+          <br/>Speed está limitado a <b>${SPEED_MIN}-${SPEED_MAX}</b> para ir más “TV” y evitar locuras.
         </div>
       `.trim();
     }
@@ -603,7 +608,7 @@
         bar.style.setProperty("--fontPx", `${c.fontPx}px`);
       } catch (_) {}
 
-      if (meta) meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px`;
+      if (meta) meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px · speed=${c.speedPxPerSec}px/s`;
     }
 
     function applyUIFromCfg(cfg) {
@@ -788,16 +793,20 @@
     const CFG_KEY_NS = KEY ? `${CFG_KEY_BASE}:${KEY}` : CFG_KEY_BASE;
     const CFG_KEY_LEGACY = CFG_KEY_BASE;
 
+    // ✅ IMPORTANTE: speed clamp 5..50 para compat con player actualizado
+    const SPEED_MIN = 5;
+    const SPEED_MAX = 50;
+
     const DEFAULTS = {
       enabled: true,
-      speedPxPerSec: 60,
+      speedPxPerSec: 32, // ✅ más lento por defecto (dentro de 5..50)
       refreshMins: 2,
       topPx: 10,
       hideOnVote: true,
       mode: "daily",
       showClocks: true,
 
-      // ✅ más países/zonas por defecto (12)
+      // ✅ más países/zonas por defecto (12+)
       clocks: [
         { label: "UTC", country: "UN", tz: "UTC" },
         { label: "MAD", country: "ES", tz: "Europe/Madrid" },
@@ -880,7 +889,9 @@
     function normalizeCfg(inCfg) {
       const c = Object.assign({}, DEFAULTS, inCfg || {});
       c.enabled = (c.enabled !== false);
-      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), 5, 160);
+
+      // ✅ 5..50
+      c.speedPxPerSec = clamp(num(c.speedPxPerSec, DEFAULTS.speedPxPerSec), SPEED_MIN, SPEED_MAX);
       c.refreshMins = clamp(num(c.refreshMins, DEFAULTS.refreshMins), 1, 30);
       c.topPx = clamp(num(c.topPx, DEFAULTS.topPx), 0, 160);
       c.hideOnVote = (c.hideOnVote !== false);
@@ -921,8 +932,8 @@
           </div>
 
           <div class="rlcCtlRow">
-            <label>Speed (px/s)</label>
-            <input id="ctlEconSpeed" type="number" min="5" max="160" step="1" />
+            <label>Speed (px/s) — ${SPEED_MIN}-${SPEED_MAX}</label>
+            <input id="ctlEconSpeed" type="number" min="${SPEED_MIN}" max="${SPEED_MAX}" step="1" />
           </div>
 
           <div class="rlcCtlRow">
@@ -1037,7 +1048,7 @@
         bar.style.setProperty("--fontPx", `${c.fontPx}px`);
       } catch (_) {}
 
-      if (meta) meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px`;
+      if (meta) meta.textContent = `scale=${c.uiScale.toFixed(2)} · h=${c.barH}px · font=${c.fontPx}px · speed=${c.speedPxPerSec}px/s`;
     }
 
     function applyUIFromCfg(cfg) {
