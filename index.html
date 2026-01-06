@@ -536,6 +536,54 @@
       border-top:1px solid rgba(255,255,255,.10);
       font:650 12px/1.3 ui-sans-serif,system-ui;
     }
+
+    /* ───────────────────────── CHAT PATCH (v2.3.9) ─────────────────────────
+       Objetivo:
+       - Hacer visible el chat cuando está ON (por URL o por llegada de mensajes)
+       - Soportar wrappers intermedios típicos (.line/.row/.wrap/.inner/...)
+       - Forzar que nombre y mensaje sean legibles (sin "position:absolute" heredado raro)
+       NO toca tu styles.css, solo refuerza desde el HTML.
+    */
+    body.chat--on #rlcChatRoot,
+    body[data-chat="1"] #rlcChatRoot,
+    #rlcChatRoot.chat--on,
+    #rlcChatRoot.on,
+    #rlcChatRoot.visible{
+      display:block !important;
+    }
+
+    /* Si tu renderer mete wrappers, los “aplanamos” sin :has */
+    #rlcChatList > * > .line,
+    #rlcChatList > * > .row,
+    #rlcChatList > * > .wrap,
+    #rlcChatList > * > .inner,
+    #rlcChatList > * > .content,
+    #rlcChatList > * > .msgLine,
+    #rlcChatList > * > .chatLine,
+    #rlcChatList > * > .item,
+    #rlcChatList > * > .bubble{
+      display: contents;
+    }
+
+    /* Hard override: nombre y mensaje SIEMPRE visibles y sin absolutas raras */
+    #rlcChatList .name,
+    #rlcChatList .user,
+    #rlcChatList .author,
+    #rlcChatList .nick{
+      position: relative !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      display: inline-flex !important;
+      max-width: 100%;
+    }
+    #rlcChatList .msg,
+    #rlcChatList .message,
+    #rlcChatList .body{
+      position: relative !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      display: block !important;
+    }
   </style>
 </head>
 
@@ -707,6 +755,58 @@
           showDiag(`[${new Date().toISOString()}] unhandledrejection\n${text}`);
         } catch (_) {}
       });
+    })();
+  </script>
+
+  <!-- ───────────────────────── CHAT VISIBILITY BOOT (v2.3.9) ─────────────────────────
+       - Activa chat si URL trae ?chat=1 / true / on / yes
+       - Si llegan mensajes a #rlcChatList, fuerza chat visible (sin depender de clases del renderer)
+       NO cambia tu API ni tu versión. -->
+  <script>
+    (() => {
+      "use strict";
+      const safeStr = (v) => (typeof v === "string") ? v.trim() : "";
+      const root = document.getElementById("rlcChatRoot");
+      const list = document.getElementById("rlcChatList");
+      if (!root || !list) return;
+
+      const u = new URL(location.href);
+      const raw =
+        safeStr(u.searchParams.get("chat") || "") ||
+        safeStr(u.searchParams.get("chatOverlay") || "") ||
+        safeStr(u.searchParams.get("chatOn") || "") ||
+        safeStr(u.searchParams.get("c") || "");
+
+      const v = String(raw || "").toLowerCase();
+      const wantsOn  = (v === "1" || v === "true" || v === "on" || v === "yes");
+      const wantsOff = (v === "0" || v === "false" || v === "off" || v === "no");
+
+      const setOn = () => {
+        root.classList.add("chat--on");
+        document.body.classList.add("chat--on");
+        try { document.body.setAttribute("data-chat", "1"); } catch (_) {}
+      };
+      const setOff = () => {
+        root.classList.remove("chat--on");
+        document.body.classList.remove("chat--on");
+        try { document.body.removeAttribute("data-chat"); } catch (_) {}
+      };
+
+      if (wantsOn) setOn();
+      if (wantsOff) setOff();
+
+      // Si entra cualquier mensaje, muestra chat (esto arregla el “no se ve” aunque el renderer no ponga clases)
+      try {
+        const obs = new MutationObserver((muts) => {
+          for (const m of muts) {
+            if (m && m.type === "childList" && m.addedNodes && m.addedNodes.length) {
+              setOn();
+              break;
+            }
+          }
+        });
+        obs.observe(list, { childList: true, subtree: true });
+      } catch (_) {}
     })();
   </script>
 
