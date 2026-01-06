@@ -659,18 +659,14 @@
     if ((tok | 0) !== (announceToken | 0)) return;
     if (announceDone) return;
 
-    // Seguridad extra: no anunciar si ya estamos en fallback/oculto
-    // (por si alguien llama a esto fuera de contexto)
     try {
       if (cam.kind === "youtube" && frame?.classList?.contains?.("hidden")) return;
       if (cam.kind === "hls" && video?.classList?.contains?.("hidden")) return;
       if (cam.kind === "image" && img?.classList?.contains?.("hidden")) return;
     } catch (_) {}
 
-    // Dedupe por id si por algún motivo se reintenta el mismo token/cam
     const id = String(cam.id ?? "");
     if (id && announceCamId && id !== announceCamId) {
-      // si cambió id, reseteamos (raro)
       announceCamId = id;
     }
 
@@ -1099,8 +1095,6 @@
         const st = (data.info != null) ? (data.info | 0) : -999;
         ytLastState = st;
         if (st === 0) { emitEvent("YT_ENDED", {}); healthFail(tok, cam, "yt_ended"); return; }
-        // ✅ Importante: NO anunciamos aquí (puede “decir playing” y luego caer).
-        // El anuncio va cuando haya progreso real de currentTime (infoDelivery).
         if (st === 1) { ytLastGoodAt = nowMs(); healthProgress(tok); return; }
         if (st === 3) { ytLastGoodAt = nowMs(); healthProgress(tok); return; }
         return;
@@ -1154,18 +1148,28 @@
   let chatList = null;
   let chatItems = [];
 
+  // ✅ CHAT FIX: layout robusto (nombre arriba + mensaje abajo), wrap correcto, contraste y text-shadow
   function injectChatStylesOnce() {
     if (document.getElementById("rlcChatStyles")) return;
     const st = document.createElement("style");
     st.id = "rlcChatStyles";
     st.textContent =
-      ".rlcChatRoot{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));width:min(360px,calc(100vw - 24px));max-height:min(44vh,420px);z-index:9999;pointer-events:none;display:none}" +
-      ".rlcChatRoot.chat--on{display:block!important}.rlcChatList{display:flex;flex-direction:column;justify-content:flex-end;gap:8px;max-height:min(44vh,420px);overflow:hidden;position:relative}" +
-      ".rlcChatBubble{pointer-events:none;display:flex;gap:8px;align-items:flex-end;padding:8px 10px;border-radius:14px;background:rgba(10,14,20,.46);border:1px solid rgba(255,255,255,.10);box-shadow:0 10px 30px rgba(0,0,0,.28);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transform:translateY(6px);opacity:0;animation:rlcChatIn .16s ease-out forwards}" +
-      "@keyframes rlcChatIn{to{transform:translateY(0);opacity:1}}.rlcChatBubble.rlcChatFade{animation:rlcChatOut .25s ease-in forwards}" +
-      "@keyframes rlcChatOut{to{transform:translateY(6px);opacity:0}}.rlcChatUser{font-weight:900;font-size:12px;color:rgba(77,215,255,.95);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}" +
-      ".rlcChatText{font-size:12px;color:rgba(255,255,255,.90);line-height:1.25;word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap}" +
-      "@media (max-width:520px){.rlcChatRoot{width:min(320px,calc(100vw - 24px));max-height:38vh}.rlcChatUser{max-width:95px}}";
+      ".rlcChatRoot{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));width:min(380px,calc(100vw - 24px));max-height:min(44vh,460px);z-index:9999;pointer-events:none;display:none;isolation:isolate}" +
+      ".rlcChatRoot.chat--on{display:block!important}" +
+      ".rlcChatList{display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-end;gap:8px;max-height:min(44vh,460px);overflow:hidden;position:relative}" +
+      ".rlcChatBubble{pointer-events:none;display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:0;max-width:100%;padding:10px 12px;border-radius:16px;" +
+        "background:rgba(10,14,20,.52);border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 30px rgba(0,0,0,.30);" +
+        "backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transform:translateY(6px);opacity:0;animation:rlcChatIn .16s ease-out forwards}" +
+      "@keyframes rlcChatIn{to{transform:translateY(0);opacity:1}}" +
+      ".rlcChatBubble.rlcChatFade{animation:rlcChatOut .25s ease-in forwards}" +
+      "@keyframes rlcChatOut{to{transform:translateY(6px);opacity:0}}" +
+      ".rlcChatHeader{display:flex;align-items:baseline;gap:8px;min-width:0}" +
+      ".rlcChatUser{font-weight:900;font-size:12.5px;color:rgba(77,215,255,.98);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;" +
+        "text-shadow:0 1px 0 rgba(0,0,0,.55)}" +
+      ".rlcChatSep{font-weight:900;font-size:12px;opacity:.55;color:rgba(255,255,255,.92);text-shadow:0 1px 0 rgba(0,0,0,.55)}" +
+      ".rlcChatText{font-size:12.9px;color:rgba(255,255,255,.93);line-height:1.28;word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap;" +
+        "text-shadow:0 1px 0 rgba(0,0,0,.60)}" +
+      "@media (max-width:520px){.rlcChatRoot{width:min(330px,calc(100vw - 24px));max-height:38vh}.rlcChatUser{max-width:170px}}";
     document.head.appendChild(st);
   }
 
@@ -1223,16 +1227,27 @@
     const bubble = document.createElement("div");
     bubble.className = "rlcChatBubble";
 
+    const header = document.createElement("div");
+    header.className = "rlcChatHeader";
+
     const u = document.createElement("div");
     u.className = "rlcChatUser";
-    u.textContent = user || "chat";
+    u.textContent = (user || "chat").trim() || "chat";
+
+    const sep = document.createElement("div");
+    sep.className = "rlcChatSep";
+    sep.textContent = ":";
+
+    header.appendChild(u);
+    header.appendChild(sep);
 
     const t = document.createElement("div");
     t.className = "rlcChatText";
     t.textContent = String(text || "");
 
-    bubble.appendChild(u);
+    bubble.appendChild(header);
     bubble.appendChild(t);
+
     chatList.appendChild(bubble);
 
     chatItems.push({ el: bubble, ts: nowMs() });
@@ -2079,7 +2094,6 @@
       if (img) {
         img.onload = () => {
           healthProgress(tok);
-          // ✅ aquí ya “se ve”
           maybeAnnounceCam(tok, cam, "image_onload");
         };
         img.onerror = () => { if (!autoskip) return; img.onerror = null; healthFail(tok, cam, "image_error"); };
@@ -2103,7 +2117,6 @@
       video.onloadeddata = () => healthProgress(tok);
       video.oncanplay = () => { healthProgress(tok); safePlayVideo(); };
 
-      // ✅ anunciar SOLO cuando está reproduciendo de verdad
       video.onplaying = () => {
         healthProgress(tok);
         maybeAnnounceCam(tok, cam, "hls_onplaying");
@@ -2211,7 +2224,6 @@
     bgmEnabled = true;
     ytCookiesEnabled = true;
 
-    // mantener sayCamEnabled por defecto (OWNER_MODE), salvo query explicit
     sayCamEnabled = (P.sayCamExplicit ? !!P.sayCam : OWNER_MODE);
 
     applyFilters();
@@ -2310,7 +2322,6 @@
   }
 
   // ───────────────────────── Commands (ADMIN HARDENED) ─────────────────────────
-  // 🔥 FIX CLAVE: NO overflow timestamps (no |0). Acepta ts/tsMs/t/seq.
   let lastCmdTs = 0;      // ms
   let lastCmdSeq = 0;     // uint
   let lastCmdSig = "";
@@ -2346,7 +2357,6 @@
     const C = String(cmd || "").trim().toUpperCase();
     if (!C) return "";
 
-    // Aliases extra típicos
     if (C === "SKIP" || C === "NEXTCAM" || C === "NEXT_CAM") return "NEXT";
     if (C === "BACK" || C === "PREVCAM" || C === "PREV_CAM") return "PREV";
     if (C === "PLAYPAUSE" || C === "TOGGLEPLAY" || C === "TOGGLE_PLAYBACK") return "TOGGLE_PLAY";
@@ -2470,7 +2480,6 @@
         postState({ reason: "twitch" });
       } break;
 
-      // ✅ nuevo: togglear anuncio
       case "SET_SAYCAM":
       case "SAYCAM":
       case "SET_SAY_CAM":
@@ -2709,7 +2718,6 @@
   }
 
   function readMsgTsMs(msg) {
-    // Acepta múltiples campos de timestamp en ms.
     const ts = toNum(msg?.tsMs, NaN);
     if (Number.isFinite(ts) && ts > 0) return ts;
     const t = toNum(msg?.t, NaN);
@@ -2727,7 +2735,6 @@
   function handleCmdMsg(msg, sig = "") {
     if (!msg) return;
 
-    // Compat: si llega "NEXT" como string por postMessage
     if (typeof msg === "string") {
       applyCommand(msg, {});
       return;
@@ -2735,7 +2742,6 @@
 
     if (typeof msg !== "object") return;
 
-    // Compat: algunos mandan {cmd:"NEXT"} sin type
     const type = String(msg.type || "").toLowerCase();
     if (type && type !== "cmd") return;
 
@@ -2744,13 +2750,11 @@
     const s = sig || cmdSigFrom(msg);
     const nowSeen = nowMs();
 
-    // Dedup rápida cross-canal (BC/LS/PM)
     if (s && s === lastCmdSig && (nowSeen - (lastCmdSeenAt || 0)) < CMD_DEDUPE_WINDOW_MS) return;
 
-    const ts = readMsgTsMs(msg);   // ms, sin overflow
+    const ts = readMsgTsMs(msg);
     const seq = readMsgSeq(msg);
 
-    // Orden: preferimos seq si existe, si no ts.
     if (seq) {
       if (seq < lastCmdSeq) return;
       if (seq === lastCmdSeq && s && s === lastCmdSig) return;
@@ -2760,7 +2764,6 @@
       if (ts === lastCmdTs && s && s === lastCmdSig) return;
       lastCmdTs = ts;
     } else {
-      // sin ts/seq: dedup por firma
       if (s && s === lastCmdSig) return;
     }
 
@@ -2782,7 +2785,6 @@
   try { if (bcMain) bcMain.onmessage = (ev) => handleCmdMsg(ev?.data, cmdSigFrom(ev?.data)); } catch (_) {}
   try { if (bcLegacy) bcLegacy.onmessage = (ev) => handleCmdMsg(ev?.data, cmdSigFrom(ev?.data)); } catch (_) {}
 
-  // postMessage fallback (mismo origin)
   window.addEventListener("message", (ev) => {
     try {
       const originOk = String(ev.origin || "") === String(location.origin || "");
@@ -2811,7 +2813,6 @@
     }
   });
 
-  // Polling de comandos (Admin buttons incluso si storage-event no dispara)
   const CMD_POLL_MS = 250;
   let cmdPollTimer = null;
   function startCmdPolling() {
@@ -3010,7 +3011,6 @@
     else if (OWNER_MODE) twitchChannel = readBotCfgChannel() || OWNER_DEFAULT_TWITCH;
     else twitchChannel = P.twitch || "";
 
-    // sayCam (URL manda)
     if (P.sayCamExplicit) sayCamEnabled = !!P.sayCam;
     else if (saved && typeof saved.sayCam === "boolean") sayCamEnabled = !!saved.sayCam;
     else sayCamEnabled = OWNER_MODE;
@@ -3120,7 +3120,6 @@
 
     postState({ reason: "boot" }, true);
 
-    // Lee una vez al arrancar
     readCmdFromStorage(CMD_KEY);
     readCmdFromStorage(CMD_KEY_LEGACY);
   }
