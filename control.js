@@ -25,6 +25,9 @@
       - Autorrellena canal/bot user (ctlTwitchChannel/ctlBotUser) desde state del player
       - Auto-connect bot si está ON y hay creds guardadas
       - HUD scale SOLO para el player (ctlHudScale) + cmd + URL param
+   ✅ PATCH 2.3.9 (NUEVO — TU PEDIDO):
+      - Helix: rotación de Categoría (Just Chatting / IRL / Always On) cada 1h
+      - Auto-resuelve IDs via helix/search/categories y cachea en localStorage (keyed)
 */
 
 (() => {
@@ -158,6 +161,7 @@
 
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} } // ✅ nuevo (para reset limpio)
 
   // Evita submits invisibles (muchas UIs meten botones dentro de <form>)
   listen(document, "submit", (e) => {
@@ -1278,8 +1282,21 @@
     token: "",
     broadcasterId: "",
     template: "📍: {title}{placeSep}{place} | {channel} | GlobalEye TV",
-    cooldownSec: 20
+    cooldownSec: 20,
+
+    // ✅ NUEVO: Rotación de categoría (Helix)
+    categoryRotate: true,
+    categoryEveryMins: 60,
+    categories: ["Just Chatting", "IRL", "Always On"]
   };
+
+  function _normalizeHelixCategoryName(n) {
+    const s = String(n || "").trim();
+    if (!s) return "";
+    if (s.toLowerCase() === "alwayson") return "Always On"; // tolerancia a tu texto
+    return s;
+  }
+
   function normalizeHelixCfg(inCfg) {
     const c = Object.assign({}, HELIX_DEFAULTS, (inCfg || {}));
     c.enabled = (c.enabled === true);
@@ -1288,6 +1305,19 @@
     c.broadcasterId = String(c.broadcasterId || "").trim();
     c.template = String(c.template || HELIX_DEFAULTS.template).trim().slice(0, 220) || HELIX_DEFAULTS.template;
     c.cooldownSec = clamp(parseInt(String(c.cooldownSec || HELIX_DEFAULTS.cooldownSec), 10) || HELIX_DEFAULTS.cooldownSec, 10, 180);
+
+    // ✅ NUEVO: category rotation flags
+    const cr = (inCfg && (inCfg.categoryRotate === false || inCfg.categoryRotate === 0 || inCfg.categoryRotate === "off"))
+      ? false : true;
+    c.categoryRotate = cr;
+
+    c.categoryEveryMins = clamp(parseInt(String(c.categoryEveryMins || HELIX_DEFAULTS.categoryEveryMins), 10) || HELIX_DEFAULTS.categoryEveryMins, 10, 360);
+
+    let cats = Array.isArray(c.categories) ? c.categories : HELIX_DEFAULTS.categories;
+    cats = cats.map(_normalizeHelixCategoryName).map(x => String(x || "").trim()).filter(Boolean).slice(0, 12);
+    if (!cats.length) cats = HELIX_DEFAULTS.categories.slice();
+    c.categories = cats;
+
     return c;
   }
   function loadHelixCfg() {
@@ -1311,6 +1341,47 @@
   let helixLastAttemptSig = "";
   let helixRetryAfterAt = 0;
 
+  // ✅ NUEVO: estado/cache para categorías (keyed)
+  const HELIX_CAT_STATE_KEY_BASE = "rlc_helix_cat_state_v1";
+  const HELIX_CAT_CACHE_KEY_BASE = "rlc_helix_cat_cache_v1";
+  const HELIX_CAT_STATE_KEY = KEY ? `${HELIX_CAT_STATE_KEY_BASE}:${KEY}` : HELIX_CAT_STATE_KEY_BASE;
+  const HELIX_CAT_CACHE_KEY = KEY ? `${HELIX_CAT_CACHE_KEY_BASE}:${KEY}` : HELIX_CAT_CACHE_KEY_BASE;
+
+  function _loadHelixCatState() {
+    const raw = lsGet(HELIX_CAT_STATE_KEY) || lsGet(HELIX_CAT_STATE_KEY_BASE) || "";
+    const j = safeJson(raw, null);
+    const st = (j && typeof j === "object") ? j : {};
+    return {
+      index: Number.isFinite(st.index) ? (st.index | 0) : -1,
+      lastChangeAt: Number(st.lastChangeAt || 0) || 0,
+      lastCategoryName: String(st.lastCategoryName || "").trim(),
+      lastCategoryId: String(st.lastCategoryId || "").trim()
+    };
+  }
+  function _saveHelixCatState(st) {
+    const o = Object.assign({ index: -1, lastChangeAt: 0, lastCategoryName: "", lastCategoryId: "" }, (st || {}));
+    const raw = JSON.stringify(o);
+    lsSet(HELIX_CAT_STATE_KEY, raw);
+    lsSet(HELIX_CAT_STATE_KEY_BASE, raw);
+    return o;
+  }
+
+  function _loadHelixCatCache() {
+    const raw = lsGet(HELIX_CAT_CACHE_KEY) || lsGet(HELIX_CAT_CACHE_KEY_BASE) || "";
+    const j = safeJson(raw, null);
+    return (j && typeof j === "object") ? j : {};
+  }
+  function _saveHelixCatCache(cache) {
+    const raw = JSON.stringify(cache || {});
+    lsSet(HELIX_CAT_CACHE_KEY, raw);
+    lsSet(HELIX_CAT_CACHE_KEY_BASE, raw);
+  }
+
+  let helixCatLastUpdateAt = 0;
+  let helixCatLastSig = "";
+  let helixCatLastAttemptAt = 0;
+  let helixCatLastAttemptSig = "";
+
   function syncHelixUIFromStore() {
     helixCfg = loadHelixCfg();
     if (ctlTitleOn) ctlTitleOn.value = helixCfg.enabled ? "on" : "off";
@@ -1333,7 +1404,14 @@
     const cooldownSec = ctlTitleCooldown
       ? clamp(parseInt(String(ctlTitleCooldown.value || base.cooldownSec || 20), 10) || 20, 10, 180)
       : (base.cooldownSec || 20);
-    return normalizeHelixCfg({ enabled, clientId, token, broadcasterId, template, cooldownSec });
+
+    // ✅ (sin UI nueva): mantenemos defaults guardados
+    return normalizeHelixCfg({
+      enabled, clientId, token, broadcasterId, template, cooldownSec,
+      categoryRotate: base.categoryRotate,
+      categoryEveryMins: base.categoryEveryMins,
+      categories: base.categories
+    });
   }
 
   function buildTitleFromState(st, template) {
@@ -1446,6 +1524,21 @@
     return { ok: true };
   }
 
+  // ✅ NUEVO: Set Category (Helix) — usa game_id
+  async function helixSetCategory(broadcasterId, categoryId, clientId, token) {
+    const bid = String(broadcasterId || "").trim();
+    const cid = String(categoryId || "").trim();
+    if (!bid || !cid) return { ok: false, error: "missing_bid_or_category" };
+    await helixFetch(`channels?broadcaster_id=${encodeURIComponent(bid)}`, {
+      method: "PATCH",
+      clientId,
+      token,
+      body: { game_id: cid },
+      timeoutMs: 20000
+    });
+    return { ok: true };
+  }
+
   function setHelixBackoff(err) {
     const now = Date.now();
     if (err && (err.status === 429) && err.retryMs) {
@@ -1481,6 +1574,113 @@
     if (!cfg.clientId || !cfg.token) return false;
     const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || lastState?.twitch || "").trim();
     return !!login;
+  }
+
+  // ✅ NUEVO: resuelve categoryId por nombre con cache
+  async function helixResolveCategoryIdByName(categoryName, cfg) {
+    const c = cfg || helixCfg || loadHelixCfg();
+    const name = _normalizeHelixCategoryName(categoryName);
+    const key = String(name || "").trim().toLowerCase();
+    if (!key) return "";
+
+    const now = Date.now();
+    const cache = _loadHelixCatCache();
+    const hit = cache[key];
+    const ttlMs = 45 * 24 * 60 * 60 * 1000; // 45 días (más que suficiente)
+    if (hit && hit.id && (now - (Number(hit.ts || 0) || 0)) < ttlMs) {
+      return String(hit.id || "").trim();
+    }
+
+    const res = await helixFetch(`search/categories?query=${encodeURIComponent(name)}`, {
+      method: "GET",
+      clientId: c.clientId,
+      token: c.token,
+      timeoutMs: 20000
+    });
+
+    const arr = Array.isArray(res?.data?.data) ? res.data.data : [];
+    if (!arr.length) return "";
+
+    // best match: name exact (case-insensitive) o el primero
+    const best =
+      arr.find(x => String(x?.name || "").trim().toLowerCase() === key) ||
+      arr[0];
+
+    const id = String(best?.id || "").trim();
+    const realName = String(best?.name || name).trim();
+
+    if (id) {
+      cache[key] = { id, name: realName, ts: now };
+      _saveHelixCatCache(cache);
+      return id;
+    }
+    return "";
+  }
+
+  // ✅ NUEVO: tick de rotación de categoría cada N minutos (default 60)
+  async function helixCategoryTick(force = false) {
+    const cfg = helixCfg || loadHelixCfg();
+    if (!helixCanRun(cfg)) return;
+    if (!cfg.categoryRotate) return;
+
+    const now = Date.now();
+    if (!force && now < helixRetryAfterAt) return;
+
+    const intervalMs = clamp((cfg.categoryEveryMins || 60) * 60 * 1000, 10 * 60 * 1000, 24 * 60 * 60 * 1000);
+    const st0 = _loadHelixCatState();
+
+    if (!force && st0.lastChangeAt && (now - st0.lastChangeAt) < intervalMs) return;
+
+    if (!lastState && !ctlTwitchChannel?.value) return;
+
+    const login = String(ctlTwitchChannel?.value || lastState?.vote?.channel || lastState?.twitch || "").trim().replace(/^@/, "");
+    if (!login) return;
+
+    const catsRaw = Array.isArray(cfg.categories) ? cfg.categories : HELIX_DEFAULTS.categories;
+    const cats = catsRaw.map(_normalizeHelixCategoryName).map(s => String(s || "").trim()).filter(Boolean);
+    if (!cats.length) return;
+
+    // calcula next index desde lastCategoryName si posible
+    const lastName = String(st0.lastCategoryName || "").trim();
+    let idx = -1;
+    if (lastName) idx = cats.findIndex(x => x.toLowerCase() === lastName.toLowerCase());
+    if (idx < 0) idx = Number.isFinite(st0.index) ? (st0.index | 0) : -1;
+
+    const nextIdx = (idx + 1 + cats.length) % cats.length;
+    const nextName = cats[nextIdx];
+
+    const sig = sigOf(`${login}|CAT|${nextName}`);
+    if (!force) {
+      if (sig === helixCatLastSig && (now - helixCatLastUpdateAt) < intervalMs) return;
+      if (sig === helixCatLastAttemptSig && (now - helixCatLastAttemptAt) < 6000) return;
+    }
+    helixCatLastAttemptAt = now;
+    helixCatLastAttemptSig = sig;
+
+    try {
+      const bid = cfg.broadcasterId || await helixEnsureBroadcasterId(login, cfg);
+      if (!bid) { setTitleStatus("Helix: falta broadcaster_id", false); return; }
+
+      const catId = await helixResolveCategoryIdByName(nextName, cfg);
+      if (!catId) { setTitleStatus(`Helix: no encuentra categoría "${nextName}"`, false); return; }
+
+      await helixSetCategory(bid, catId, cfg.clientId, cfg.token);
+
+      helixCatLastUpdateAt = Date.now();
+      helixCatLastSig = sig;
+
+      _saveHelixCatState({
+        index: nextIdx,
+        lastChangeAt: Date.now(),
+        lastCategoryName: nextName,
+        lastCategoryId: catId
+      });
+
+      // no machacamos si justo se está actualizando título; pill unificado
+      setTitleStatus(`Auto título: OK · Categoría → ${nextName}`, true);
+    } catch (e) {
+      setHelixBackoff(e);
+    }
   }
 
   async function helixTick(force = false) {
@@ -1526,18 +1726,27 @@
     syncHelixUIFromStore();
     helixRetryAfterAt = 0;
     helixTick(true).catch(() => {});
+    // ✅ NUEVO: si activas/guardas helix, también ejecuta tick de categoría (si toca)
+    helixCategoryTick(false).catch(() => {});
   }
   function helixResetUI() {
     helixCfg = saveHelixCfg(HELIX_DEFAULTS);
     helixResolvedBroadcasterId = "";
     helixResolvedForLogin = "";
     helixRetryAfterAt = 0;
+
+    // ✅ NUEVO: reset estado categorías
+    lsDel(HELIX_CAT_STATE_KEY);
+    lsDel(HELIX_CAT_STATE_KEY_BASE);
+
     syncHelixUIFromStore();
   }
   function helixTestOnce() {
     helixCfg = saveHelixCfg(readHelixUI());
     syncHelixUIFromStore();
     helixTick(true).catch(() => {});
+    // ✅ NUEVO: fuerza cambio de categoría en test (útil para comprobar Helix)
+    helixCategoryTick(true).catch(() => {});
   }
 
   // ───────────────────────── Bot IRC
@@ -2809,6 +3018,8 @@
     }
 
     helixTick(false).catch(() => {});
+    // ✅ NUEVO: rotación de categoría (1h) — independiente del cooldown de título
+    helixCategoryTick(false).catch(() => {});
   }
 
   // ───────────────────────── Boot / Destroy
