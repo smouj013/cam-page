@@ -1735,3 +1735,183 @@ body.mode-control{
 
   .stage::before, .layer-media::after{ opacity: .16; }
 }
+
+/* ───────────────────────── CHAT COMPAT PATCH (RLC 2.3.9+) ─────────────────────────
+   ✅ Añade soporte para render “nuevo” (sin tocar tu markup legacy):
+      - .rlcChatBubble / .rlcChatHeader / .rlcChatUser / .rlcChatAvatar / .rlcChatMsg
+   ✅ Mantiene tu estética exacta (pills + bubble) y evita avatar = emote
+*/
+#rlcChatList > .rlcChatBubble{
+  pointer-events:none;
+  position: relative;
+
+  display:grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--chatGap);
+  row-gap: 6px;
+
+  align-items: end;
+  min-width: 0;
+
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+
+  animation: rlcPopIn var(--dur-2) var(--ease-soft) both;
+}
+
+/* Avatar (nuevo): SOLO si es avatar explícito */
+#rlcChatList > .rlcChatBubble .rlcChatAvatar,
+#rlcChatList > .rlcChatBubble > .rlcChatAvatar,
+#rlcChatList > .rlcChatBubble > img.rlcChatAvatar{
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: end;
+
+  width: var(--chatAvatar);
+  height: var(--chatAvatar);
+  border-radius: 999px;
+  object-fit: cover;
+
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.06);
+  box-shadow:
+    0 12px 26px rgba(0,0,0,.42),
+    0 0 0 1px rgba(87,201,255,.10) inset;
+}
+
+/* Header / user pill (nuevo) */
+#rlcChatList > .rlcChatBubble .rlcChatHeader{
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  justify-self: start;
+
+  display:flex;
+  align-items:center;
+  gap: 8px;
+  min-width: 0;
+}
+#rlcChatList > .rlcChatBubble .rlcChatUser,
+#rlcChatList > .rlcChatBubble .rlcChatName{
+  display:inline-flex;
+  align-items:center;
+
+  height: 20px;
+  max-width: 100%;
+  min-width: 0;
+
+  font: 950 11px/1 var(--sans);
+  letter-spacing: .04em;
+  color: rgba(255,255,255,.92);
+
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: linear-gradient(180deg, var(--chatNameBgA), var(--chatNameBgB));
+  box-shadow: 0 12px 24px rgba(0,0,0,.36);
+
+  white-space: nowrap !important;
+  overflow:hidden;
+  text-overflow: ellipsis;
+
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Bubble (nuevo) */
+#rlcChatList > .rlcChatBubble .rlcChatMsg,
+#rlcChatList > .rlcChatBubble .rlcChatMessage,
+#rlcChatList > .rlcChatBubble .rlcChatText{
+  grid-column: 2;
+  grid-row: 2;
+
+  min-width: 0;
+
+  border-radius: 16px;
+  border: 1px solid var(--chatBubbleStroke);
+  background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
+  box-shadow:
+    var(--chatBubbleShadow),
+    0 0 0 1px var(--chatBubbleGlow) inset;
+
+  backdrop-filter: blur(12px) saturate(1.12);
+  -webkit-backdrop-filter: blur(12px) saturate(1.12);
+
+  padding: 30px 12px 11px;
+
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--chatText);
+  text-shadow: 0 2px 10px rgba(0,0,0,.34);
+
+  white-space: normal;
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+}
+
+/* Si el user viene dentro del msg (nuevo) */
+#rlcChatList > .rlcChatBubble .rlcChatMsg .rlcChatUser,
+#rlcChatList > .rlcChatBubble .rlcChatMsg .rlcChatName,
+#rlcChatList > .rlcChatBubble .rlcChatMessage .rlcChatUser,
+#rlcChatList > .rlcChatBubble .rlcChatMessage .rlcChatName,
+#rlcChatList > .rlcChatBubble .rlcChatText .rlcChatUser,
+#rlcChatList > .rlcChatBubble .rlcChatText .rlcChatName{
+  position: absolute !important;
+  left: 12px !important;
+  top: 8px !important;
+
+  height: 20px !important;
+  max-width: calc(100% - 24px) !important;
+  min-width: 0 !important;
+
+  z-index: 5 !important;
+  pointer-events:none !important;
+
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* Strip + tail (nuevo) */
+#rlcChatList > .rlcChatBubble .rlcChatMsg::before,
+#rlcChatList > .rlcChatBubble .rlcChatMessage::before,
+#rlcChatList > .rlcChatBubble .rlcChatText::before{
+  content:"";
+  position:absolute;
+  left:0; right:0; top:0;
+  height:2px;
+  border-radius: 16px 16px 0 0;
+  background: linear-gradient(90deg, rgba(255,53,90,.55), rgba(87,201,255,.45));
+  opacity:.82;
+  pointer-events:none;
+}
+#rlcChatList > .rlcChatBubble .rlcChatMsg::after,
+#rlcChatList > .rlcChatBubble .rlcChatMessage::after,
+#rlcChatList > .rlcChatBubble .rlcChatText::after{
+  content:"";
+  position:absolute;
+  left: calc(-1 * (var(--chatTailSize) / 2));
+  bottom: var(--chatTailLift);
+  width: var(--chatTailSize);
+  height: var(--chatTailSize);
+  background: linear-gradient(180deg, var(--chatBubbleA), var(--chatBubbleB));
+  border-left: 1px solid var(--chatBubbleStroke);
+  border-bottom: 1px solid var(--chatBubbleStroke);
+  transform: rotate(45deg);
+  border-bottom-left-radius: 3px;
+  box-shadow: -6px 10px 18px rgba(0,0,0,.18);
+}
+
+/* Emotes/img dentro del msg (nuevo): nunca avatar */
+#rlcChatList > .rlcChatBubble .rlcChatMsg img,
+#rlcChatList > .rlcChatBubble .rlcChatMessage img,
+#rlcChatList > .rlcChatBubble .rlcChatText img{
+  max-height: 1.35em;
+  width: auto;
+  display: inline-block;
+  vertical-align: -0.22em;
+}

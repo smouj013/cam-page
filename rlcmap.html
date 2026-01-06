@@ -6,6 +6,8 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0b0f14" />
   <meta name="robots" content="noindex,nofollow" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
   <title>RLC — Mapa Interactivo (Votación)</title>
 
   <!-- (Opcional) Si quieres heredar tu piel general, descomenta:
@@ -13,6 +15,10 @@
   -->
 
   <link rel="stylesheet" href="./rlcmap.css?v=2.3.9" />
+
+  <!-- ✅ Mapa pro: D3 + topojson-client (si falla, rlcmap.js cae al modo hotspots) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 </head>
 
 <body class="mode-map">
@@ -30,6 +36,7 @@
         <div class="pill" id="mapModePill">Viewer</div>
         <div class="pill mono" id="mapRoomPill">room: —</div>
         <div class="pill mono" id="mapKeyPill">key: —</div>
+        <div class="pill mono dim" id="mapEndpointPill">endpoint: —</div>
       </div>
     </header>
 
@@ -37,12 +44,19 @@
       <!-- MAPA -->
       <section class="mapStage" aria-label="Mapa del mundo">
         <div class="mapFrame" id="mapFrame" aria-label="Mapa interactivo">
-          <!-- Fondo “mapa” ligero (sin assets externos) -->
+          <!-- Fondo “mapa” -->
           <div class="mapOcean"></div>
           <div class="mapGrid" aria-hidden="true"></div>
 
-          <!-- Hotspots (se crean por JS) -->
-          <div class="hotspots" id="hotspots"></div>
+          <!-- ✅ SVG MAPA REAL -->
+          <div class="mapSvgWrap" id="mapSvgWrap" aria-label="Mapa real">
+            <svg id="mapSvg" class="mapSvg" role="img" aria-label="Mapa del mundo">
+              <g id="mapG"></g>
+            </svg>
+          </div>
+
+          <!-- Fallback hotspots (si no carga el mapa real) -->
+          <div class="hotspots" id="hotspots" hidden></div>
 
           <!-- HUD sobre el mapa -->
           <div class="mapHud">
@@ -50,91 +64,89 @@
               <div class="mapHudTitle" id="pollTitle">Votación</div>
               <div class="mapHudTimer mono" id="pollTimer">—</div>
             </div>
-            <div class="mapHudHint" id="pollHint">Haz click en una región para votar.</div>
+            <div class="mapHudHint" id="pollHint">Haz click en un país para votar. Doble click en USA para ver estados.</div>
           </div>
 
+          <!-- Controles -->
+          <div class="mapControls" aria-label="Controles del mapa">
+            <button class="btnMini" id="btnZoomIn"  type="button" title="Zoom +">＋</button>
+            <button class="btnMini" id="btnZoomOut" type="button" title="Zoom −">－</button>
+            <button class="btnMini" id="btnZoomReset" type="button" title="Reset">⟳</button>
+            <button class="btnMini btnBack" id="btnBack" type="button" title="Volver" hidden>← Volver</button>
+          </div>
+
+          <!-- Tooltip -->
+          <div class="mapTooltip" id="mapTooltip" hidden></div>
+
           <!-- Toast -->
-          <div class="toast" id="toast" role="status" aria-live="polite"></div>
+          <div class="toast" id="mapToast" aria-live="polite"></div>
         </div>
       </section>
 
-      <!-- PANEL -->
-      <aside class="sidePanel" aria-label="Panel de votación">
-        <section class="card">
-          <div class="cardTitle">Opciones</div>
-          <div class="hint" id="pollStateHint">Cargando…</div>
+      <!-- SIDEBAR -->
+      <aside class="mapSide" aria-label="Panel de votación">
+        <div class="sideCard">
+          <div class="sideHead">
+            <div class="sideTitle">Votación en directo</div>
+            <div class="sideSub mono" id="pollMeta">—</div>
+          </div>
 
-          <div class="options" id="options"></div>
-
-          <div class="divider"></div>
-
-          <div class="row">
+          <div class="sideActions">
             <button class="btn" id="btnRefresh" type="button">⟳ Refrescar</button>
-            <button class="btn btnPrimary" id="btnVoteClear" type="button">Borrar mi voto</button>
+            <button class="btn danger" id="btnVoteClear" type="button">🧹 Borrar mi voto</button>
           </div>
 
-          <div class="hint small">
-            Si estás en <b>viewer</b>: votas y listo. Si estás en <b>admin</b>: puedes iniciar/parar y aplicar ganador.
+          <div class="choiceList" id="choiceList" aria-label="Opciones"></div>
+
+          <div class="sideNote">
+            <div class="noteLine">📌 Tip: si una opción no está activa (no sale en la lista), el mapa no la deja votar.</div>
+            <div class="noteLine dim">El voto se identifica por dispositivo (best-effort).</div>
           </div>
-        </section>
+        </div>
 
         <!-- ADMIN -->
-        <section class="card" id="adminCard" style="display:none">
-          <div class="cardTitle">Admin</div>
-
-          <div class="hint">
-            Tu <b>admin secret</b> se guarda en <code>localStorage</code>.
-            No lo metas en la URL.
+        <div class="sideCard adminCard" id="adminCard" style="display:none;">
+          <div class="sideHead">
+            <div class="sideTitle">Admin</div>
+            <div class="sideSub dim">Arranca/para polls y aplica ganador al Player</div>
           </div>
 
-          <label class="row" for="adminSecret">
-            <span>Admin secret</span>
-            <input class="input mono" id="adminSecret" type="password" placeholder="(pegalo aquí)" autocomplete="current-password" />
-          </label>
+          <label class="lbl">Endpoint Worker (Cloudflare)</label>
+          <input class="inp mono" id="adminEndpoint" placeholder="https://xxxxx.workers.dev" />
+
+          <label class="lbl">Room</label>
+          <input class="inp mono" id="adminRoom" placeholder="global / o tu KEY" />
+
+          <label class="lbl">Admin secret (NO se mete en la URL)</label>
+          <div class="row">
+            <input class="inp mono" id="adminSecret" type="password" placeholder="pegas tu secret aquí" />
+            <button class="btn" id="btnSaveSecret" type="button">Guardar</button>
+            <button class="btn danger" id="btnForgetSecret" type="button">Borrar</button>
+          </div>
+
+          <label class="lbl">Opciones (coma / saltos de línea)</label>
+          <textarea class="ta mono" id="adminOptions" rows="4"
+            placeholder="Ej: US, VE, ES&#10;O: US-CA, US-NY, US-FL"></textarea>
+
+          <label class="lbl">Duración (segundos)</label>
+          <input class="inp mono" id="adminDuration" type="number" min="10" max="600" value="120" />
 
           <div class="row">
-            <button class="btn" id="btnSaveSecret" type="button">💾 Guardar</button>
-            <button class="btn" id="btnForgetSecret" type="button">🧹 Olvidar</button>
+            <button class="btn ok" id="btnStart" type="button">▶ Start</button>
+            <button class="btn danger" id="btnStop" type="button">⏹ Stop</button>
+            <button class="btn" id="btnApplyWinner" type="button">🏆 Aplicar ganador</button>
           </div>
 
-          <div class="divider"></div>
-
-          <div class="grid2">
-            <label class="row" for="adminDuration">
-              <span>Duración (s)</span>
-              <input class="input mono" id="adminDuration" type="number" min="10" max="600" value="60" />
-            </label>
-
-            <label class="row" for="adminOptions">
-              <span>Opciones (códigos)</span>
-              <input class="input mono" id="adminOptions" type="text" value="NA,SA,EU,AF,AS,OC" />
-            </label>
-          </div>
+          <div class="adminHint mono" id="adminCmdHint">—</div>
 
           <div class="row">
-            <button class="btn btnPrimary" id="btnStart" type="button">▶ Iniciar votación</button>
-            <button class="btn" id="btnStop" type="button">⏹ Cerrar votación</button>
+            <button class="btn" id="btnDebugCmd" type="button">🧪 PING (test)</button>
           </div>
 
-          <div class="divider"></div>
-
-          <div class="hint">
-            <b>Aplicar ganador</b>: manda <code>GOTO</code> por <code>BroadcastChannel</code> + mirror a <code>localStorage</code>.
+          <div class="sideNote dim">
+            <div class="noteLine">⚠️ “Aplicar ganador” intenta elegir una cam por tags/título/lugar y manda <b>GOTO</b> al player.</div>
           </div>
-
-          <div class="row">
-            <button class="btn btnPrimary" id="btnApplyWinner" type="button">🏆 Aplicar ganador (GOTO)</button>
-            <button class="btn" id="btnDebugCmd" type="button">🧪 Test cmd (PING)</button>
-          </div>
-
-          <div class="hint small mono" id="adminCmdHint">—</div>
-        </section>
-
-        <footer class="foot">
-          <div class="muted small">
-            endpoint: <span class="mono" id="endpointPill">—</span>
-          </div>
-        </footer>
+        </div>
       </aside>
     </section>
   </main>
