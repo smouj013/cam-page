@@ -1,9 +1,11 @@
-<!-- control.html — Random Live Cams (CONTROL) v2.3.9 — READY (Neo-Atlas / Newsroom)
-  ✅ Alineado con control.js v2.3.9 (IDs compatibles + aliases)
-  ✅ Version sentinel + cache-bust unificado
+<!-- control.html — Random Live Cams (CONTROL) v2.3.9 — UPDATED + HARDENED (Neo-Atlas / Newsroom)
+  ✅ MISMA versión (2.3.9) — NO cambia control.js
+  ✅ Fix CLAVE: IDs duplicados (causaban “cambio algo y no me deja” / handlers apuntando al nodo equivocado)
+  ✅ “Edit-lock” anti-clobber: mientras editas un input/select, evita que otro script te lo pise antes de darle a Aplicar
+  ✅ Card nueva: Tickers (NEWS+ECON) con params nuevos (uiScale/barH/fontPx/refresh/sources)
+  ✅ Mantiene aliases/IDs legacy sin duplicar IDs (solo espejos con IDs distintos)
   ✅ REPAIR MODE: control.html?repair=1
   ✅ Diagnóstico on-screen (errores JS)
-  ✅ Sección KEY/Sala para fijar el "key" sin tocar la URL (si tu control.js lo soporta por storage)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
@@ -191,6 +193,7 @@
       box-shadow:0 10px 30px rgba(0,0,0,.30);
       cursor:pointer;
       transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+      user-select:none;
     }
     .btn.ghost{background:rgba(0,0,0,.18)!important;border-color:rgba(255,255,255,.12)!important}
     .btn:hover{
@@ -198,14 +201,17 @@
       border-color:rgba(55,214,255,.25)!important;
       box-shadow:0 14px 36px rgba(0,0,0,.38),0 0 0 1px rgba(55,214,255,.08) inset
     }
+    .btn:active{transform:translateY(0)}
 
-    .input,.select{
+    .input,.select,textarea{
       border-radius:14px!important;
       border:1px solid rgba(255,255,255,.14)!important;
       background:rgba(0,0,0,.18)!important;
       color:rgba(255,255,255,.92)!important;
       outline:none;
     }
+
+    textarea{resize:vertical; min-height:84px; padding:10px 12px; line-height:1.35}
 
     .hint{color:var(--news-muted)}
     .btn.full{display:block!important;width:100%!important}
@@ -299,6 +305,9 @@
         background:rgba(10,14,22,.92)!important
       }
     }
+
+    /* mini helper */
+    .stack10{margin-top:10px}
   </style>
 </head>
 
@@ -353,7 +362,7 @@
           Consejo: si abres control y player en varias pestañas, usa siempre la misma KEY para que el bus vaya fino.
         </div>
 
-        <!-- Aliases “por si acaso” (ocultos) -->
+        <!-- Aliases (ocultos) SIN duplicar IDs -->
         <div style="display:none">
           <input id="ctlRoomKey" type="text" />
           <input id="ctlBusKey" type="text" />
@@ -453,6 +462,81 @@
           <button id="ctlHudApply" type="button"></button>
           <button id="ctlCfgApply" type="button"></button>
         </div>
+      </div>
+
+      <!-- ✅ TICKERS (NEWS + ECON) — NUEVOS PARÁMETROS -->
+      <div class="card" id="ctlTickersCard">
+        <div class="cardTitle">Tickers (NEWS + ECON)</div>
+        <div class="hint">Parámetros nuevos (v2.3.9): <span class="mono">uiScale</span>, <span class="mono">barH</span>, <span class="mono">fontPx</span>. Se aplican al player vía tu <span class="mono">rlcTickersControl.js</span> (si está activo).</div>
+
+        <div class="row2 stack10">
+          <label class="row" style="margin:0" for="ctlTickersOn">
+            <span>Tickers</span>
+            <select id="ctlTickersOn" class="select">
+              <option value="on">ON</option>
+              <option value="off">OFF</option>
+            </select>
+          </label>
+          <div class="pill mono" id="ctlTickersStatus" aria-live="polite">Tickers: —</div>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlNewsTickerOn">
+            <span>NEWS</span>
+            <select id="ctlNewsTickerOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
+          </label>
+          <label class="row" style="margin:0" for="ctlEconTickerOn">
+            <span>ECON</span>
+            <select id="ctlEconTickerOn" class="select"><option value="on">ON</option><option value="off">OFF</option></select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickersUiScale">
+            <span>uiScale</span>
+            <input id="ctlTickersUiScale" class="input" type="number" min="0.5" max="2.5" step="0.05" value="1" inputmode="decimal" />
+          </label>
+          <label class="row" style="margin:0" for="ctlTickersBarH">
+            <span>barH (px)</span>
+            <input id="ctlTickersBarH" class="input" type="number" min="22" max="96" step="1" value="34" inputmode="numeric" />
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickersFontPx">
+            <span>fontPx</span>
+            <input id="ctlTickersFontPx" class="input" type="number" min="10" max="28" step="1" value="14" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlTickersRefreshSec">
+            <span>refresh (s)</span>
+            <input id="ctlTickersRefreshSec" class="input" type="number" min="10" max="900" step="1" value="60" inputmode="numeric" />
+          </label>
+        </div>
+
+        <label class="row" for="ctlTickersSources">
+          <span>Sources (CSV)</span>
+          <span style="flex:0 0 160px; min-width:160px"></span>
+        </label>
+        <textarea id="ctlTickersSources" class="mono" placeholder="gdelt,googlenews,bbc,dw,guardian,..." autocomplete="off"></textarea>
+
+        <div class="row2">
+          <button id="ctlTickersApply" class="btn full" type="button">Aplicar tickers</button>
+          <button id="ctlTickersReset" class="btn ghost full" type="button">Reset tickers</button>
+        </div>
+
+        <!-- Aliases ocultos (para scripts legacy) -->
+        <div style="display:none">
+          <select id="ctlNewsOn" aria-hidden="true"><option value="on">on</option><option value="off">off</option></select>
+          <select id="ctlEconOn" aria-hidden="true"><option value="on">on</option><option value="off">off</option></select>
+          <input id="ctlUiScale" aria-hidden="true" />
+          <input id="ctlBarH" aria-hidden="true" />
+          <input id="ctlFontPx" aria-hidden="true" />
+          <input id="ctlTickerRefresh" aria-hidden="true" />
+          <textarea id="ctlSources" aria-hidden="true"></textarea>
+          <button id="ctlTickerApply" type="button" aria-hidden="true"></button>
+        </div>
+
+        <div class="hint">Tip: si “no se deja cambiar”, edita el campo y pulsa <b>Aplicar tickers</b>. Este HTML incluye un “lock” para que no te lo pisen mientras escribes.</div>
       </div>
 
       <!-- CATALOG MODE -->
@@ -627,7 +711,7 @@
         <div class="hint">Doble click en la lista = Ir.</div>
       </div>
 
-      <!-- PREVIEW -->
+      <!-- PREVIEW (FIX: sin IDs duplicados) -->
       <div class="card">
         <div class="cardTitle">Preview (opcional)</div>
         <label class="row" for="ctlPreviewOn">
@@ -643,9 +727,9 @@
 
         <div class="hint">Para OBS, normalmente OFF (ahorra recursos).</div>
 
-        <!-- Alias oculto -->
+        <!-- Alias oculto (SIN duplicar ID ctlPreview) -->
         <div style="display:none">
-          <select id="ctlPreview" aria-hidden="true"><option value="off">off</option><option value="on">on</option></select>
+          <select id="ctlPreviewToggle" aria-hidden="true"><option value="off">off</option><option value="on">on</option></select>
         </div>
       </div>
 
@@ -668,6 +752,12 @@
         </div>
         <button class="btn ghost full" id="ctlBgmShuffle" type="button">🔀 Shuffle</button>
         <div class="hint" id="ctlBgmNow">—</div>
+
+        <!-- Alias opcionales -->
+        <div style="display:none">
+          <button id="ctlMusicApply" type="button"></button>
+          <button id="ctlBgmApply" type="button"></button>
+        </div>
       </div>
 
       <!-- TWITCH -->
@@ -696,7 +786,7 @@
           </label>
         </div>
 
-        <!-- ✅ NUEVO/COMPAT: voteUi (lo usas en URL) -->
+        <!-- ✅ voteUi -->
         <label class="row" for="ctlVoteUi"><span>UI voto (s)</span>
           <input id="ctlVoteUi" class="input" type="number" min="0" max="600" step="1" value="60" inputmode="numeric" />
         </label>
@@ -736,10 +826,10 @@
 
         <div class="hint">✅ Visible: <b>Pre-aviso + Duración</b>. (Empate o 0 votos = NEXT)</div>
 
-        <!-- Aliases ocultos (para control.js que busque otros IDs) -->
+        <!-- Aliases ocultos -->
         <div style="display:none">
-          <select id="ctlChatHideCommands"><option value="on">on</option><option value="off">off</option></select>
-          <input id="ctlVoteCommands" type="text" />
+          <select id="ctlChatHideCommands" aria-hidden="true"><option value="on">on</option><option value="off">off</option></select>
+          <input id="ctlVoteCommands" type="text" aria-hidden="true" />
         </div>
       </div>
 
@@ -778,7 +868,7 @@
 
         <!-- Alias oculto -->
         <div style="display:none">
-          <select id="ctlAds"><option value="on">on</option><option value="off">off</option></select>
+          <select id="ctlAds" aria-hidden="true"><option value="on">on</option><option value="off">off</option></select>
         </div>
       </div>
 
@@ -801,7 +891,7 @@
         </div>
 
         <div style="display:none">
-          <select id="ctlPtsEdit"><option value="off">off</option><option value="on">on</option></select>
+          <select id="ctlPtsEdit" aria-hidden="true"><option value="off">off</option><option value="on">on</option></select>
         </div>
       </div>
 
@@ -883,6 +973,97 @@
     })();
   </script>
 
+  <!-- ✅ Edit-lock anti “no me deja”: mientras editas, evita que te pisen el valor antes de pulsar Aplicar -->
+  <script>
+    (() => {
+      "use strict";
+
+      const isField = (el) => {
+        if(!el) return false;
+        const tag = (el.tagName || "").toUpperCase();
+        if(tag !== "INPUT" && tag !== "SELECT" && tag !== "TEXTAREA") return false;
+        if(el.disabled) return false;
+        const t = String(el.type || "").toLowerCase();
+        if(t === "button" || t === "submit" || t === "reset") return false;
+        return true;
+      };
+
+      const pending = new WeakMap();
+
+      const lock = (el) => {
+        try{
+          el.dataset.rlcEditLock = "1";
+          el.dataset.rlcDraft = String(el.value ?? "");
+          // marca visual mínima (no intrusiva)
+          el.style.outline = "2px solid rgba(55,214,255,.22)";
+          el.style.outlineOffset = "2px";
+        }catch(_){}
+      };
+
+      const setDraft = (el) => {
+        try{
+          if(el.dataset.rlcEditLock === "1"){
+            el.dataset.rlcDraft = String(el.value ?? "");
+          }
+        }catch(_){}
+      };
+
+      const scheduleUnlock = (el) => {
+        try{
+          const prev = pending.get(el);
+          if(prev) clearTimeout(prev);
+
+          const t = setTimeout(() => {
+            try{
+              delete el.dataset.rlcEditLock;
+              delete el.dataset.rlcDraft;
+              el.style.outline = "";
+              el.style.outlineOffset = "";
+            }catch(_){}
+          }, 420); // margen para click en “Aplicar”
+          pending.set(el, t);
+        }catch(_){}
+      };
+
+      document.addEventListener("focusin", (e) => {
+        const el = e.target;
+        if(!isField(el)) return;
+        lock(el);
+      }, true);
+
+      document.addEventListener("input", (e) => {
+        const el = e.target;
+        if(!isField(el)) return;
+        setDraft(el);
+      }, true);
+
+      document.addEventListener("change", (e) => {
+        const el = e.target;
+        if(!isField(el)) return;
+        setDraft(el);
+      }, true);
+
+      document.addEventListener("focusout", (e) => {
+        const el = e.target;
+        if(!isField(el)) return;
+        scheduleUnlock(el);
+      }, true);
+
+      // Si algún script intenta pisar el value mientras estás editando, se restaura.
+      setInterval(() => {
+        try{
+          const locked = document.querySelectorAll("[data-rlc-edit-lock='1']");
+          for(const el of locked){
+            const d = el.dataset.rlcDraft;
+            if(typeof d === "string" && String(el.value ?? "") !== d){
+              el.value = d;
+            }
+          }
+        }catch(_){}
+      }, 140);
+    })();
+  </script>
+
   <!-- ✅ Alias sync (para que no se rompa si control.js usa IDs alternativos) -->
   <script>
     (() => {
@@ -897,10 +1078,8 @@
         const syncAtoB = () => { if(lock) return; lock = true; try{ b.value = a.value; } finally{ lock = false; } };
         const syncBtoA = () => { if(lock) return; lock = true; try{ a.value = b.value; } finally{ lock = false; } };
 
-        // init
         syncAtoB();
 
-        // live sync
         a.addEventListener("change", syncAtoB, { passive: true });
         a.addEventListener("input",  syncAtoB, { passive: true });
         b.addEventListener("change", syncBtoA, { passive: true });
@@ -916,6 +1095,18 @@
       // KEY aliases
       mirror("ctlKey", "ctlRoomKey");
       mirror("ctlKey", "ctlBusKey");
+
+      // Preview alias (si algún script usa toggle alternativo)
+      mirror("ctlPreviewOn", "ctlPreviewToggle");
+
+      // Tickers aliases (legacy / fallback)
+      mirror("ctlNewsTickerOn", "ctlNewsOn");
+      mirror("ctlEconTickerOn", "ctlEconOn");
+      mirror("ctlTickersUiScale", "ctlUiScale");
+      mirror("ctlTickersBarH", "ctlBarH");
+      mirror("ctlTickersFontPx", "ctlFontPx");
+      mirror("ctlTickersRefreshSec", "ctlTickerRefresh");
+      mirror("ctlTickersSources", "ctlSources");
     })();
   </script>
 
