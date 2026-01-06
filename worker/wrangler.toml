@@ -1,0 +1,16 @@
+name = "rlcmap-votes"
+main = "rlcmap-worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# SECRET fuerte (recomendado moverlo a wrangler secret)
+ADMIN_SECRET = "rlc_admin_3mK9pQv7HnT2yXwF5cZ8aJ1uR6eL0sB4dGkV9pN2tYxQ7hM1wC8zA5fS6uE4rT0iP2oL8nV7bX1q"
+
+[durable_objects]
+bindings = [
+  { name = "ROOMS", class_name = "VoteRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["VoteRoom"]
