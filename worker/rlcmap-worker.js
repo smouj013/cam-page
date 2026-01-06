@@ -229,6 +229,6 @@ function sumVotes(votes){
 
 function clampInt(v, def, a, b){
   const n = Number.parseInt(String(v ?? ""), 10);
-  const x = Number.isFinite(n) ? n : def;
-  return Math.max(a, Math.min(b, x));
+  if (!Number.isFinite(n)) return def;
+  return Math.max(a, Math.min(b, n));
 }
