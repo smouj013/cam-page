@@ -1,5 +1,6 @@
 <!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
   ✅ NO SUBE VERSION (2.3.9)
+  ✅ HEADER FIJO (NO se mueve al hacer scroll) + padding dinámico para que el contenido no quede debajo
   ✅ Más cams: target default 900 + presets + max UI 5000 (si cams.js limita, no rompe)
   ✅ Filtros PRO: tipo rápido + ocultar ALT + sort + limit + vista ALL merge
   ✅ Persistencia por KEY: recuerda tus parámetros/filtros por key
@@ -32,6 +33,13 @@
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
       --gap:10px;
+
+      /* header fixed helpers */
+      --topH: 84px; /* JS lo recalcula */
+      --topOffset: 10px;
+      --safeTop: env(safe-area-inset-top, 0px);
+      --safeLeft: env(safe-area-inset-left, 0px);
+      --safeRight: env(safe-area-inset-right, 0px);
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -43,21 +51,43 @@
         radial-gradient(900px 600px at 120% 20%, rgba(255,206,87,.08), transparent 60%),
         linear-gradient(180deg, var(--bg), var(--bg2));
       color:var(--txt);
+      overflow-x:hidden;
     }
 
-    .wrap{padding:10px 10px 16px; max-width:1180px; margin:0 auto;}
+    /* ✅ Importante: padding-top dinámico para dejar hueco al header fixed */
+    .wrap{
+      padding:10px 10px 16px;
+      max-width:1180px;
+      margin:0 auto;
+      padding-top: calc(10px + var(--topOffset) + var(--safeTop) + var(--topH) + 10px);
+    }
 
+    /* ✅ HEADER: FIXED (no se mueve) */
     .top{
-      position:sticky;
-      top:10px;
-      z-index:50;
-      display:flex; gap:10px; align-items:center; justify-content:space-between;
-      padding:10px 12px; border-radius:var(--r);
+      position:fixed;
+      top: calc(var(--topOffset) + var(--safeTop));
+      left: calc(10px + var(--safeLeft));
+      right: calc(10px + var(--safeRight));
+      max-width:1180px;
+      margin:0 auto;
+      z-index:9999;
+
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+
+      padding:10px 12px;
+      border-radius:var(--r);
       background:linear-gradient(180deg, rgba(12,16,24,.82), rgba(12,16,24,.66));
       border:1px solid var(--stroke);
       box-shadow:var(--shadow);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+
+      /* Evita micro-jitters por scroll en algunos navegadores */
+      will-change: transform;
+      transform: translateZ(0);
     }
 
     .left{display:flex; gap:10px; align-items:center; min-width:0}
@@ -78,7 +108,15 @@
     .dot.ok{background:var(--ok); box-shadow:0 0 0 3px rgba(25,226,138,.16)}
     .dot.bad{background:var(--bad); box-shadow:0 0 0 3px rgba(255,90,90,.16)}
 
-    .right{display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
+    .right{
+      display:flex; gap:8px; align-items:center;
+      justify-content:flex-end;
+      flex-wrap:nowrap;
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .right::-webkit-scrollbar{display:none}
 
     button{
       appearance:none; border:1px solid var(--stroke2);
@@ -87,6 +125,7 @@
       padding:8px 10px; border-radius:12px;
       font-weight:900; font-size:12px;
       cursor:pointer;
+      flex:0 0 auto;
     }
     button:hover{border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.09)}
     button:active{transform:translateY(1px)}
@@ -291,7 +330,7 @@
       transition:opacity .18s ease, transform .18s ease;
       pointer-events:none;
       max-width:min(560px, calc(100vw - 24px));
-      z-index:9999;
+      z-index:99999;
       white-space:pre-wrap;
     }
     .toast.on{opacity:1; transform:translateY(0)}
@@ -299,7 +338,11 @@
     @media (max-width:980px){
       .row{grid-template-columns:1fr 1fr;}
       .row2{grid-template-columns:1fr;}
-      .top{top:8px}
+      .right{max-width: 60vw;}
+    }
+    @media (max-width:560px){
+      .right{max-width: 52vw;}
+      button{padding:7px 9px}
     }
   </style>
 
@@ -311,7 +354,7 @@
 <body>
   <div class="wrap">
 
-    <div class="top">
+    <div class="top" id="topBar">
       <div class="left">
         <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
         <div class="brand">
@@ -556,6 +599,25 @@
   // ───────────────────────── Guard anti doble carga ─────────────────────────
   const LOAD_GUARD = "__RLC_OBS_CAM_PANEL_LOADED_V239";
   try { if (window[LOAD_GUARD]) return; window[LOAD_GUARD] = true; } catch (_) {}
+
+  // ───────────────────────── Header fixed: altura dinámica ─────────────────────────
+  const topBar = document.getElementById("topBar");
+  function setTopH(){
+    try{
+      if (!topBar) return;
+      const h = Math.max(60, Math.round(topBar.getBoundingClientRect().height || topBar.offsetHeight || 80));
+      document.documentElement.style.setProperty("--topH", h + "px");
+    }catch(_){}
+  }
+  // recalcula en resize + cambios internos (título/state)
+  window.addEventListener("resize", ()=>setTopH(), { passive:true });
+  try{
+    if ("MutationObserver" in window && topBar){
+      const mo = new MutationObserver(()=>setTopH());
+      mo.observe(topBar, { childList:true, subtree:true, characterData:true });
+    }
+  }catch(_){}
+  setTopH();
 
   // ───────────────────────── Utils ─────────────────────────
   const qs = (s, r=document) => r.querySelector(s);
@@ -891,6 +953,7 @@
     else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = "⏯ PLAY"; }
 
     setConn(true);
+    setTopH(); // por si cambia el texto y la altura del header
   }
 
   function onBus(msg, busName){
@@ -1167,7 +1230,6 @@
     const relevanceScore = (c)=>{
       if (!q) return 0;
       const txt = camText(c);
-      // scoring simple: hits en title valen más
       const title = stripDiacritics(String(c.title||"")).toLowerCase();
       let s = 0;
       if (title.includes(q)) s += 5;
@@ -1685,10 +1747,8 @@
 
   // Aplica opciones guardadas (por KEY) antes del primer render
   applyOptsToUI();
-  // Ajusta texto fav button según opts
   btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
 
-  // Estado inicial
   const s0 = readState();
   if (s0){
     lastState = s0;
@@ -1698,7 +1758,6 @@
     statusTxt.textContent = "SIN STATE";
   }
 
-  // UI inicial cams.js
   try {
     renderList();
     syncUiFromRLCCams();
@@ -1706,6 +1765,7 @@
 
   updateDiag();
   syncKindSeg();
+  setTopH();
 
   // Ping suave al bus
   try {
