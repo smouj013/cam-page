@@ -1,15 +1,8 @@
 <!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
-  ✅ Compatible con tu stack 2.3.9:
-     - Player/Control: BUS rlc_bus_v1 + keyed rlc_bus_v1:{key} + legacy fallback
-     - CMD/STATE: rlc_cmd_v1 / rlc_state_v1 (keyed + legacy)
-     - Adopta KEY automáticamente: URL ?key= | localStorage rlc_last_key_v1 | store del panel | msg.key
-  ✅ Compatible con cams.js v2.3.8/v2.3.9:
-     - CAM_LIST / CAM_CATALOG_LIST / CAM_NEWS_LIST
-     - Evento: rlc_cam_list_updated (detail.list/catalog/news/newsCatalog + flags)
-     - API: window.RLCCams.* (refresh/clearCache/setTarget/setAutoDiscovery/setValidateEmbed + News setters)
-     - Mensajes BC: CAMS_REFRESH / CAMS_CLEAR_CACHE / CAMS_SET_* (webcams + news)
-  ✅ Lista mejorada: MAIN/CAT/NEWS/NEWS_CAT, thumbs YouTube, tags, favoritos por KEY, highlight activa
-  ✅ Diagnóstico claro para OBS (storage/BC aislados, state viejo, key/bus detectados)
+  ✅ NO SUBE VERSION (2.3.9)
+  ✅ Más cams: target default 900 + presets + max UI 5000 (si cams.js limita, no rompe)
+  ✅ Filtros PRO: tipo rápido + ocultar ALT + sort + limit + vista ALL merge
+  ✅ Persistencia por KEY: recuerda tus parámetros/filtros por key
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -38,6 +31,7 @@
       --r:16px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      --gap:10px;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -53,7 +47,6 @@
 
     .wrap{padding:10px 10px 16px; max-width:1180px; margin:0 auto;}
 
-    /* Top bar sticky (mejor en OBS docks) */
     .top{
       position:sticky;
       top:10px;
@@ -100,18 +93,20 @@
     button.primary{border-color:rgba(55,214,255,.35); background:rgba(55,214,255,.10);}
     button.danger{border-color:rgba(255,90,90,.35); background:rgba(255,90,90,.10);}
     button.ok{border-color:rgba(25,226,138,.28); background:rgba(25,226,138,.10);}
+    button.ghost{background:rgba(0,0,0,.18); border-color:rgba(255,255,255,.14)}
+    button.segOn{border-color:rgba(55,214,255,.55); background:rgba(55,214,255,.14);}
 
     .row{
-      margin-top:10px;
+      margin-top:var(--gap);
       display:grid;
       grid-template-columns: 1.25fr .85fr .75fr .75fr;
-      gap:10px;
+      gap:var(--gap);
     }
     .row2{
-      margin-top:10px;
+      margin-top:var(--gap);
       display:grid;
       grid-template-columns: 1fr 1fr;
-      gap:10px;
+      gap:var(--gap);
     }
 
     .card{
@@ -146,8 +141,9 @@
     .mono{font-family:var(--mono)}
 
     .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
-    .grid2{display:grid; gap:10px; grid-template-columns: 1fr 1fr;}
-    .grid3{display:grid; gap:10px; grid-template-columns: 1fr 1fr 1fr;}
+    .grid2{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr;}
+    .grid3{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr 1fr;}
+    .grid4{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr 1fr 1fr;}
 
     .tog{
       display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -160,8 +156,8 @@
     .tog input{transform:scale(1.1)}
 
     .listTop{
-      margin-top:10px;
-      display:flex; gap:10px; align-items:center; justify-content:space-between;
+      margin-top:var(--gap);
+      display:flex; gap:var(--gap); align-items:center; justify-content:space-between;
       padding:8px 10px;
       border:1px solid var(--stroke);
       background:rgba(255,255,255,.04);
@@ -171,11 +167,26 @@
     .listTop .meta{font-size:12px; color:var(--mut); font-weight:900}
     .listTop .meta b{color:rgba(255,255,255,.88)}
 
+    .filterBar{
+      margin-top:var(--gap);
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      padding:8px 10px;
+      border:1px solid var(--stroke);
+      background:rgba(0,0,0,.18);
+      border-radius:14px;
+    }
+    .filterBar .sp{flex:1 1 auto}
+    .seg{display:flex; gap:6px; flex-wrap:wrap}
+    .seg button{padding:7px 9px; border-radius:999px; font-size:12px}
+    .miniField{display:flex; gap:8px; align-items:center}
+    .miniField label{margin:0; font-size:12px; color:var(--mut); font-weight:900}
+    .miniField input, .miniField select{width:auto; padding:8px 10px}
+
     .list{
-      margin-top:10px;
+      margin-top:var(--gap);
       display:grid;
-      grid-template-columns: repeat(2, minmax(0,1fr));
-      gap:10px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap:var(--gap);
     }
 
     .cam{
@@ -193,7 +204,7 @@
 
     .mini{
       flex:0 0 auto;
-      width:56px; height:56px;
+      width:60px; height:60px;
       border-radius:14px;
       border:1px solid var(--stroke2);
       background:rgba(0,0,0,.28);
@@ -209,6 +220,8 @@
       object-fit:cover;
       display:block;
       opacity:.95;
+      filter:saturate(1.05) contrast(1.05);
+      transform:scale(1.02);
     }
     .mini .badge{
       position:absolute;
@@ -253,6 +266,7 @@
     .tag.place{border-color:rgba(255,206,87,.22); background:rgba(255,206,87,.08)}
     .tag.news{border-color:rgba(255,90,90,.22); background:rgba(255,90,90,.10)}
     .tag.alt{border-color:rgba(255,255,255,.18); background:rgba(0,0,0,.18)}
+    .tag.fav{border-color:rgba(255,206,87,.40); background:rgba(255,206,87,.14);}
 
     .cam .actions{flex:0 0 auto; display:flex; flex-direction:column; gap:8px; align-items:stretch;}
     .smallBtn{padding:7px 9px; border-radius:12px; font-size:12px; font-weight:1000;}
@@ -278,18 +292,18 @@
       pointer-events:none;
       max-width:min(560px, calc(100vw - 24px));
       z-index:9999;
+      white-space:pre-wrap;
     }
     .toast.on{opacity:1; transform:translateY(0)}
 
     @media (max-width:980px){
       .row{grid-template-columns:1fr 1fr;}
-      .list{grid-template-columns:1fr;}
       .row2{grid-template-columns:1fr;}
       .top{top:8px}
     }
   </style>
 
-  <!-- Carga cams.js (ideal: window.CAM_LIST, window.RLCCams, evento rlc_cam_list_updated) -->
+  <!-- Carga cams.js -->
   <script>window.APP_VERSION="2.3.9";</script>
   <script src="./cams.js?v=2.3.9"></script>
 </head>
@@ -331,15 +345,18 @@
             <option value="main">Main (puede incluir ALT)</option>
             <option value="news">News</option>
             <option value="newsCatalog">News (catálogo)</option>
+            <option value="all">ALL (merge main+cat+news)</option>
+            <option value="allNoAlt">ALL (merge, sin ALT)</option>
           </select>
           <select id="kind">
             <option value="">Todos</option>
             <option value="youtube">YouTube</option>
             <option value="hls">HLS</option>
+            <option value="image">IMG</option>
             <option value="other">Otros</option>
           </select>
         </div>
-        <div class="hint">Para que no se “infle” la lista, usa <b>Catálogo</b> (sin ALT).</div>
+        <div class="hint">Para que no se “infle” la lista, usa <b>Catálogo</b>. “ALL merge” te da máxima cantidad.</div>
       </div>
 
       <div class="card field">
@@ -365,12 +382,14 @@
     <div class="row2">
       <div class="card">
         <div class="diag"><b>Opciones cams.js (webcams)</b></div>
+
         <div class="grid3" style="margin-top:10px">
           <div class="field">
             <label>Target cams</label>
-            <input id="camsTarget" type="number" min="50" max="2500" step="10" value="650" class="mono"/>
-            <div class="hint">Equivale a <span class="mono">?camsTarget=</span></div>
+            <input id="camsTarget" type="number" min="50" max="5000" step="50" value="900" class="mono"/>
+            <div class="hint">Equivale a <span class="mono">?camsTarget=</span> (si tu cams.js limita, no rompe)</div>
           </div>
+
           <div class="tog">
             <div class="l">
               <div class="t">Auto-discovery</div>
@@ -378,6 +397,7 @@
             </div>
             <input id="camsDiscovery" type="checkbox" />
           </div>
+
           <div class="tog">
             <div class="l">
               <div class="t">Validar embed</div>
@@ -387,11 +407,21 @@
           </div>
         </div>
 
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+        <div class="filterBar">
+          <div class="seg" id="segTarget">
+            <button class="ghost" data-t="650">650</button>
+            <button class="ghost" data-t="900">900</button>
+            <button class="ghost" data-t="1200">1200</button>
+            <button class="ghost" data-t="1800">1800</button>
+            <button class="ghost" data-t="2500">2500</button>
+            <button class="ghost" data-t="3500">3500</button>
+          </div>
+          <div class="sp"></div>
           <button class="smallBtn primary" id="btnApplyCams">Aplicar & Refresh</button>
           <button class="smallBtn" id="btnClearCache">Limpiar cache</button>
           <button class="smallBtn" id="btnPickFeatured">Random Featured (4)</button>
         </div>
+
         <div class="hint">
           Usa <span class="mono">window.RLCCams</span> si existe; si no, funciona por BC (modo “remote”).
         </div>
@@ -426,7 +456,7 @@
         <div class="grid2" style="margin-top:10px">
           <div class="field">
             <label>News target</label>
-            <input id="newsTarget" type="number" min="10" max="300" step="5" value="60" class="mono"/>
+            <input id="newsTarget" type="number" min="10" max="500" step="10" value="80" class="mono"/>
             <div class="hint">Equivale a <span class="mono">?camsNewsTarget=</span></div>
           </div>
           <div class="field">
@@ -438,7 +468,7 @@
           </div>
         </div>
 
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+        <div class="filterBar">
           <button class="smallBtn primary" id="btnApplyNews">Aplicar News & Refresh</button>
           <button class="smallBtn" id="btnViewNews">Cambiar vista → NEWS</button>
         </div>
@@ -453,6 +483,43 @@
       </div>
     </div>
 
+    <div class="filterBar">
+      <div class="seg" id="segKind">
+        <button data-kind="" class="segOn">ALL</button>
+        <button data-kind="youtube">YouTube</button>
+        <button data-kind="hls">HLS</button>
+        <button data-kind="image">IMG</button>
+        <button data-kind="other">Otros</button>
+      </div>
+
+      <div class="sp"></div>
+
+      <div class="tog" style="padding:6px 10px">
+        <div class="l">
+          <div class="t">Ocultar ALT</div>
+          <div class="s">Quita duplicados/alternativas</div>
+        </div>
+        <input id="hideAlt" type="checkbox" />
+      </div>
+
+      <div class="miniField">
+        <label for="sort">Orden</label>
+        <select id="sort">
+          <option value="activeFav">Activa + fav primero</option>
+          <option value="relevance">Relevancia (búsqueda)</option>
+          <option value="title">Título</option>
+          <option value="place">Lugar</option>
+          <option value="source">Fuente</option>
+          <option value="id">ID</option>
+        </select>
+      </div>
+
+      <div class="miniField">
+        <label for="limit">Límite</label>
+        <input id="limit" type="number" min="0" max="5000" step="50" value="0" class="mono" style="width:92px" />
+      </div>
+    </div>
+
     <div class="list" id="list"></div>
 
     <details>
@@ -461,11 +528,17 @@
         <div class="diag" id="diagTxt">—</div>
         <div style="margin-top:10px; display:grid; gap:10px; grid-template-columns:1fr 1fr;">
           <div>
-            <div class="diag"><b>Último state (raw)</b></div>
+            <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
+              <div class="diag"><b>Último state (raw)</b></div>
+              <button class="smallBtn" id="btnCopyState">Copiar</button>
+            </div>
             <textarea id="diagState" readonly></textarea>
           </div>
           <div>
-            <div class="diag"><b>Último cmd enviado (raw)</b></div>
+            <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
+              <div class="diag"><b>Último cmd enviado (raw)</b></div>
+              <button class="smallBtn" id="btnCopyCmd">Copiar</button>
+            </div>
             <textarea id="diagCmd" readonly></textarea>
           </div>
         </div>
@@ -490,6 +563,11 @@
   const norm = (s)=>String(s||"").trim().toLowerCase();
   const safeJson = (raw, fb=null) => { try { return JSON.parse(raw); } catch (_) { return fb; } };
 
+  const stripDiacritics = (s)=>{
+    try { return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch(_){}
+    return String(s||"");
+  };
+
   const cssEscape = (s)=>{
     try { return CSS.escape(String(s)); } catch(_){}
     return String(s).replace(/["\\]/g, "\\$&");
@@ -502,12 +580,21 @@
 
   function clamp(n,a,b){ n=Number(n); if(!Number.isFinite(n)) n=a; return Math.max(a, Math.min(b, n)); }
 
+  async function copyText(txt){
+    try{
+      await navigator.clipboard.writeText(String(txt||""));
+      toast("Copiado ✅");
+    }catch(_){
+      toast("No se pudo copiar");
+    }
+  }
+
   function toast(msg){
     const el = qs("#toast");
     el.textContent = String(msg||"");
     el.classList.add("on");
     clearTimeout(toast._t);
-    toast._t = setTimeout(()=>el.classList.remove("on"), 1200);
+    toast._t = setTimeout(()=>el.classList.remove("on"), 1250);
   }
 
   // ───────────────────────── Params + KEY auto (2.3.9) ─────────────────────────
@@ -518,10 +605,7 @@
     : (u.searchParams.get("allowLegacy")==="1" || u.searchParams.get("allowLegacy")==="true");
   qs("#legacyTxt").textContent = allowLegacy ? "1" : "0";
 
-  // 2.3.9: tu player guarda rlc_last_key_v1 para enganchar key aunque no venga en URL
   const LAST_KEY_STORE = "rlc_last_key_v1";
-
-  // Preferencia de KEY (panel): URL ?key > rlc_last_key_v1 > store del panel
   const KEY_STORE = "rlc_obs_panel_key_v1";
   const KEY_PARAM = (u.searchParams.get("key") || "").trim();
   const KEY_LAST  = (localStorage.getItem(LAST_KEY_STORE) || "").trim();
@@ -536,6 +620,46 @@
   function lsGet(k){ try { return localStorage.getItem(k); } catch(_) { return null; } }
   function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(_){} }
 
+  // Persistencia por KEY (parámetros/filtros)
+  const OPT_BASE = "rlc_obs_panel_opts_v1";
+  const optKey = ()=> KEY ? `${OPT_BASE}:${KEY}` : OPT_BASE;
+
+  function loadOpts(){
+    const o = safeJson(lsGet(optKey()), null);
+    return (o && typeof o === "object") ? o : {};
+  }
+  function saveOpts(patch){
+    const cur = loadOpts();
+    const next = Object.assign({}, cur, patch || {});
+    lsSet(optKey(), JSON.stringify(next));
+  }
+
+  function applyOptsToUI(){
+    const o = loadOpts();
+
+    // cams
+    if (o.camsTarget != null) qs("#camsTarget").value = String(o.camsTarget);
+    if (typeof o.camsDiscovery === "boolean") qs("#camsDiscovery").checked = o.camsDiscovery;
+    if (typeof o.camsValidate === "boolean") qs("#camsValidate").checked = o.camsValidate;
+
+    // news
+    if (typeof o.newsEnabled === "boolean") qs("#newsEnabled").checked = o.newsEnabled;
+    if (typeof o.newsMix === "boolean") qs("#newsMix").checked = o.newsMix;
+    if (typeof o.newsInCatalog === "boolean") qs("#newsInCatalog").checked = o.newsInCatalog;
+    if (o.newsTarget != null) qs("#newsTarget").value = String(o.newsTarget);
+
+    // view/filters
+    if (o.view) qs("#view").value = String(o.view);
+    if (o.kind != null) qs("#kind").value = String(o.kind);
+    if (typeof o.hideAlt === "boolean") qs("#hideAlt").checked = o.hideAlt;
+    if (o.sort) qs("#sort").value = String(o.sort);
+    if (o.limit != null) qs("#limit").value = String(o.limit);
+    if (typeof o.favOnly === "boolean") favOnly = o.favOnly;
+
+    // sync seg buttons
+    syncKindSeg();
+  }
+
   function setKey(newKey){
     const k = String(newKey||"").trim();
     if (k === KEY) return false;
@@ -543,7 +667,6 @@
     qs("#key").value = KEY;
 
     try { localStorage.setItem(KEY_STORE, KEY); } catch(_){}
-    // también actualizamos el last_key (para alinear con player/control)
     try { if (KEY) localStorage.setItem(LAST_KEY_STORE, KEY); } catch(_){}
 
     recomputeKeys();
@@ -551,6 +674,7 @@
     openCamsBC();
     favs = loadFavs();
 
+    applyOptsToUI();
     renderList();
     updateDiag();
     toast(KEY ? `key=${KEY}` : "key vacía");
@@ -558,11 +682,10 @@
   }
 
   // ───────────────────────── Candidate keys/channels ─────────────────────────
-  // Priorizamos v1 (2.3.9). Mantenemos compat “legacy/antiguo” al final.
   const BUS_CANDIDATES   = ["rlc_bus_v1","rlc_bus"];
   const CMD_CANDIDATES   = ["rlc_cmd_v1","rlc_cmd"];
   const STATE_CANDIDATES = ["rlc_state_v1","rlc_state"];
-  const EVT_CANDIDATES   = ["rlc_evt_v1","rlc_evt"]; // por si algún panel emite eventos útiles
+  const EVT_CANDIDATES   = ["rlc_evt_v1","rlc_evt"];
 
   let BUS_KEYS = [];
   let CMD_KEYS = [];
@@ -575,7 +698,6 @@
       if (KEY) out.push(`${b}:${KEY}`);
       out.push(b);
     }
-    // allowLegacy: aunque KEY exista, seguimos escuchando legacy sin key
     return Array.from(new Set(out));
   }
 
@@ -596,6 +718,9 @@
   const qEl = qs("#q");
   const kindEl = qs("#kind");
   const viewEl = qs("#view");
+  const hideAltEl = qs("#hideAlt");
+  const sortEl = qs("#sort");
+  const limitEl = qs("#limit");
 
   const btnPrev = qs("#btnPrev");
   const btnNext = qs("#btnNext");
@@ -626,6 +751,8 @@
   const diagTxt = qs("#diagTxt");
   const diagState = qs("#diagState");
   const diagCmd = qs("#diagCmd");
+  const btnCopyState = qs("#btnCopyState");
+  const btnCopyCmd = qs("#btnCopyCmd");
 
   // ───────────────────────── BroadcastChannels (player/control bus) ─────────────────────────
   let bcs = [];
@@ -647,7 +774,6 @@
   }
 
   // ───────────────────────── BroadcastChannel (cams.js control bus) ─────────────────────────
-  // cams.js usa el BUS_BASE rlc_bus_v1 y (en 2.3.9) también puede existir el keyed.
   let camsBC = null;
   let camsBCKeyed = null;
 
@@ -679,15 +805,11 @@
   }
 
   function keyOkForMsg(obj){
-    // Si panel no tiene KEY, adopta si viene.
     const mk = String(obj?.key || "").trim();
     if (!KEY && mk) {
       setKey(mk);
       return true;
     }
-    // Si panel tiene KEY:
-    // - acepta si msg.key vacío (legacy viejo)
-    // - o si coincide
     if (KEY) {
       if (!mk) return true;
       return mk === KEY;
@@ -698,7 +820,6 @@
   function readState(){
     lastStateKeyUsed = "";
 
-    // Si panel no tiene KEY pero hay rlc_last_key_v1, úsalo (auto)
     if (!KEY) {
       const lk = (localStorage.getItem(LAST_KEY_STORE) || "").trim();
       if (lk) setKey(lk);
@@ -709,8 +830,8 @@
       if (!raw) continue;
       const s = safeJson(raw, null);
       if (!s || typeof s !== "object") continue;
+
       if ((s.type && String(s.type).toLowerCase() !== "state") && (s.t && String(s.t).toLowerCase() !== "state")) {
-        // a veces guardan state “plano”; lo aceptamos igualmente si tiene cam
         if (!s.cam && !s.nowCam && !s.currentCam && !s.camId) continue;
       }
       if (!keyOkForMsg(s)) continue;
@@ -777,11 +898,9 @@
 
     const t = String(msg.type || msg.t || "").toLowerCase();
 
-    // Si llega un “boot” o evento con key, adoptamos key si aún no está
     if (t === "event" || t === "evt" || t === "boot") {
       const mk = String(msg.key || "").trim();
       if (mk && !KEY) setKey(mk);
-      // no hacemos nada más
       return;
     }
 
@@ -796,7 +915,6 @@
     }
   }
 
-  // storage listener (si otro tab actualiza state)
   window.addEventListener("storage", (e)=>{
     const k = String(e.key||"");
     if (!k) return;
@@ -826,7 +944,6 @@
       time: t,
       nonce: uuidLike(),
 
-      // muchos listeners miran distintas props
       cmd: String(cmd||""),
       op: String(cmd||""),
       action: String(cmd||""),
@@ -849,7 +966,6 @@
     if (t - lastSendAt < 60) return;
     lastSendAt = t;
 
-    // Si panel no tiene KEY pero existe lastKey del player, úsalo para no “perder” el control
     if (!KEY) {
       const lk = (localStorage.getItem(LAST_KEY_STORE) || "").trim();
       if (lk) setKey(lk);
@@ -860,10 +976,8 @@
     lastCmdRaw = raw;
     diagCmd.value = raw;
 
-    // storage: keyed + legacy (según CMD_KEYS)
     writeCmdToStorage(raw);
 
-    // BC: envía al bus (keyed + legacy)
     for (const bc of bcs){
       try { bc.postMessage(pkt); } catch(_){}
     }
@@ -884,44 +998,50 @@
     return null;
   }
 
+  function uniqById(list){
+    const m = new Map();
+    for (const c of (Array.isArray(list) ? list : [])){
+      if (!c || c.id == null) continue;
+      const id = String(c.id);
+      if (!m.has(id)) m.set(id, c);
+    }
+    return Array.from(m.values());
+  }
+
   function getListByView(){
     const v = String(viewEl.value || "catalog");
-
-    // Preferimos event detail si existe (porque puede venir ya filtrado / con flags)
     const d = lastCamsDetail || null;
 
-    if (v === "main") {
-      return pickDetailList(d, "list", "main") || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
-    }
-    if (v === "catalog") {
-      return pickDetailList(d, "catalog", "catalogList") || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
-    }
-    if (v === "news") {
-      return pickDetailList(d, "news", "newsList") || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
-    }
-    if (v === "newsCatalog") {
-      return pickDetailList(d, "newsCatalog", "news_catalog")
-        || pickDetailList(d, "news", "newsList")
-        || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
+    const main = pickDetailList(d, "list", "main") || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
+    const cat  = pickDetailList(d, "catalog", "catalogList") || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
+    const news = pickDetailList(d, "news", "newsList") || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
+    const newsCat = pickDetailList(d, "newsCatalog", "news_catalog") || news;
+
+    if (v === "main") return main;
+    if (v === "catalog") return cat;
+    if (v === "news") return news;
+    if (v === "newsCatalog") return newsCat;
+
+    if (v === "all" || v === "allNoAlt"){
+      const merged = uniqById([].concat(main, cat, news));
+      return merged;
     }
 
-    return (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []));
+    return cat.length ? cat : main;
   }
 
   function applyCamsUiFromDetail(d){
     if (!d || typeof d !== "object") return;
-
-    // tolerante: flags dentro de d.flags
     const f = (d.flags && typeof d.flags === "object") ? d.flags : d;
 
-    if (typeof f.target === "number") camsTargetEl.value = String(clamp(f.target, 50, 2500) | 0);
+    if (typeof f.target === "number") camsTargetEl.value = String(clamp(f.target, 50, 5000) | 0);
     if (typeof f.autoDiscovery === "boolean") camsDiscoveryEl.checked = f.autoDiscovery;
     if (typeof f.validateEmbed === "boolean") camsValidateEl.checked = f.validateEmbed;
 
     if (typeof f.newsEnabled === "boolean") newsEnabledEl.checked = f.newsEnabled;
     if (typeof f.newsMix === "boolean") newsMixEl.checked = f.newsMix;
     if (typeof f.newsInCatalog === "boolean") newsInCatalogEl.checked = f.newsInCatalog;
-    if (typeof f.newsTarget === "number") newsTargetEl.value = String(clamp(f.newsTarget, 10, 300) | 0);
+    if (typeof f.newsTarget === "number") newsTargetEl.value = String(clamp(f.newsTarget, 10, 500) | 0);
   }
 
   window.addEventListener("rlc_cam_list_updated", (ev)=>{
@@ -931,14 +1051,13 @@
     updateDiag();
   });
 
-  // Fallback: si cams.js no emitió aún, intentamos leer parte de la API
   function syncUiFromRLCCams(){
     const api = camsApi();
     if (!api) return;
 
     try {
       const t = api.getTarget && api.getTarget();
-      if (typeof t === "number") camsTargetEl.value = String(clamp(t, 50, 2500) | 0);
+      if (typeof t === "number") camsTargetEl.value = String(clamp(t, 50, 5000) | 0);
     } catch(_){}
   }
 
@@ -968,7 +1087,6 @@
   function ytThumbFromUrl(url){
     const s = String(url||"");
     if (!s) return "";
-    // youtu.be/<id> o v=<id> o /embed/<id>
     let m = s.match(/youtu\.be\/([a-zA-Z0-9_-]{6,})/);
     if (m) return `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;
     m = s.match(/[?&]v=([a-zA-Z0-9_-]{6,})/);
@@ -979,35 +1097,111 @@
   }
 
   function camText(c){
-    return [
+    const raw = [
       c.id, c.kind, c.title, c.place, c.source, c.originUrl, c.url,
       (Array.isArray(c.tags) ? c.tags.join(" ") : (c.tags || "")),
       (c.tag || ""), (c.category || ""), (c.categories || ""),
       (c.isAlt ? "alt" : ""), (c.altOf || "")
-    ].map(x=>String(x||"")).join(" ").toLowerCase();
+    ].map(x=>String(x||"")).join(" ");
+    return stripDiacritics(raw).toLowerCase();
   }
 
   function kindFilterOk(c){
     const kf = norm(kindEl.value);
     if (!kf) return true;
     const ck = norm(c.kind);
-    if (kf === "other") return ck !== "youtube" && ck !== "hls";
+    if (kf === "other") return ck !== "youtube" && ck !== "hls" && ck !== "image";
     return ck === kf;
   }
 
   function queryOk(c){
-    const q = norm(qEl.value);
+    const q = stripDiacritics(norm(qEl.value));
     if (!q) return true;
     return camText(c).includes(q);
   }
 
+  function hideAltOk(c){
+    const hide = !!hideAltEl.checked;
+    const v = String(viewEl.value||"");
+    const mustHideAlt = hide || (v === "allNoAlt");
+    if (!mustHideAlt) return true;
+    return !c.isAlt;
+  }
+
+  function isNewsCam(c){
+    if (!c) return false;
+    if (Array.isArray(c.tags) && c.tags.includes("news")) return true;
+    if (typeof c.tag === "string" && String(c.tag).toLowerCase().includes("news")) return true;
+    return false;
+  }
+
+  function getActiveId(){
+    const s = lastState || readState();
+    const cam = s ? extractCam(s) : {id:""};
+    return cam && cam.id ? String(cam.id) : "";
+  }
+
+  function compareStr(a,b){
+    a = String(a||"").toLowerCase();
+    b = String(b||"").toLowerCase();
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  }
+
   function renderList(customList=null){
     const baseList = Array.isArray(customList) ? customList : getListByView();
-    const filtered = baseList
+    const activeId = getActiveId();
+    const sortMode = String(sortEl.value || "activeFav");
+    const lim = clamp(parseInt(limitEl.value||"0", 10), 0, 5000) | 0;
+
+    let filtered = baseList
       .filter(c => c && c.id != null)
       .filter(kindFilterOk)
       .filter(queryOk)
+      .filter(hideAltOk)
       .filter(c => !favOnly || favs.has(String(c.id)));
+
+    // sort
+    const q = stripDiacritics(norm(qEl.value));
+    const relevanceScore = (c)=>{
+      if (!q) return 0;
+      const txt = camText(c);
+      // scoring simple: hits en title valen más
+      const title = stripDiacritics(String(c.title||"")).toLowerCase();
+      let s = 0;
+      if (title.includes(q)) s += 5;
+      if (txt.includes(q)) s += 2;
+      if (String(c.place||"").toLowerCase().includes(q)) s += 1;
+      if (String(c.source||"").toLowerCase().includes(q)) s += 1;
+      return s;
+    };
+
+    filtered.sort((A,B)=>{
+      const aId = String(A.id), bId = String(B.id);
+      const aFav = favs.has(aId), bFav = favs.has(bId);
+      const aAct = (activeId && aId === activeId), bAct = (activeId && bId === activeId);
+
+      if (sortMode === "activeFav"){
+        if (aAct !== bAct) return aAct ? -1 : 1;
+        if (aFav !== bFav) return aFav ? -1 : 1;
+        return compareStr(A.title, B.title) || compareStr(A.place, B.place) || compareStr(aId,bId);
+      }
+      if (sortMode === "relevance"){
+        const ra = relevanceScore(A), rb = relevanceScore(B);
+        if (rb !== ra) return rb - ra;
+        if (aAct !== bAct) return aAct ? -1 : 1;
+        if (aFav !== bFav) return aFav ? -1 : 1;
+        return compareStr(A.title, B.title) || compareStr(A.place, B.place) || compareStr(aId,bId);
+      }
+      if (sortMode === "title") return compareStr(A.title, B.title) || compareStr(A.place, B.place) || compareStr(aId,bId);
+      if (sortMode === "place") return compareStr(A.place, B.place) || compareStr(A.title, B.title) || compareStr(aId,bId);
+      if (sortMode === "source") return compareStr(A.source, B.source) || compareStr(A.title, B.title) || compareStr(aId,bId);
+      if (sortMode === "id") return compareStr(aId,bId);
+      return 0;
+    });
+
+    if (lim > 0 && filtered.length > lim) filtered = filtered.slice(0, lim);
 
     const totalMain = (Array.isArray(window.CAM_LIST) ? window.CAM_LIST.length : 0);
     const totalCat  = (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST.length : 0);
@@ -1018,11 +1212,15 @@
       : (v === "catalog") ? "CAT"
       : (v === "news") ? "NEWS"
       : (v === "newsCatalog") ? "NEWS_CAT"
+      : (v === "all") ? "ALL"
+      : (v === "allNoAlt") ? "ALL_NO_ALT"
       : "LIST";
 
     countTxt.innerHTML =
       `Mostrando: <b>${filtered.length}</b> · vista <b>${vLabel}</b>` +
       `${favOnly ? " · ★ favs" : ""}` +
+      `${hideAltEl.checked ? " · sin ALT" : ""}` +
+      `${lim ? " · limit " + lim : ""}` +
       ` · totals: main=${totalMain}, cat=${totalCat}, news=${totalNews}`;
 
     listEl.innerHTML = "";
@@ -1086,6 +1284,13 @@
       tagId.textContent = `id:${id}`;
       tags.appendChild(tagId);
 
+      if (favs.has(id)){
+        const f = document.createElement("div");
+        f.className = "tag fav";
+        f.textContent = "★";
+        tags.appendChild(f);
+      }
+
       if (c.source){
         const s = document.createElement("div");
         s.className = "tag src";
@@ -1099,8 +1304,8 @@
         tags.appendChild(p);
       }
 
-      const isNews = Array.isArray(c.tags) ? c.tags.includes("news") : false;
-      if (isNews || (String(viewEl.value||"").includes("news"))) {
+      const isNews = isNewsCam(c) || (String(viewEl.value||"").includes("news"));
+      if (isNews) {
         const n = document.createElement("div");
         n.className = "tag news";
         n.textContent = "NEWS";
@@ -1125,10 +1330,9 @@
       bGo.textContent = "IR";
       bGo.addEventListener("click", (ev)=>{
         ev.preventDefault();
-        // comando principal
         sendCmd("GOTO", {
           id, camId:id, targetId:id,
-          gotoId:id, setCamId:id // extras “por si acaso”
+          gotoId:id, setCamId:id
         });
       });
 
@@ -1167,12 +1371,20 @@
 
     listEl.appendChild(frag);
     markActiveCam();
+
+    // persist filtros “suaves”
+    saveOpts({
+      view: viewEl.value,
+      kind: kindEl.value,
+      hideAlt: !!hideAltEl.checked,
+      sort: sortEl.value,
+      limit: clamp(parseInt(limitEl.value||"0",10),0,5000)|0,
+      favOnly: !!favOnly
+    });
   }
 
   function markActiveCam(){
-    const s = lastState || readState();
-    const cam = s ? extractCam(s) : {id:""};
-    const activeId = cam && cam.id ? String(cam.id) : "";
+    const activeId = getActiveId();
     const items = listEl.querySelectorAll(".cam");
     for (const el of items){
       el.classList.toggle("active", !!(activeId && el.dataset.id === activeId));
@@ -1180,9 +1392,7 @@
   }
 
   function scrollToActive(){
-    const s = lastState || readState();
-    const cam = s ? extractCam(s) : {id:""};
-    const activeId = cam && cam.id ? String(cam.id) : "";
+    const activeId = getActiveId();
     if (!activeId) return;
     const el = listEl.querySelector(`.cam[data-id="${cssEscape(activeId)}"]`);
     if (el) el.scrollIntoView({ block:"center", behavior:"smooth" });
@@ -1213,9 +1423,12 @@
 
   function applyCamsOptions(){
     const api = camsApi();
-    const target = clamp(parseInt(camsTargetEl.value, 10), 50, 2500) | 0;
+    const target = clamp(parseInt(camsTargetEl.value, 10), 50, 5000) | 0;
     const autoDisc = !!camsDiscoveryEl.checked;
     const validate = !!camsValidateEl.checked;
+
+    // persist
+    saveOpts({ camsTarget: target, camsDiscovery: autoDisc, camsValidate: validate });
 
     if (api){
       try { api.setTarget && api.setTarget(target); } catch(_){}
@@ -1236,7 +1449,9 @@
     const en = !!newsEnabledEl.checked;
     const mix = !!newsMixEl.checked;
     const inCat = !!newsInCatalogEl.checked;
-    const nTarget = clamp(parseInt(newsTargetEl.value, 10), 10, 300) | 0;
+    const nTarget = clamp(parseInt(newsTargetEl.value, 10), 10, 500) | 0;
+
+    saveOpts({ newsEnabled: en, newsMix: mix, newsInCatalog: inCat, newsTarget: nTarget });
 
     if (api){
       try { api.setNewsEnabled && api.setNewsEnabled(en); } catch(_){}
@@ -1272,6 +1487,17 @@
     }
   }
 
+  // ───────────────────────── Kind Segmented ─────────────────────────
+  function syncKindSeg(){
+    const seg = qs("#segKind");
+    if (!seg) return;
+    const k = String(kindEl.value||"");
+    for (const b of seg.querySelectorAll("button[data-kind]")){
+      const bk = String(b.getAttribute("data-kind")||"");
+      b.classList.toggle("segOn", bk === k);
+    }
+  }
+
   // ───────────────────────── Controls ─────────────────────────
   btnNext.addEventListener("click", ()=>sendCmd("NEXT"));
   btnPrev.addEventListener("click", ()=>sendCmd("PREV"));
@@ -1298,7 +1524,6 @@
     if (KEY) url.searchParams.set("key", KEY);
     if (!allowLegacy) url.searchParams.set("allowLegacy", "0");
 
-    // cache-bust suave si no hay v
     if (!url.searchParams.has("v")) url.searchParams.set("v", (window.APP_VERSION || "2.3.9"));
 
     window.open(url.toString(), "_blank", "noopener");
@@ -1309,6 +1534,7 @@
   btnFavs.addEventListener("click", ()=>{
     favOnly = !favOnly;
     btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
+    saveOpts({ favOnly: !!favOnly });
     renderList();
   });
 
@@ -1319,8 +1545,27 @@
   });
 
   qEl.addEventListener("input", ()=>renderList());
-  kindEl.addEventListener("change", ()=>renderList());
-  viewEl.addEventListener("change", ()=>renderList());
+  kindEl.addEventListener("change", ()=>{
+    syncKindSeg();
+    saveOpts({ kind: kindEl.value });
+    renderList();
+  });
+  viewEl.addEventListener("change", ()=>{
+    saveOpts({ view: viewEl.value });
+    renderList();
+  });
+  hideAltEl.addEventListener("change", ()=>{
+    saveOpts({ hideAlt: !!hideAltEl.checked });
+    renderList();
+  });
+  sortEl.addEventListener("change", ()=>{
+    saveOpts({ sort: sortEl.value });
+    renderList();
+  });
+  limitEl.addEventListener("change", ()=>{
+    saveOpts({ limit: clamp(parseInt(limitEl.value||"0",10),0,5000)|0 });
+    renderList();
+  });
 
   btnApplyCams.addEventListener("click", ()=>applyCamsOptions());
   btnClearCache.addEventListener("click", ()=>camsClearCache());
@@ -1329,6 +1574,7 @@
   btnApplyNews.addEventListener("click", ()=>applyNewsOptions());
   btnViewNews.addEventListener("click", ()=>{
     viewEl.value = "news";
+    saveOpts({ view: "news" });
     renderList();
     toast("Vista → NEWS");
   });
@@ -1339,10 +1585,41 @@
     toast("Config enviada (BC) + refresh");
   });
 
+  // Presets target
+  const segTarget = qs("#segTarget");
+  if (segTarget){
+    segTarget.addEventListener("click", (ev)=>{
+      const b = ev.target && ev.target.closest("button[data-t]");
+      if (!b) return;
+      const t = clamp(parseInt(b.getAttribute("data-t")||"900",10), 50, 5000)|0;
+      camsTargetEl.value = String(t);
+      saveOpts({ camsTarget: t });
+      toast(`Target → ${t}`);
+    });
+  }
+
+  // Kind segmented
+  const segKind = qs("#segKind");
+  if (segKind){
+    segKind.addEventListener("click", (ev)=>{
+      const b = ev.target && ev.target.closest("button[data-kind]");
+      if (!b) return;
+      const k = String(b.getAttribute("data-kind")||"");
+      kindEl.value = k;
+      syncKindSeg();
+      saveOpts({ kind: k });
+      renderList();
+    });
+  }
+
   // Key change manual
   qs("#key").addEventListener("change", ()=>{
     setKey((qs("#key").value || "").trim());
   });
+
+  // Copy buttons
+  btnCopyState.addEventListener("click", ()=>copyText(diagState.value));
+  btnCopyCmd.addEventListener("click", ()=>copyText(diagCmd.value));
 
   // ───────────────────────── Diag / watchdog ─────────────────────────
   function updateDiag(){
@@ -1406,6 +1683,11 @@
   openChannels();
   openCamsBC();
 
+  // Aplica opciones guardadas (por KEY) antes del primer render
+  applyOptsToUI();
+  // Ajusta texto fav button según opts
+  btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
+
   // Estado inicial
   const s0 = readState();
   if (s0){
@@ -1416,15 +1698,16 @@
     statusTxt.textContent = "SIN STATE";
   }
 
-  // UI inicial cams.js (si ya está)
+  // UI inicial cams.js
   try {
     renderList();
     syncUiFromRLCCams();
   } catch(_){}
 
   updateDiag();
+  syncKindSeg();
 
-  // Ping suave al bus (útil para detectar KEY por msg.key si estás “ciego”)
+  // Ping suave al bus
   try {
     const ping = { type:"event", name:"OBS_PANEL_BOOT", ts: now() };
     if (KEY) ping.key = KEY;
