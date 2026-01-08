@@ -14,6 +14,10 @@
       - window.RLCCams.* API
       - evento "rlc_cam_list_updated"
       - BroadcastChannel: rlc_bus_v1 y rlc_bus_v1:{key}
+
+   🔧 Hotfix v2.3.9 (sin subir versión):
+      - Evita arrays de tareas gigantes (cap dinámico basado en presupuesto)
+      - Evita bitwise en horas de cache (más seguro)
 */
 
 (() => {
@@ -84,12 +88,13 @@
   const CATALOG_PAGE_SIZE = 4;
 
   // Cache: mantenemos legacy y añadimos namespaced
-  const CACHE_KEY_LEGACY = "rlc_cam_cache_v1_500";            // compat
-  const CACHE_KEY_V238 = `rlc_bus_v1:cams_cache_v1${NS}`;     // nuevo (string estable)
-  const CACHE_NEWS_KEY_V238 = `rlc_bus_v1:news_cache_v1${NS}`;// news (string estable)
+  const CACHE_KEY_LEGACY = "rlc_cam_cache_v1_500";             // compat
+  const CACHE_KEY_V238 = `rlc_bus_v1:cams_cache_v1${NS}`;      // nuevo (string estable)
+  const CACHE_NEWS_KEY_V238 = `rlc_bus_v1:news_cache_v1${NS}`; // news (string estable)
 
   // ✅ Para 1200 cams, cache vieja 12h ok. Si quieres más frescura: ?camsCacheHours=6
-  const CACHE_MAX_AGE_MS = Math.max(30 * 60 * 1000, Math.min(72 * 60 * 60 * 1000, (parseIntSafe(getParam("camsCacheHours"), 12) | 0) * 60 * 60 * 1000));
+  const cacheHours = Math.max(0.5, Math.min(72, Number(parseIntSafe(getParam("camsCacheHours"), 12)) || 12));
+  const CACHE_MAX_AGE_MS = Math.max(30 * 60 * 1000, Math.min(72 * 60 * 60 * 1000, cacheHours * 60 * 60 * 1000));
 
   // Auto discovery webcams ON/OFF (override: ?camsDiscovery=0/1)
   let AUTO_DISCOVERY = parseBool(getParam("camsDiscovery"), true);
@@ -262,7 +267,6 @@
     ];
     for (let i = 0; i < extras.length; i++) set.add(extras[i]);
 
-    // return estable pero mezclable luego
     return Array.from(set);
   }
 
@@ -523,10 +527,10 @@
       id: "caracas_venezuela",
       title: "Caracas — Live Cam",
       place: "Caracas, Venezuela",
-      source: "YouTube",
-      kind: "youtube",
-      youtubeId: "VWbQN94LAOI",
-      originUrl: "https://www.youtube.com/watch?v=VWbQN94LAOI",
+      source: "X",
+      kind: "x",
+      youtubeId: "1nAKEEAReXyKL",
+      originUrl: "https://x.com/i/broadcasts/1nAKEEAReXyKL",
       tags: ["venezuela","caracas"]
     },
 
@@ -1057,7 +1061,6 @@
     }
 
     if (typeof c.maxSeconds === "number" && c.maxSeconds > 0) o.maxSeconds = c.maxSeconds | 0;
-    // tags opcional, limitado
     if (Array.isArray(c.tags) && c.tags.length) o.tags = c.tags.slice(0, 8);
     return o;
   }
@@ -1265,6 +1268,7 @@
 
   // News API (opcional)
   g.RLCCams.getNewsList = () => Array.isArray(g.CAM_NEWS_LIST) ? g.CAM_NEWS_LIST : [];
+  g.RLCCams.getNewsCatalogList = () => Array.isArray(OUT_NEWS_CATALOG) ? OUT_NEWS_CATALOG : [];
   g.RLCCams.setNewsEnabled = (v) => { NEWS_ENABLED = !!v; emitUpdate(); return NEWS_ENABLED; };
   g.RLCCams.setNewsMix = (v) => { NEWS_MIX_IN_MAIN = !!v; emitUpdate(); return NEWS_MIX_IN_MAIN; };
   g.RLCCams.setNewsInCatalog = (v) => { NEWS_IN_CATALOG = !!v; emitUpdate(); return NEWS_IN_CATALOG; };
@@ -1525,6 +1529,15 @@
     return Array.isArray(res) ? res : [];
   }
 
+  function capTasks(tasks) {
+    // cap dinámico: muchas queries + páginas pueden crear arrays enormes.
+    // dejamos margen de fallos (proxies, instancias caídas) sin petar memoria.
+    const max = Math.max(250, Math.min(30000, Math.floor(DISCOVERY_REQUEST_BUDGET * 3)));
+    if (tasks.length <= max) return tasks;
+    shuffleInPlace(tasks);
+    return tasks.slice(0, max);
+  }
+
   async function runDiscoveryWebcams(instances, signal) {
     if (!AUTO_DISCOVERY) return;
     if (OUT_CATALOG.length >= TARGET_CAMS) return;
@@ -1544,15 +1557,16 @@
         tasks.push({ q, p, inst, region });
       }
     }
-    shuffleInPlace(tasks);
+
+    const cappedTasks = capTasks(tasks);
 
     let cursor = 0;
     const foundForQuery = Object.create(null);
 
     async function worker() {
-      while (cursor < tasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
+      while (cursor < cappedTasks.length && (OUT_CATALOG.length + candidates.length) < TARGET_CAMS) {
         if (!budgetOk()) break;
-        const t = tasks[cursor++];
+        const t = cappedTasks[cursor++];
 
         try {
           const key = t.q;
@@ -1623,15 +1637,16 @@
         tasks.push({ q, p, inst, region });
       }
     }
-    shuffleInPlace(tasks);
+
+    const cappedTasks = capTasks(tasks);
 
     let cursor = 0;
     const foundForQuery = Object.create(null);
 
     async function worker() {
-      while (cursor < tasks.length && (OUT_NEWS_CATALOG.length + candidates.length) < NEWS_TARGET) {
+      while (cursor < cappedTasks.length && (OUT_NEWS_CATALOG.length + candidates.length) < NEWS_TARGET) {
         if (!budgetOk()) break;
-        const t = tasks[cursor++];
+        const t = cappedTasks[cursor++];
 
         try {
           const key = t.q;
