@@ -1,6 +1,11 @@
 <!-- index.html — Random Live Cams (PLAYER) v2.3.9 (HARDENED + KEYED BUS + REPAIR + DIAG)
   ✅ Compatible con tu stack actual:
      - styles.css, cams.js, music.js, weatherClock.js, rlcTickers.js, catalogView.js, pointsControl.js, app.js
+  ✅ Compatible con cams.js v2.3.9 (VIDEO ONLY + AUTO-DISCOVERY + CATALOG 4-UP + OPTIONAL NEWS):
+     - window.CAM_LIST / CAM_CATALOG_LIST / CAM_NEWS_LIST / CAM_LIST_READY
+     - evento "rlc_cam_list_updated"
+     - window.RLCCams.* (refresh/clearCache/setTarget/setAutoDiscovery/setValidateEmbed + News setters)
+     - BroadcastChannel: rlc_bus_v1 y rlc_bus_v1:{key}
   ✅ Control panel robusto:
      - Legacy bus SIEMPRE: rlc_bus_v1
      - Keyed bus dinámico: rlc_bus_v1:{key} (URL ?key= | localStorage rlc_last_key_v1 | msg.key)
@@ -111,6 +116,11 @@
   <link rel="preconnect" href="https://api.mymemory.translated.net" crossorigin />
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
   <link rel="preconnect" href="https://r.jina.ai" crossorigin />
+
+  <!-- cams.js autodiscovery (Invidious + YouTube thumbs) -->
+  <link rel="preconnect" href="https://api.invidious.io" crossorigin />
+  <link rel="preconnect" href="https://i.ytimg.com" crossorigin />
+  <link rel="preconnect" href="https://www.youtube.com" crossorigin />
 
   <!-- ───────────────────────── LIBS ───────────────────────── -->
   <!-- hls.js (solo si usas cams HLS .m3u8) -->
@@ -540,7 +550,7 @@
     /* ───────────────────────── CHAT PATCH (v2.3.9) ─────────────────────────
        Objetivo:
        - Hacer visible el chat cuando está ON (por URL o por llegada de mensajes)
-       - Soportar wrappers intermedios típicos (.line/.row/.wrap/.inner/...)
+       - Soportar wrappers intermedios típicos (.line/.row/.wrap/.inner/...).
        - Forzar que nombre y mensaje sean legibles (sin "position:absolute" heredado raro)
        NO toca tu styles.css, solo refuerza desde el HTML.
     */
@@ -604,6 +614,8 @@
         ></iframe>
 
         <video id="video" class="media hidden" autoplay muted playsinline webkit-playsinline></video>
+
+        <!-- Mantengo el <img> por compat con tu app.js (aunque cams.js sea VIDEO ONLY, no rompe nada) -->
         <img id="img" class="media hidden" alt="Webcam snapshot" decoding="async" />
       </div>
 

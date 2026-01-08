@@ -4,6 +4,10 @@
   ✅ Más cams: target default 900 + presets + max UI 5000 (si cams.js limita, no rompe)
   ✅ Filtros PRO: tipo rápido + ocultar ALT + sort + limit + vista ALL merge
   ✅ Persistencia por KEY: recuerda tus parámetros/filtros por key
+  ✅ Compat reforzada con tus updates:
+     - Respeta allowLegacy=0: no lee/escribe a legacy storage/bus si KEY existe
+     - Acepta más formas de state/cam fields + más variantes en rlc_cam_list_updated.detail
+     - Envía CMD robusto (ts Number, nonce) + escribe a storage y BC según allowLegacy
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -609,7 +613,6 @@
       document.documentElement.style.setProperty("--topH", h + "px");
     }catch(_){}
   }
-  // recalcula en resize + cambios internos (título/state)
   window.addEventListener("resize", ()=>setTopH(), { passive:true });
   try{
     if ("MutationObserver" in window && topBar){
@@ -696,6 +699,8 @@
     lsSet(optKey(), JSON.stringify(next));
   }
 
+  let favOnly = false;
+
   function applyOptsToUI(){
     const o = loadOpts();
 
@@ -722,6 +727,35 @@
     syncKindSeg();
   }
 
+  // ───────────────────────── Candidate keys/channels ─────────────────────────
+  const BUS_CANDIDATES_ALL   = ["rlc_bus_v1","rlc_bus"];
+  const CMD_CANDIDATES_ALL   = ["rlc_cmd_v1","rlc_cmd"];
+  const STATE_CANDIDATES_ALL = ["rlc_state_v1","rlc_state"];
+  const EVT_CANDIDATES_ALL   = ["rlc_evt_v1","rlc_evt"];
+
+  let BUS_KEYS = [];
+  let CMD_KEYS = [];
+  let STATE_KEYS = [];
+  let EVT_KEYS = [];
+
+  function makeKeyList(baseList){
+    const out = [];
+    for (const b of baseList){
+      if (KEY) out.push(`${b}:${KEY}`);
+      // si allowLegacy=0 y hay KEY, NO añadimos base legacy
+      if (!KEY || allowLegacy) out.push(b);
+    }
+    return Array.from(new Set(out));
+  }
+
+  function recomputeKeys(){
+    BUS_KEYS   = makeKeyList(BUS_CANDIDATES_ALL);
+    CMD_KEYS   = makeKeyList(CMD_CANDIDATES_ALL);
+    STATE_KEYS = makeKeyList(STATE_CANDIDATES_ALL);
+    EVT_KEYS   = makeKeyList(EVT_CANDIDATES_ALL);
+  }
+  recomputeKeys();
+
   function setKey(newKey){
     const k = String(newKey||"").trim();
     if (k === KEY) return false;
@@ -742,34 +776,6 @@
     toast(KEY ? `key=${KEY}` : "key vacía");
     return true;
   }
-
-  // ───────────────────────── Candidate keys/channels ─────────────────────────
-  const BUS_CANDIDATES   = ["rlc_bus_v1","rlc_bus"];
-  const CMD_CANDIDATES   = ["rlc_cmd_v1","rlc_cmd"];
-  const STATE_CANDIDATES = ["rlc_state_v1","rlc_state"];
-  const EVT_CANDIDATES   = ["rlc_evt_v1","rlc_evt"];
-
-  let BUS_KEYS = [];
-  let CMD_KEYS = [];
-  let STATE_KEYS = [];
-  let EVT_KEYS = [];
-
-  function makeKeyList(baseList){
-    const out = [];
-    for (const b of baseList){
-      if (KEY) out.push(`${b}:${KEY}`);
-      out.push(b);
-    }
-    return Array.from(new Set(out));
-  }
-
-  function recomputeKeys(){
-    BUS_KEYS   = makeKeyList(BUS_CANDIDATES);
-    CMD_KEYS   = makeKeyList(CMD_CANDIDATES);
-    STATE_KEYS = makeKeyList(STATE_CANDIDATES);
-    EVT_KEYS   = makeKeyList(EVT_CANDIDATES);
-  }
-  recomputeKeys();
 
   // ───────────────────────── UI refs ─────────────────────────
   const dot = qs("#dot");
@@ -828,6 +834,7 @@
 
     for (const busName of BUS_KEYS){
       try{
+        // si allowLegacy=0 y hay KEY: BUS_KEYS ya excluye legacy base, perfecto
         const bc = new BroadcastChannel(busName);
         bc.onmessage = (ev)=>onBus(ev?.data, busName);
         bcs.push(bc);
@@ -846,7 +853,8 @@
 
     if (!("BroadcastChannel" in window)) return;
 
-    try { camsBC = new BroadcastChannel("rlc_bus_v1"); } catch(_){}
+    // cams.js escucha rlc_bus_v1 (legacy) y rlc_bus_v1:{key}
+    try { if (allowLegacy || !KEY) camsBC = new BroadcastChannel("rlc_bus_v1"); } catch(_){}
     try { if (KEY) camsBCKeyed = new BroadcastChannel(`rlc_bus_v1:${KEY}`); } catch(_){}
   }
 
@@ -868,12 +876,17 @@
 
   function keyOkForMsg(obj){
     const mk = String(obj?.key || "").trim();
+
+    // Si no hay KEY y llega mk, adoptamos
     if (!KEY && mk) {
       setKey(mk);
       return true;
     }
+
     if (KEY) {
-      if (!mk) return true;
+      // allowLegacy=0 => no aceptamos mensajes sin mk (legacy) si ya estamos en KEY
+      if (!allowLegacy && !mk) return false;
+      if (!mk) return true;           // legacy permitido
       return mk === KEY;
     }
     return true;
@@ -893,10 +906,14 @@
       const s = safeJson(raw, null);
       if (!s || typeof s !== "object") continue;
 
-      if ((s.type && String(s.type).toLowerCase() !== "state") && (s.t && String(s.t).toLowerCase() !== "state")) {
-        if (!s.cam && !s.nowCam && !s.currentCam && !s.camId) continue;
+      // acepta múltiples formatos (state o snapshot con campos de cam)
+      const t = String(s.type || s.t || "").toLowerCase();
+      if (t && t !== "state") {
+        if (!s.cam && !s.nowCam && !s.currentCam && !s.camId && !s.currentCamId && !s.activeCamId) continue;
       }
+
       if (!keyOkForMsg(s)) continue;
+
       lastStateKeyUsed = k;
       return s;
     }
@@ -904,30 +921,41 @@
   }
 
   function extractCam(s){
+    // cam object en varios nombres
     const cam = (s && typeof s.cam === "object" && s.cam) ? s.cam
       : (s && typeof s.nowCam === "object" && s.nowCam) ? s.nowCam
       : (s && typeof s.currentCam === "object" && s.currentCam) ? s.currentCam
+      : (s && typeof s.activeCam === "object" && s.activeCam) ? s.activeCam
       : null;
 
-    const id = (cam && cam.id != null) ? String(cam.id)
+    // id en varios nombres
+    const id =
+      (cam && cam.id != null) ? String(cam.id)
       : (s && s.camId != null) ? String(s.camId)
       : (s && s.currentCamId != null) ? String(s.currentCamId)
       : (s && s.activeCamId != null) ? String(s.activeCamId)
+      : (s && s.id != null) ? String(s.id)
       : "";
 
-    const title = (cam && cam.title) ? String(cam.title)
+    const title =
+      (cam && cam.title) ? String(cam.title)
       : (s && s.camTitle) ? String(s.camTitle)
+      : (s && s.title) ? String(s.title)
       : "";
 
-    const place = (cam && cam.place) ? String(cam.place)
+    const place =
+      (cam && cam.place) ? String(cam.place)
       : (s && s.camPlace) ? String(s.camPlace)
+      : (s && s.place) ? String(s.place)
       : "";
 
-    const kind = (cam && cam.kind) ? String(cam.kind)
+    const kind =
+      (cam && cam.kind) ? String(cam.kind)
       : (s && s.camKind) ? String(s.camKind)
+      : (s && s.kind) ? String(s.kind)
       : "";
 
-    const source = (cam && cam.source) ? String(cam.source) : "";
+    const source = (cam && cam.source) ? String(cam.source) : (s && s.source) ? String(s.source) : "";
 
     return { id, title, place, kind, source, raw: cam };
   }
@@ -937,6 +965,7 @@
     if (typeof s.playing === "boolean") return s.playing;
     if (typeof s.isPlaying === "boolean") return s.isPlaying;
     if (typeof s.paused === "boolean") return !s.paused;
+    if (typeof s.isPaused === "boolean") return !s.isPaused;
     return null;
   }
 
@@ -953,7 +982,7 @@
     else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = "⏯ PLAY"; }
 
     setConn(true);
-    setTopH(); // por si cambia el texto y la altura del header
+    setTopH();
   }
 
   function onBus(msg, busName){
@@ -961,13 +990,26 @@
 
     const t = String(msg.type || msg.t || "").toLowerCase();
 
-    if (t === "event" || t === "evt" || t === "boot") {
+    // boot/pings/event: adopta key si llega
+    if (t === "event" || t === "evt" || t === "boot" || msg.name === "PLAYER_BOOT" || msg.name === "OBS_PANEL_BOOT") {
       const mk = String(msg.key || "").trim();
       if (mk && !KEY) setKey(mk);
       return;
     }
 
     if (t === "state" || msg.type === "state") {
+      if (!keyOkForMsg(msg)) return;
+      lastState = msg;
+      lastSeenAt = now();
+      lastStateKeyUsed = busName || lastStateKeyUsed;
+      renderTopFromState(msg);
+      markActiveCam();
+      updateDiag();
+      return;
+    }
+
+    // algunos stacks mandan "snapshot" sin type; si detectamos campos típicos, lo aceptamos como state
+    if (!t && (msg.cam || msg.nowCam || msg.currentCam || msg.camId || msg.activeCamId || msg.currentCamId)) {
       if (!keyOkForMsg(msg)) return;
       lastState = msg;
       lastSeenAt = now();
@@ -1052,12 +1094,12 @@
   // ───────────────────────── cams.js list + update events ─────────────────────────
   let lastCamsDetail = null;
 
-  function pickDetailList(d, nameA, nameB){
+  function pickDetailList(d, ...names){
     if (!d || typeof d !== "object") return null;
-    const a = d[nameA];
-    if (Array.isArray(a)) return a;
-    const b = nameB ? d[nameB] : null;
-    if (Array.isArray(b)) return b;
+    for (const n of names){
+      const v = d[n];
+      if (Array.isArray(v)) return v;
+    }
     return null;
   }
 
@@ -1075,10 +1117,22 @@
     const v = String(viewEl.value || "catalog");
     const d = lastCamsDetail || null;
 
-    const main = pickDetailList(d, "list", "main") || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
-    const cat  = pickDetailList(d, "catalog", "catalogList") || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
-    const news = pickDetailList(d, "news", "newsList") || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
-    const newsCat = pickDetailList(d, "newsCatalog", "news_catalog") || news;
+    // soporta variantes de nombre (detail.list/main, catalog/catalogList, news/newsList, etc.)
+    const main = pickDetailList(d,
+      "list","main","mainList","cams","camList"
+    ) || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
+
+    const cat  = pickDetailList(d,
+      "catalog","catalogList","cat","catList","catalogCams"
+    ) || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
+
+    const news = pickDetailList(d,
+      "news","newsList","newsCams","news_items"
+    ) || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
+
+    const newsCat = pickDetailList(d,
+      "newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList"
+    ) || news;
 
     if (v === "main") return main;
     if (v === "catalog") return cat;
@@ -1086,8 +1140,7 @@
     if (v === "newsCatalog") return newsCat;
 
     if (v === "all" || v === "allNoAlt"){
-      const merged = uniqById([].concat(main, cat, news));
-      return merged;
+      return uniqById([].concat(main, cat, news));
     }
 
     return cat.length ? cat : main;
@@ -1097,14 +1150,14 @@
     if (!d || typeof d !== "object") return;
     const f = (d.flags && typeof d.flags === "object") ? d.flags : d;
 
-    if (typeof f.target === "number") camsTargetEl.value = String(clamp(f.target, 50, 5000) | 0);
-    if (typeof f.autoDiscovery === "boolean") camsDiscoveryEl.checked = f.autoDiscovery;
-    if (typeof f.validateEmbed === "boolean") camsValidateEl.checked = f.validateEmbed;
+    if (typeof f.target === "number") qs("#camsTarget").value = String(clamp(f.target, 50, 5000) | 0);
+    if (typeof f.autoDiscovery === "boolean") qs("#camsDiscovery").checked = f.autoDiscovery;
+    if (typeof f.validateEmbed === "boolean") qs("#camsValidate").checked = f.validateEmbed;
 
-    if (typeof f.newsEnabled === "boolean") newsEnabledEl.checked = f.newsEnabled;
-    if (typeof f.newsMix === "boolean") newsMixEl.checked = f.newsMix;
-    if (typeof f.newsInCatalog === "boolean") newsInCatalogEl.checked = f.newsInCatalog;
-    if (typeof f.newsTarget === "number") newsTargetEl.value = String(clamp(f.newsTarget, 10, 500) | 0);
+    if (typeof f.newsEnabled === "boolean") qs("#newsEnabled").checked = f.newsEnabled;
+    if (typeof f.newsMix === "boolean") qs("#newsMix").checked = f.newsMix;
+    if (typeof f.newsInCatalog === "boolean") qs("#newsInCatalog").checked = f.newsInCatalog;
+    if (typeof f.newsTarget === "number") qs("#newsTarget").value = String(clamp(f.newsTarget, 10, 500) | 0);
   }
 
   window.addEventListener("rlc_cam_list_updated", (ev)=>{
@@ -1117,15 +1170,13 @@
   function syncUiFromRLCCams(){
     const api = camsApi();
     if (!api) return;
-
     try {
       const t = api.getTarget && api.getTarget();
-      if (typeof t === "number") camsTargetEl.value = String(clamp(t, 50, 5000) | 0);
+      if (typeof t === "number") qs("#camsTarget").value = String(clamp(t, 50, 5000) | 0);
     } catch(_){}
   }
 
   // ───────────────────────── Favorites ─────────────────────────
-  let favOnly = false;
   const FAV_KEY_BASE = "rlc_obs_favs_v1";
   const favStoreKey = ()=> KEY ? `${FAV_KEY_BASE}:${KEY}` : FAV_KEY_BASE;
 
@@ -1225,7 +1276,6 @@
       .filter(hideAltOk)
       .filter(c => !favOnly || favs.has(String(c.id)));
 
-    // sort
     const q = stripDiacritics(norm(qEl.value));
     const relevanceScore = (c)=>{
       if (!q) return 0;
@@ -1392,10 +1442,7 @@
       bGo.textContent = "IR";
       bGo.addEventListener("click", (ev)=>{
         ev.preventDefault();
-        sendCmd("GOTO", {
-          id, camId:id, targetId:id,
-          gotoId:id, setCamId:id
-        });
+        sendCmd("GOTO", { id, camId:id, targetId:id, gotoId:id, setCamId:id });
       });
 
       const bStar = document.createElement("button");
@@ -1434,7 +1481,6 @@
     listEl.appendChild(frag);
     markActiveCam();
 
-    // persist filtros “suaves”
     saveOpts({
       view: viewEl.value,
       kind: kindEl.value,
@@ -1489,7 +1535,6 @@
     const autoDisc = !!camsDiscoveryEl.checked;
     const validate = !!camsValidateEl.checked;
 
-    // persist
     saveOpts({ camsTarget: target, camsDiscovery: autoDisc, camsValidate: validate });
 
     if (api){
@@ -1745,7 +1790,6 @@
   openChannels();
   openCamsBC();
 
-  // Aplica opciones guardadas (por KEY) antes del primer render
   applyOptsToUI();
   btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
 
