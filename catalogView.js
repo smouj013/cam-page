@@ -1,26 +1,11 @@
-/* catalogView.js — RLC Catalog View v1.2.9 (RLC 2.3.9 COMPAT / MULTI-TILES / SINGLETON HARDEN)
-   ✅ Catálogo en rejilla configurable (N tiles)
-   ✅ Modo "follow": SOLO 1 tile (followSlot) sigue al state (los demás sticky)
-   ✅ Modo "sync": rotan TODOS los tiles a la vez
-   ✅ Slots sticky guardados en localStorage (KEY) y migran 4 => N
-   ✅ Click-to-cycle: cambia SOLO ese tile (SHIFT => anterior)
-   ✅ ytCookies: true => youtube.com/embed (permite login/Premium si existe)
-   ✅ Oculta HUD single cuando catálogo ON + avisa "rlc_catalog_mode"
-   ✅ WX por tile si existe window.RLCWx.getSummaryForCam()
-      - sin placeholders ("…"), solo visible con datos válidos
-      - refresh suave sin flicker
-   ✅ Compat total con RLC v2.3.9 (sin romper 2.3.8):
-      - KEY auto: window.RLC_KEY / ?key= / localStorage rlc_last_key_v1
-      - BUS auto: window.RLC_BUS / window.RLC_BUS_BASE / rlc_bus_v1:{key}
-      - STATE key auto (si 2.3.9 cambia base): intenta detectar rlc_state_v* más reciente
-      - Acepta CFG por:
-          * {type:"CATALOG_CFG", cfg:{...}}
-          * {type:"cmd", cmd:"CATALOG_SET", payload:{...}}
-      - Acepta postMessage same-origin (state/cfg/cmd)
-      - Legacy sin key permitido breve al arrancar
-   ✅ Harden:
-      - singleton con destroy() (evita timers duplicados)
-      - polling optimizado: solo re-render si cambia cam (id/index)
+/* catalogView.js — RLC Catalog View v1.2.10 (RLC 2.3.9 COMPAT / MULTI-TILES / SINGLETON HARDEN)
+   ✅ FIX CLAVE (tu caso):
+      - Cuando hay KEY, si el player manda STATE por bus legacy o sin msg.key,
+        antes se rechazaba tras ~6.5s => catálogo “no cambia”.
+      - Ahora: fallback seguro -> si NO llegan mensajes por bcMain (keyed) en Xs,
+        acepta STATE por legacy para que el “Ir” del control actualice el followSlot.
+   ✅ Extra:
+      - Soporta (opcional) {type:"CATALOG_SLOT_SET", slot, camId/id} y cmd "CATALOG_SLOT_SET"
 */
 
 (() => {
@@ -28,7 +13,7 @@
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
 
-  const VER = "1.2.9";
+  const VER = "1.2.10";
   const INST_KEY = "__RLC_CATALOG_VIEW_INSTANCE__";
 
   try {
@@ -79,7 +64,7 @@
     return k3 || "";
   })();
 
-  // ───────────────────────── Bus / Keys (2.3.9 hardened: allow discovery)
+  // ───────────────────────── Bus
   const BUS_BASE_FALLBACK = "rlc_bus_v1";
   const BUS_BASE = (() => {
     const b = safeStr(g.RLC_BUS_BASE || "");
@@ -100,10 +85,9 @@
   })();
 
   const bcMain = ("BroadcastChannel" in window) ? new BroadcastChannel(BUS_MAIN) : null;
-  // bcLegacy solo tiene sentido si estamos en modo keyed
   const bcLegacy = (("BroadcastChannel" in window) && KEY) ? new BroadcastChannel(BUS_LEGACY) : null;
 
-  // ───────────────────────── State/CFG/SLOTS keys (2.3.9 compatible: detect newest state key)
+  // ───────────────────────── State/CFG/SLOTS keys
   const CFG_BASE = "rlc_catalog_cfg_v1";
   const SLOTS_BASE = "rlc_catalog_slots_v1";
 
@@ -113,40 +97,25 @@
   const SLOTS_KEY = KEY ? `${SLOTS_BASE}:${KEY}` : SLOTS_BASE;
 
   const STATE_KEY_BASE_CANDIDATES = [
-    // por si 2.3.9 cambia base (no rompe 2.3.8)
-    "rlc_state_v9",
-    "rlc_state_v8",
-    "rlc_state_v7",
-    "rlc_state_v6",
-    "rlc_state_v5",
-    "rlc_state_v4",
-    "rlc_state_v3",
-    "rlc_state_v2",
-    "rlc_state_v1"
+    "rlc_state_v9","rlc_state_v8","rlc_state_v7","rlc_state_v6","rlc_state_v5",
+    "rlc_state_v4","rlc_state_v3","rlc_state_v2","rlc_state_v1"
   ];
 
   function detectStateKeyCandidates() {
-    // 1) si el player expone una key exacta, úsala
     const exposed = safeStr(g.RLC_STATE_KEY || "");
     if (exposed) {
       const leg = safeStr(g.RLC_STATE_KEY_LEGACY || "");
-      return {
-        primary: exposed,
-        legacy: leg || "rlc_state_v1"
-      };
+      return { primary: exposed, legacy: leg || "rlc_state_v1" };
     }
 
-    // 2) intenta encontrar la base más reciente que exista en LS
     if (KEY) {
       for (const base of STATE_KEY_BASE_CANDIDATES) {
         const k = `${base}:${KEY}`;
         if (lsGet(k)) return { primary: k, legacy: base };
       }
-      // fallback: keyless base si existe (por si el player aún no keyea)
       for (const base of STATE_KEY_BASE_CANDIDATES) {
         if (lsGet(base)) return { primary: base, legacy: base };
       }
-      // default
       return { primary: `rlc_state_v1:${KEY}`, legacy: "rlc_state_v1" };
     } else {
       for (const base of STATE_KEY_BASE_CANDIDATES) {
@@ -158,14 +127,30 @@
 
   let STATE_KEYS = detectStateKeyCandidates();
 
-  // Compat keyless unos segundos (como tu stack)
+  // ───────────────────────── Key acceptance (FIX)
+  // Antes: tras 6.5s se rechazaban mensajes legacy sin key => catálogo no se actualiza.
+  // Ahora: si bcMain (keyed) no está llegando, aceptamos legacy para STATE/cmds.
   let allowLegacyNoKey = true;
   const allowLegacyNoKeyUntil = now() + 6500;
+
+  let lastMainMsgAt = 0;
+  let lastLegacyMsgAt = 0;
+
+  function noteTransport(transportTag) {
+    const t = now();
+    if (transportTag === "bcMain") lastMainMsgAt = t;
+    if (transportTag === "bcLegacy") lastLegacyMsgAt = t;
+  }
+
+  function mainSeemsDead() {
+    const t = now();
+    // si hace > 8s que no llega nada por bcMain, consideramos fallback a legacy
+    return (t - lastMainMsgAt) > 8000;
+  }
 
   function keyOk(msg, transportTag) {
     if (!KEY) return true;
 
-    // Si trae key explícita, es ley
     const mk = (msg && typeof msg.key === "string") ? String(msg.key).trim() : "";
     if (mk) return mk === KEY;
 
@@ -175,7 +160,13 @@
       return true;
     }
 
-    // si todavía estamos en ventana de arranque, permitimos legacy sin key
+    // FIX: si el main keyed NO está llegando, permitimos legacy sin key (evita “catálogo congelado”)
+    if (transportTag === "bcLegacy") {
+      if (!BUS_MAIN_LOOKS_KEYED) return true;
+      if (mainSeemsDead()) return true;
+    }
+
+    // Ventana corta inicial (como antes)
     if (!allowLegacyNoKey) return false;
     if (now() > allowLegacyNoKeyUntil) return false;
     return true;
@@ -268,27 +259,20 @@
   }
 
   function loadCfg() {
-    // (no rompe nada): prioriza keyed, luego legacy
     return normalizeCfg(readJson(CFG_KEY) || readJson(CFG_KEY_LEGACY) || DEFAULTS);
   }
 
   let CFG = loadCfg();
   let lastState = null;
 
-  // ───────────────────────── State helpers (robustos)
+  // ───────────────────────── State helpers
   function normalizeStateMaybe(st) {
     if (!st || typeof st !== "object") return null;
-
-    // unwrap si viene anidado
     if (st.state && typeof st.state === "object") st = st.state;
 
-    // tolera type variant
     const t = safeStr(st.type || st.kind || st.name || "").toLowerCase();
-
-    // estado típico: {type:"state", index, cam:{id,...}}
     if (t === "state") return Object.assign({ type: "state" }, st);
 
-    // tolera shapes raros si vienen por postMessage/legacy
     const hasCam = !!st.cam && typeof st.cam === "object";
     const hasIdx = Number.isFinite(st.index) || typeof st.index === "number";
     if (hasCam || hasIdx) return Object.assign({ type: "state" }, st);
@@ -300,7 +284,6 @@
     try {
       const rawMain = lsGet(STATE_KEYS.primary);
       const rawLegacy = rawMain ? null : lsGet(STATE_KEYS.legacy);
-
       const raw = rawMain || rawLegacy;
       if (!raw) return null;
 
@@ -309,9 +292,7 @@
       if (!st) return null;
 
       const isMain = !!rawMain;
-      // Para LS, tratamos primary como "main"
       if (!keyOk(st, isMain ? "bcMain" : "bcLegacy")) return null;
-
       return st;
     } catch (_) {
       return null;
@@ -331,15 +312,11 @@
     _timers: new Set(),
     _unsub: [],
     destroy() {
-      try {
-        for (const off of inst._unsub) { try { off(); } catch (_) {} }
-        inst._unsub.length = 0;
-      } catch (_) {}
+      try { for (const off of inst._unsub) { try { off(); } catch (_) {} } } catch (_) {}
+      inst._unsub.length = 0;
 
-      try {
-        for (const t of inst._timers) { try { clearInterval(t); clearTimeout(t); } catch (_) {} }
-        inst._timers.clear();
-      } catch (_) {}
+      try { for (const t of inst._timers) { try { clearInterval(t); clearTimeout(t); } catch (_) {} } } catch (_) {}
+      inst._timers.clear();
 
       try { bcMain && bcMain.close && bcMain.close(); } catch (_) {}
       try { bcLegacy && bcLegacy.close && bcLegacy.close(); } catch (_) {}
@@ -485,16 +462,9 @@
     const count = clamp((parseInt(countWanted, 10) || 4), 1, 25);
 
     let root = qs("#rlcCatalog");
-    const stage =
-      qs("#stage") ||
-      qs("#app") ||
-      qs("#root") ||
-      document.body;
+    const stage = qs("#stage") || qs("#app") || qs("#root") || document.body;
 
-    const mediaLayer =
-      qs("#stage .layer.layer-media") ||
-      qs(".layer.layer-media") ||
-      stage;
+    const mediaLayer = qs("#stage .layer.layer-media") || qs(".layer.layer-media") || stage;
 
     if (!root) {
       root = document.createElement("div");
@@ -502,7 +472,6 @@
       mediaLayer.appendChild(root);
     }
 
-    // Si cae en body/html, mejor fixed para cubrir viewport siempre
     try {
       if (mediaLayer === document.body || mediaLayer === document.documentElement) {
         root.style.position = "fixed";
@@ -936,6 +905,35 @@
     return ids;
   }
 
+  // Permite fijar un tile exacto desde fuera (control) si quieres:
+  function setStickySlot(slotIndex, camId) {
+    const list = getCamList();
+    if (!list.length) return;
+
+    const nTiles = clamp((CFG.tiles | 0), 1, 25);
+    const i = clamp((slotIndex | 0), 0, Math.max(0, nTiles - 1));
+    const id = String(camId || "");
+    if (!id) return;
+
+    if (findIndexById(list, id) < 0) return;
+
+    let ids = loadSlotIds(nTiles);
+    if (!ids) ids = initSlotsFromState(list, nTiles);
+
+    const other = ids.findIndex((x, k) => x === id && k !== i);
+    if (other >= 0) {
+      const tmp = ids[i];
+      ids[i] = ids[other];
+      ids[other] = tmp;
+    } else {
+      ids[i] = id;
+    }
+
+    ids = fillMissingSlots(list, ensureUnique(ids));
+    saveSlotIds(ids);
+    updateCatalog();
+  }
+
   // ───────────────────────── Root + structure sync
   let root = ensureCatalogRoot(CFG.tiles);
   let slots = buildSlots(root, CFG.tiles);
@@ -986,7 +984,6 @@
     const want = !!on;
     const isOn = root.classList.contains("on");
     if (want === isOn) {
-      // aún así, mantén layout/refresh correcto en cambios de cfg
       if (want) applyCfgToUI();
       return;
     }
@@ -1162,7 +1159,7 @@
     updateCatalog();
   }
 
-  // ───────────────────────── Bus listeners (CFG + STATE + CMD fallback)
+  // ───────────────────────── Bus listeners
   let _lastStateSig = "";
 
   function applyCfgAny(rawCfg) {
@@ -1177,8 +1174,20 @@
     return t === "state";
   }
 
+  function extractGotoFromCmd(msg) {
+    const payload = (msg && typeof msg.payload === "object") ? msg.payload : (msg && typeof msg.data === "object" ? msg.data : null);
+    const id =
+      safeStr(payload?.camId || payload?.id || payload?.cameraId || payload?.value || "") ||
+      safeStr(msg?.camId || msg?.id || msg?.cameraId || "");
+    const index = Number.isFinite(payload?.index) ? (payload.index | 0) : (Number.isFinite(msg?.index) ? (msg.index | 0) : null);
+    return { id, index };
+  }
+
   function onBusMessage(msg, transportTag) {
     if (!msg || typeof msg !== "object") return;
+
+    // marca actividad del canal (para fallback)
+    noteTransport(transportTag);
 
     // CATALOG_CFG estándar
     if (msg.type === "CATALOG_CFG" && msg.cfg && typeof msg.cfg === "object") {
@@ -1187,15 +1196,46 @@
       return;
     }
 
-    // fallback: cmd CATALOG_SET
+    // comando opcional: set tile exacto desde control
+    if (msg.type === "CATALOG_SLOT_SET") {
+      if (!keyOk(msg, transportTag)) return;
+      const slot = parseInt(msg.slot, 10);
+      const camId = safeStr(msg.camId || msg.id || "");
+      if (Number.isFinite(slot) && camId) setStickySlot(slot, camId);
+      return;
+    }
+
     if (msg.type === "cmd") {
       const cmd = safeStr(msg.cmd || msg.name || "").toUpperCase();
+
+      // fallback: cmd CATALOG_SET
       if (cmd === "CATALOG_SET") {
         if (!keyOk(msg, transportTag)) return;
         const payload = (msg.payload && typeof msg.payload === "object") ? msg.payload : (msg.cfg || null);
         if (payload) applyCfgAny(payload);
         return;
       }
+
+      // opcional: cmd para fijar tile
+      if (cmd === "CATALOG_SLOT_SET") {
+        if (!keyOk(msg, transportTag)) return;
+        const payload = (msg.payload && typeof msg.payload === "object") ? msg.payload : {};
+        const slot = parseInt(payload.slot ?? msg.slot, 10);
+        const camId = safeStr(payload.camId || payload.id || msg.camId || msg.id || "");
+        if (Number.isFinite(slot) && camId) setStickySlot(slot, camId);
+        return;
+      }
+
+      // QoL: si llega GOTO, adelantamos lastState (ayuda cuando el STATE tarda)
+      if (cmd === "GOTO" || cmd === "GOTO_ID" || cmd === "CAM_GOTO" || cmd === "SET_CAM") {
+        if (!keyOk(msg, transportTag)) return;
+        const { id, index } = extractGotoFromCmd(msg);
+        if (id || Number.isFinite(index)) {
+          lastState = { type: "state", index: Number.isFinite(index) ? index : undefined, cam: { id: id || "" } };
+          if (CFG.enabled) updateCatalog();
+        }
+      }
+      return;
     }
 
     // estado
@@ -1213,7 +1253,7 @@
   if (bcMain) bcMain.onmessage = (ev) => onBusMessage(ev?.data, "bcMain");
   if (bcLegacy) bcLegacy.onmessage = (ev) => onBusMessage(ev?.data, "bcLegacy");
 
-  // postMessage same-origin (por si llega directo desde control/preview)
+  // postMessage same-origin
   on(window, "message", (ev) => {
     try {
       if (ev.origin && ev.origin !== location.origin) return;
@@ -1221,12 +1261,12 @@
     const msg = ev && ev.data;
     if (!msg || typeof msg !== "object") return;
 
-    if (msg.type === "CATALOG_CFG" || msg.type === "cmd" || isStateMessage(msg)) {
+    if (msg.type === "CATALOG_CFG" || msg.type === "cmd" || msg.type === "CATALOG_SLOT_SET" || isStateMessage(msg)) {
       onBusMessage(msg, "postMessage");
     }
   }, { passive: true });
 
-  // polling suave (optimizado) + redetección de STATE key si cambia en caliente
+  // polling suave + redetección de STATE key
   let miss = 0;
   let lastDetect = 0;
 
@@ -1234,7 +1274,6 @@
     const st = readStateFromLS();
     if (!st) {
       miss++;
-      // cada ~10s, re-detecta por si cambió la base de state en 2.3.9 o recargó el player
       const t = now();
       if ((miss % 12) === 0 && (t - lastDetect) > 9000) {
         lastDetect = t;
@@ -1252,7 +1291,7 @@
   }, 550);
   inst._timers.add(poll);
 
-  // storage: CFG cambiado por control / mirror
+  // storage: CFG cambiado por control
   on(window, "storage", (e) => {
     if (!e || !e.key) return;
     if (e.key === CFG_KEY || e.key === CFG_KEY_LEGACY) {
@@ -1268,7 +1307,7 @@
     for (const s of slots) refreshWxChipSoft(s);
   });
 
-  // clicks (re-hook seguro)
+  // clicks
   function hookClicksOnce() {
     if (root.dataset.rlcClicksHooked === "1") return;
     root.dataset.rlcClicksHooked = "1";
