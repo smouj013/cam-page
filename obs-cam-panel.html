@@ -1,13 +1,19 @@
 <!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
   ✅ NO SUBE VERSION (2.3.9)
-  ✅ HEADER FIJO (NO se mueve al hacer scroll) + padding dinámico para que el contenido no quede debajo
-  ✅ Más cams: target default 900 + presets + max UI 5000 (si cams.js limita, no rompe)
-  ✅ Filtros PRO: tipo rápido + ocultar ALT + sort + limit + vista ALL merge
-  ✅ Persistencia por KEY: recuerda tus parámetros/filtros por key
-  ✅ Compat reforzada con tus updates:
-     - Respeta allowLegacy=0: no lee/escribe a legacy storage/bus si KEY existe
-     - Acepta más formas de state/cam fields + más variantes en rlc_cam_list_updated.detail
-     - Envía CMD robusto (ts Number, nonce) + escribe a storage y BC según allowLegacy
+  ✅ UI MUCHO más limpia (mejor spacing, tipografía, hover, focus, accesibilidad, badges)
+  ✅ HEADER FIJO + padding dinámico
+  ✅ Persistencia por KEY (incluye rotación)
+  ✅ Rotación PRO:
+     - Start/Stop
+     - Intervalo (seg)
+     - Rotar SOLO un kind (youtube/hls/image/other) y/o SOLO un tag (ej: "news", "spain", "featured")
+     - Opción: usar filtros actuales de la UI (view/kind/búsqueda/hideAlt/favs/limit)
+     - Modos: secuencial / random / random sin repetir
+     - “Rotar ahora” (salta al siguiente dentro del subset)
+  ✅ Compat reforzada:
+     - Respeta allowLegacy=0: no legacy base si KEY existe
+     - State/cam fields variantes + rlc_cam_list_updated.detail variantes
+     - CMD robusto (ts Number, nonce) + storage + BC según allowLegacy
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -32,8 +38,10 @@
       --ok:#19e28a;
       --warn:#ffce57;
       --bad:#ff5a5a;
-      --shadow:0 14px 44px rgba(0,0,0,.45);
+      --shadow:0 18px 60px rgba(0,0,0,.52);
+      --shadow2:0 10px 32px rgba(0,0,0,.40);
       --r:16px;
+      --r2:14px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
       --gap:10px;
@@ -44,6 +52,8 @@
       --safeTop: env(safe-area-inset-top, 0px);
       --safeLeft: env(safe-area-inset-left, 0px);
       --safeRight: env(safe-area-inset-right, 0px);
+
+      --focus: 0 0 0 3px rgba(55,214,255,.22);
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -51,22 +61,27 @@
       margin:0;
       font-family:var(--sans);
       background:
-        radial-gradient(1200px 700px at 10% -10%, rgba(55,214,255,.10), transparent 60%),
-        radial-gradient(900px 600px at 120% 20%, rgba(255,206,87,.08), transparent 60%),
+        radial-gradient(1100px 650px at 10% -10%, rgba(55,214,255,.12), transparent 60%),
+        radial-gradient(900px 600px at 120% 20%, rgba(255,206,87,.10), transparent 60%),
+        radial-gradient(800px 500px at 60% 120%, rgba(25,226,138,.08), transparent 62%),
         linear-gradient(180deg, var(--bg), var(--bg2));
       color:var(--txt);
       overflow-x:hidden;
     }
 
-    /* ✅ Importante: padding-top dinámico para dejar hueco al header fixed */
+    /* nicer scrollbars (no rompe) */
+    *::-webkit-scrollbar{height:10px;width:10px}
+    *::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:999px;border:2px solid rgba(0,0,0,.25)}
+    *::-webkit-scrollbar-track{background:rgba(0,0,0,.18)}
+    *{scrollbar-color: rgba(255,255,255,.16) rgba(0,0,0,.18); scrollbar-width:thin;}
+
     .wrap{
       padding:10px 10px 16px;
       max-width:1180px;
       margin:0 auto;
-      padding-top: calc(10px + var(--topOffset) + var(--safeTop) + var(--topH) + 10px);
+      padding-top: calc(10px + var(--topOffset) + var(--safeTop) + var(--topH) + 12px);
     }
 
-    /* ✅ HEADER: FIXED (no se mueve) */
     .top{
       position:fixed;
       top: calc(var(--topOffset) + var(--safeTop));
@@ -83,20 +98,18 @@
 
       padding:10px 12px;
       border-radius:var(--r);
-      background:linear-gradient(180deg, rgba(12,16,24,.82), rgba(12,16,24,.66));
+      background:linear-gradient(180deg, rgba(12,16,24,.84), rgba(12,16,24,.62));
       border:1px solid var(--stroke);
       box-shadow:var(--shadow);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-
-      /* Evita micro-jitters por scroll en algunos navegadores */
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       will-change: transform;
       transform: translateZ(0);
     }
 
     .left{display:flex; gap:10px; align-items:center; min-width:0}
     .brand{display:flex; flex-direction:column; gap:2px; min-width:0;}
-    .brand .k{font-weight:900; letter-spacing:.3px; font-size:12px; color:var(--mut)}
+    .brand .k{font-weight:900; letter-spacing:.35px; font-size:12px; color:var(--mut)}
     .brand .n{font-weight:1000; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 
     .pill{
@@ -106,6 +119,20 @@
       background:rgba(255,255,255,.06);
       font-weight:900; font-size:12px;
       white-space:nowrap;
+    }
+
+    .chip{
+      display:inline-flex; gap:8px; align-items:center;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid rgba(55,214,255,.26);
+      background:rgba(55,214,255,.10);
+      font-weight:1000; font-size:12px;
+      white-space:nowrap;
+    }
+    .chip.off{
+      border-color:rgba(255,255,255,.18);
+      background:rgba(255,255,255,.05);
+      color:rgba(255,255,255,.78);
     }
 
     .dot{width:8px; height:8px; border-radius:99px; background:var(--warn); box-shadow:0 0 0 3px rgba(255,206,87,.16)}
@@ -130,14 +157,16 @@
       font-weight:900; font-size:12px;
       cursor:pointer;
       flex:0 0 auto;
+      transition: transform .08s ease, background .12s ease, border-color .12s ease;
     }
-    button:hover{border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.09)}
+    button:hover{border-color:rgba(255,255,255,.26); background:rgba(255,255,255,.10)}
     button:active{transform:translateY(1px)}
-    button.primary{border-color:rgba(55,214,255,.35); background:rgba(55,214,255,.10);}
+    button.primary{border-color:rgba(55,214,255,.38); background:rgba(55,214,255,.12);}
     button.danger{border-color:rgba(255,90,90,.35); background:rgba(255,90,90,.10);}
-    button.ok{border-color:rgba(25,226,138,.28); background:rgba(25,226,138,.10);}
-    button.ghost{background:rgba(0,0,0,.18); border-color:rgba(255,255,255,.14)}
-    button.segOn{border-color:rgba(55,214,255,.55); background:rgba(55,214,255,.14);}
+    button.ok{border-color:rgba(25,226,138,.30); background:rgba(25,226,138,.10);}
+    button.ghost{background:rgba(0,0,0,.20); border-color:rgba(255,255,255,.14)}
+    button.segOn{border-color:rgba(55,214,255,.62); background:rgba(55,214,255,.16);}
+    button:focus{outline:none; box-shadow: var(--focus);}
 
     .row{
       margin-top:var(--gap);
@@ -151,15 +180,28 @@
       grid-template-columns: 1fr 1fr;
       gap:var(--gap);
     }
+    .row3{
+      margin-top:var(--gap);
+      display:grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap:var(--gap);
+    }
 
     .card{
-      background:linear-gradient(180deg, rgba(12,16,24,.74), rgba(12,16,24,.62));
+      background:linear-gradient(180deg, rgba(12,16,24,.74), rgba(12,16,24,.60));
       border:1px solid var(--stroke);
       border-radius:var(--r);
-      box-shadow:var(--shadow);
+      box-shadow:var(--shadow2);
       padding:10px 12px;
       min-width:0;
     }
+
+    .cardTitle{
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      margin-bottom:8px;
+    }
+    .cardTitle .h{font-weight:1000; letter-spacing:.2px}
+    .cardTitle .sub{font-size:12px; color:var(--mut); font-weight:900}
 
     .field label{
       display:block;
@@ -174,13 +216,19 @@
       border:1px solid var(--stroke2);
       border-radius:12px;
       padding:10px 10px;
-      background:rgba(0,0,0,.25);
+      background:rgba(0,0,0,.26);
       color:var(--txt);
       outline:none;
       font-weight:800;
+      transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
+    }
+    input:focus, select:focus, textarea:focus{
+      border-color:rgba(55,214,255,.45);
+      box-shadow: var(--focus);
+      background:rgba(0,0,0,.30);
     }
     input[type="checkbox"]{ width:auto; }
-    textarea{min-height:76px; resize:vertical; font-family:var(--mono); font-weight:700;}
+    textarea{min-height:78px; resize:vertical; font-family:var(--mono); font-weight:700;}
     .mono{font-family:var(--mono)}
 
     .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
@@ -208,7 +256,7 @@
       flex-wrap:wrap;
     }
     .listTop .meta{font-size:12px; color:var(--mut); font-weight:900}
-    .listTop .meta b{color:rgba(255,255,255,.88)}
+    .listTop .meta b{color:rgba(255,255,255,.92)}
 
     .filterBar{
       margin-top:var(--gap);
@@ -234,20 +282,22 @@
 
     .cam{
       border:1px solid var(--stroke);
-      background:rgba(255,255,255,.04);
+      background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
       border-radius:14px;
       padding:10px 10px;
       display:flex;
       gap:10px;
       align-items:flex-start;
       min-width:0;
+      transition: transform .10s ease, border-color .12s ease, background .12s ease;
     }
-    .cam.active{border-color:rgba(55,214,255,.52); background:rgba(55,214,255,.08)}
-    .cam:hover{border-color:rgba(255,255,255,.20); background:rgba(255,255,255,.06)}
+    .cam.active{border-color:rgba(55,214,255,.58); background:rgba(55,214,255,.10)}
+    .cam:hover{border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.07); transform: translateY(-1px);}
+    .cam:focus-within{box-shadow: var(--focus);}
 
     .mini{
       flex:0 0 auto;
-      width:60px; height:60px;
+      width:62px; height:62px;
       border-radius:14px;
       border:1px solid var(--stroke2);
       background:rgba(0,0,0,.28);
@@ -263,8 +313,8 @@
       object-fit:cover;
       display:block;
       opacity:.95;
-      filter:saturate(1.05) contrast(1.05);
-      transform:scale(1.02);
+      filter:saturate(1.05) contrast(1.07);
+      transform:scale(1.03);
     }
     .mini .badge{
       position:absolute;
@@ -274,7 +324,7 @@
       padding:3px 6px;
       border-radius:999px;
       border:1px solid rgba(255,255,255,.20);
-      background:rgba(0,0,0,.38);
+      background:rgba(0,0,0,.40);
       backdrop-filter: blur(6px);
       -webkit-backdrop-filter: blur(6px);
     }
@@ -283,7 +333,7 @@
     .t1{
       font-weight:1000;
       font-size:13px;
-      line-height:1.1;
+      line-height:1.12;
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     }
     .t2{
@@ -300,7 +350,7 @@
       background:rgba(255,255,255,.06);
       padding:4px 7px;
       border-radius:999px;
-      color:rgba(255,255,255,.86);
+      color:rgba(255,255,255,.88);
       max-width:100%;
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     }
@@ -314,21 +364,21 @@
     .cam .actions{flex:0 0 auto; display:flex; flex-direction:column; gap:8px; align-items:stretch;}
     .smallBtn{padding:7px 9px; border-radius:12px; font-size:12px; font-weight:1000;}
     .star{border-color:rgba(255,206,87,.28); background:rgba(255,206,87,.10);}
-    .star.on{border-color:rgba(255,206,87,.52); background:rgba(255,206,87,.18);}
+    .star.on{border-color:rgba(255,206,87,.56); background:rgba(255,206,87,.20);}
 
     details{margin-top:10px;}
-    summary{cursor:pointer; font-weight:1000; color:rgba(255,255,255,.86)}
-    summary:hover{color:rgba(255,255,255,.95)}
-    .diag{margin-top:8px; font-size:12px; color:var(--mut); line-height:1.35}
-    .diag b{color:rgba(255,255,255,.86)}
+    summary{cursor:pointer; font-weight:1000; color:rgba(255,255,255,.88)}
+    summary:hover{color:rgba(255,255,255,.98)}
+    .diag{margin-top:8px; font-size:12px; color:var(--mut); line-height:1.38}
+    .diag b{color:rgba(255,255,255,.90)}
 
     .toast{
       position:fixed; left:12px; bottom:12px;
-      background:rgba(0,0,0,.60);
+      background:rgba(0,0,0,.62);
       border:1px solid rgba(255,255,255,.16);
       border-radius:12px;
       padding:10px 12px;
-      box-shadow:0 10px 34px rgba(0,0,0,.55);
+      box-shadow:0 10px 34px rgba(0,0,0,.58);
       font-size:12px; font-weight:900;
       opacity:0; transform:translateY(8px);
       transition:opacity .18s ease, transform .18s ease;
@@ -339,12 +389,16 @@
     }
     .toast.on{opacity:1; transform:translateY(0)}
 
+    @media (max-width:1060px){
+      .row3{grid-template-columns:1fr 1fr;}
+    }
     @media (max-width:980px){
       .row{grid-template-columns:1fr 1fr;}
       .row2{grid-template-columns:1fr;}
       .right{max-width: 60vw;}
     }
     @media (max-width:560px){
+      .row3{grid-template-columns:1fr;}
       .right{max-width: 52vw;}
       button{padding:7px 9px}
     }
@@ -361,6 +415,7 @@
     <div class="top" id="topBar">
       <div class="left">
         <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
+        <div class="chip off" id="rotChip">⟳ Rotación: OFF</div>
         <div class="brand">
           <div class="k">OBS CAM PANEL · v2.3.9</div>
           <div class="n" id="nowTxt">—</div>
@@ -428,7 +483,10 @@
 
     <div class="row2">
       <div class="card">
-        <div class="diag"><b>Opciones cams.js (webcams)</b></div>
+        <div class="cardTitle">
+          <div class="h">Opciones cams.js (webcams)</div>
+          <div class="sub mono">window.RLCCams</div>
+        </div>
 
         <div class="grid3" style="margin-top:10px">
           <div class="field">
@@ -475,7 +533,11 @@
       </div>
 
       <div class="card">
-        <div class="diag"><b>Noticieros (opcional)</b> <span class="mono">camsNews=1</span></div>
+        <div class="cardTitle">
+          <div class="h">Noticieros (opcional)</div>
+          <div class="sub mono">camsNews=1</div>
+        </div>
+
         <div class="grid3" style="margin-top:10px">
           <div class="tog">
             <div class="l">
@@ -518,6 +580,128 @@
         <div class="filterBar">
           <button class="smallBtn primary" id="btnApplyNews">Aplicar News & Refresh</button>
           <button class="smallBtn" id="btnViewNews">Cambiar vista → NEWS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ✅ Rotación PRO -->
+    <div class="row3">
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Rotación PRO</div>
+          <div class="sub" id="rotStatusTxt">OFF</div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="tog">
+            <div class="l">
+              <div class="t">Rotación ENABLED</div>
+              <div class="s">Auto “IR” por intervalo</div>
+            </div>
+            <input id="rotEnabled" type="checkbox" />
+          </div>
+
+          <div class="field">
+            <label>Intervalo (seg)</label>
+            <input id="rotEvery" type="number" min="3" max="3600" step="1" value="30" class="mono"/>
+            <div class="hint">Recomendación: 15–60s (según tu escena)</div>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="field">
+            <label>Modo</label>
+            <select id="rotMode">
+              <option value="seq">Secuencial</option>
+              <option value="rnd">Random</option>
+              <option value="rndNoRep">Random (sin repetir)</option>
+            </select>
+            <div class="hint">“Sin repetir” intenta rotar sin repetir hasta agotar el subset.</div>
+          </div>
+
+          <div class="field">
+            <label>Usar filtros actuales</label>
+            <select id="rotUseUiFilters">
+              <option value="1">Sí (view/kind/búsqueda/hideAlt/favs/limit)</option>
+              <option value="0">No (ignora búsqueda/limit; respeta vista + ALT)</option>
+            </select>
+            <div class="hint">Si quieres “solo tag” estable, pon <b>No</b>.</div>
+          </div>
+        </div>
+
+        <div class="filterBar" style="margin-top:10px">
+          <button class="smallBtn primary" id="btnRotToggle">⟳ START</button>
+          <button class="smallBtn" id="btnRotNow">⏭ Rotar ahora</button>
+          <div class="sp"></div>
+          <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
+        </div>
+
+        <div class="hint">
+          La rotación usa el subset resultante (tipo/tag + opcional filtros UI). Si el subset queda vacío, se pausa sola.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Rotación por Tipo/Tag</div>
+          <div class="sub mono">subset filter</div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="field">
+            <label>Solo tipo (kind)</label>
+            <select id="rotKind">
+              <option value="">(cualquiera)</option>
+              <option value="youtube">youtube</option>
+              <option value="hls">hls</option>
+              <option value="image">image</option>
+              <option value="other">other</option>
+            </select>
+            <div class="hint">Ej: rotar SOLO YouTube.</div>
+          </div>
+
+          <div class="field">
+            <label>Tag (contiene)</label>
+            <input id="rotTag" placeholder='Ej: news  |  spain  |  featured' />
+            <div class="hint">Busca en <span class="mono">tags[]</span> / <span class="mono">tag</span> / <span class="mono">category</span>.</div>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="tog">
+            <div class="l">
+              <div class="t">Solo favoritos</div>
+              <div class="s">Rotar SOLO ★</div>
+            </div>
+            <input id="rotFavsOnly" type="checkbox" />
+          </div>
+
+          <div class="tog">
+            <div class="l">
+              <div class="t">Exigir tag</div>
+              <div class="s">Si vacío → no filtra</div>
+            </div>
+            <input id="rotTagStrict" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="hint">
+          Consejo rápido: para “rotación de noticieros”, pon tag <b>news</b> y kind vacío.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Rotación: Diagnóstico</div>
+          <div class="sub" id="rotDiagMini">—</div>
+        </div>
+
+        <div class="diag" id="rotDiag">
+          —<br>
+        </div>
+
+        <div class="hint">
+          Si ves “0 candidatos”, revisa: vista (view), hideAlt, kind/tag, y si tienes “Solo favoritos”.
         </div>
       </div>
     </div>
@@ -723,6 +907,16 @@
     if (o.limit != null) qs("#limit").value = String(o.limit);
     if (typeof o.favOnly === "boolean") favOnly = o.favOnly;
 
+    // rotation
+    if (typeof o.rotEnabled === "boolean") qs("#rotEnabled").checked = o.rotEnabled;
+    if (o.rotEvery != null) qs("#rotEvery").value = String(o.rotEvery);
+    if (o.rotMode) qs("#rotMode").value = String(o.rotMode);
+    if (o.rotUseUiFilters != null) qs("#rotUseUiFilters").value = String(o.rotUseUiFilters ? 1 : 0);
+    if (o.rotKind != null) qs("#rotKind").value = String(o.rotKind);
+    if (o.rotTag != null) qs("#rotTag").value = String(o.rotTag);
+    if (typeof o.rotFavsOnly === "boolean") qs("#rotFavsOnly").checked = o.rotFavsOnly;
+    if (typeof o.rotTagStrict === "boolean") qs("#rotTagStrict").checked = o.rotTagStrict;
+
     // sync seg buttons
     syncKindSeg();
   }
@@ -773,6 +967,7 @@
     applyOptsToUI();
     renderList();
     updateDiag();
+    updateRotationUi();
     toast(KEY ? `key=${KEY}` : "key vacía");
     return true;
   }
@@ -781,6 +976,7 @@
   const dot = qs("#dot");
   const statusTxt = qs("#statusTxt");
   const nowTxt = qs("#nowTxt");
+  const rotChip = qs("#rotChip");
 
   const listEl = qs("#list");
   const qEl = qs("#q");
@@ -822,6 +1018,22 @@
   const btnCopyState = qs("#btnCopyState");
   const btnCopyCmd = qs("#btnCopyCmd");
 
+  // Rotation UI
+  const rotEnabledEl = qs("#rotEnabled");
+  const rotEveryEl = qs("#rotEvery");
+  const rotModeEl = qs("#rotMode");
+  const rotUseUiFiltersEl = qs("#rotUseUiFilters");
+  const rotKindEl = qs("#rotKind");
+  const rotTagEl = qs("#rotTag");
+  const rotFavsOnlyEl = qs("#rotFavsOnly");
+  const rotTagStrictEl = qs("#rotTagStrict");
+  const btnRotToggle = qs("#btnRotToggle");
+  const btnRotNow = qs("#btnRotNow");
+  const btnRotReset = qs("#btnRotReset");
+  const rotStatusTxt = qs("#rotStatusTxt");
+  const rotDiagMini = qs("#rotDiagMini");
+  const rotDiag = qs("#rotDiag");
+
   // ───────────────────────── BroadcastChannels (player/control bus) ─────────────────────────
   let bcs = [];
   function closeChannels(){
@@ -834,7 +1046,6 @@
 
     for (const busName of BUS_KEYS){
       try{
-        // si allowLegacy=0 y hay KEY: BUS_KEYS ya excluye legacy base, perfecto
         const bc = new BroadcastChannel(busName);
         bc.onmessage = (ev)=>onBus(ev?.data, busName);
         bcs.push(bc);
@@ -906,7 +1117,6 @@
       const s = safeJson(raw, null);
       if (!s || typeof s !== "object") continue;
 
-      // acepta múltiples formatos (state o snapshot con campos de cam)
       const t = String(s.type || s.t || "").toLowerCase();
       if (t && t !== "state") {
         if (!s.cam && !s.nowCam && !s.currentCam && !s.camId && !s.currentCamId && !s.activeCamId) continue;
@@ -921,14 +1131,12 @@
   }
 
   function extractCam(s){
-    // cam object en varios nombres
     const cam = (s && typeof s.cam === "object" && s.cam) ? s.cam
       : (s && typeof s.nowCam === "object" && s.nowCam) ? s.nowCam
       : (s && typeof s.currentCam === "object" && s.currentCam) ? s.currentCam
       : (s && typeof s.activeCam === "object" && s.activeCam) ? s.activeCam
       : null;
 
-    // id en varios nombres
     const id =
       (cam && cam.id != null) ? String(cam.id)
       : (s && s.camId != null) ? String(s.camId)
@@ -990,7 +1198,6 @@
 
     const t = String(msg.type || msg.t || "").toLowerCase();
 
-    // boot/pings/event: adopta key si llega
     if (t === "event" || t === "evt" || t === "boot" || msg.name === "PLAYER_BOOT" || msg.name === "OBS_PANEL_BOOT") {
       const mk = String(msg.key || "").trim();
       if (mk && !KEY) setKey(mk);
@@ -1008,7 +1215,6 @@
       return;
     }
 
-    // algunos stacks mandan "snapshot" sin type; si detectamos campos típicos, lo aceptamos como state
     if (!t && (msg.cam || msg.nowCam || msg.currentCam || msg.camId || msg.activeCamId || msg.currentCamId)) {
       if (!keyOkForMsg(msg)) return;
       lastState = msg;
@@ -1117,22 +1323,17 @@
     const v = String(viewEl.value || "catalog");
     const d = lastCamsDetail || null;
 
-    // soporta variantes de nombre (detail.list/main, catalog/catalogList, news/newsList, etc.)
-    const main = pickDetailList(d,
-      "list","main","mainList","cams","camList"
-    ) || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
+    const main = pickDetailList(d,"list","main","mainList","cams","camList")
+      || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
 
-    const cat  = pickDetailList(d,
-      "catalog","catalogList","cat","catList","catalogCams"
-    ) || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
+    const cat  = pickDetailList(d,"catalog","catalogList","cat","catList","catalogCams")
+      || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
 
-    const news = pickDetailList(d,
-      "news","newsList","newsCams","news_items"
-    ) || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
+    const news = pickDetailList(d,"news","newsList","newsCams","news_items")
+      || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
 
-    const newsCat = pickDetailList(d,
-      "newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList"
-    ) || news;
+    const newsCat = pickDetailList(d,"newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList")
+      || news;
 
     if (v === "main") return main;
     if (v === "catalog") return cat;
@@ -1165,6 +1366,7 @@
     applyCamsUiFromDetail(lastCamsDetail);
     renderList();
     updateDiag();
+    updateRotationUi();
   });
 
   function syncUiFromRLCCams(){
@@ -1263,6 +1465,9 @@
     return 0;
   }
 
+  // ✅ mantenemos la última lista renderizada (IDs) para rotación con filtros UI
+  let lastRenderedIds = [];
+
   function renderList(customList=null){
     const baseList = Array.isArray(customList) ? customList : getListByView();
     const activeId = getActiveId();
@@ -1314,6 +1519,9 @@
     });
 
     if (lim > 0 && filtered.length > lim) filtered = filtered.slice(0, lim);
+
+    // guarda IDs renderizados (para rotación con filtros UI)
+    lastRenderedIds = filtered.map(c => String(c.id));
 
     const totalMain = (Array.isArray(window.CAM_LIST) ? window.CAM_LIST.length : 0);
     const totalCat  = (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST.length : 0);
@@ -1455,6 +1663,7 @@
         else favs.add(id);
         saveFavs(favs);
         renderList();
+        updateRotationUi();
       });
 
       const bOpen = document.createElement("button");
@@ -1489,6 +1698,8 @@
       limit: clamp(parseInt(limitEl.value||"0",10),0,5000)|0,
       favOnly: !!favOnly
     });
+
+    updateRotationUi();
   }
 
   function markActiveCam(){
@@ -1603,6 +1814,237 @@
       const bk = String(b.getAttribute("data-kind")||"");
       b.classList.toggle("segOn", bk === k);
     }
+  }
+
+  // ───────────────────────── ROTACIÓN PRO ─────────────────────────
+  let rotTimer = null;
+  let rotIndex = 0;
+  let rotPool = [];         // ids actuales
+  let rotUsed = new Set();  // para rndNoRep
+  let lastRotAt = 0;
+
+  function camTagsBlob(c){
+    const parts = [];
+    if (!c) return "";
+    if (Array.isArray(c.tags)) parts.push(c.tags.join(" "));
+    if (c.tags && !Array.isArray(c.tags)) parts.push(String(c.tags));
+    if (c.tag) parts.push(String(c.tag));
+    if (c.category) parts.push(String(c.category));
+    if (c.categories) parts.push(String(c.categories));
+    return stripDiacritics(parts.join(" ")).toLowerCase();
+  }
+
+  function kindOkForRotation(c, rotKind){
+    const rk = norm(rotKind);
+    if (!rk) return true;
+    const ck = norm(c.kind);
+    if (rk === "other") return ck !== "youtube" && ck !== "hls" && ck !== "image";
+    return ck === rk;
+  }
+
+  function tagOkForRotation(c, rotTag, strict){
+    const t = stripDiacritics(norm(rotTag));
+    if (!t) return strict ? false : true;
+    const blob = camTagsBlob(c);
+    // contiene
+    return blob.includes(t);
+  }
+
+  function buildRotationCandidates(){
+    const useUi = String(rotUseUiFiltersEl.value || "1") === "1";
+    const rotKind = String(rotKindEl.value || "");
+    const rotTag = String(rotTagEl.value || "");
+    const favsOnly = !!rotFavsOnlyEl.checked;
+    const strictTag = !!rotTagStrictEl.checked;
+
+    // base list: vista actual siempre (para que “catalog/main/news” siga teniendo sentido)
+    const base = getListByView()
+      .filter(c => c && c.id != null)
+      .filter(c => hideAltOk(c)); // ALT siempre respetado (y view allNoAlt)
+
+    // si usamos filtros UI, arrancamos de lo renderizado (respeta búsqueda/limit/favOnly/kindEl)
+    let list;
+    if (useUi){
+      const idSet = new Set(lastRenderedIds || []);
+      list = base.filter(c => idSet.has(String(c.id)));
+    } else {
+      // no UI: no aplicamos búsqueda/limit/kindEl/favOnly; solo rot filters + (opcional) favsOnly
+      list = base.slice();
+    }
+
+    // aplicar filtros de rotación
+    list = list
+      .filter(c => kindOkForRotation(c, rotKind))
+      .filter(c => tagOkForRotation(c, rotTag, strictTag))
+      .filter(c => !favsOnly || favs.has(String(c.id)));
+
+    // uniq por id, por si vienen duplicados
+    const seen = new Set();
+    const out = [];
+    for (const c of list){
+      const id = String(c.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(c);
+    }
+    return out;
+  }
+
+  function refreshRotationPool(){
+    const list = buildRotationCandidates();
+    rotPool = list.map(c => String(c.id));
+    // ajustar índice para no salirse
+    if (rotIndex >= rotPool.length) rotIndex = 0;
+
+    // si el pool cambió, podemos resetear rndNoRep si ya no cuadra
+    const mode = String(rotModeEl.value || "seq");
+    if (mode === "rndNoRep"){
+      // limpia usados que ya no existen
+      const poolSet = new Set(rotPool);
+      const nextUsed = new Set();
+      for (const id of rotUsed) if (poolSet.has(id)) nextUsed.add(id);
+      rotUsed = nextUsed;
+      if (rotUsed.size >= rotPool.length) rotUsed.clear();
+    }
+
+    const meta = `cands=${rotPool.length} · useUI=${(String(rotUseUiFiltersEl.value||"1")==="1")?1:0}`;
+    rotDiagMini.textContent = meta;
+
+    // diag bonito
+    const rk = String(rotKindEl.value||"") || "(any)";
+    const rt = String(rotTagEl.value||"") || "(none)";
+    const favsOnly = rotFavsOnlyEl.checked ? "1" : "0";
+    const strict = rotTagStrictEl.checked ? "1" : "0";
+    const mode = String(rotModeEl.value||"seq");
+    rotDiag.innerHTML =
+      `<b>Pool</b>: ${rotPool.length} cámaras<br>`+
+      `<b>Modo</b>: ${mode} · <b>Intervalo</b>: ${clamp(parseInt(rotEveryEl.value||"30",10),3,3600)}s<br>`+
+      `<b>Filtros</b>: kind=${rk} · tag~=${rt} · favsOnly=${favsOnly} · tagStrict=${strict}<br>`+
+      `<b>Usar filtros UI</b>: ${String(rotUseUiFiltersEl.value||"1")==="1" ? "sí" : "no"}<br>`+
+      `<b>Pos</b>: idx=${rotIndex} · usados=${rotUsed.size}`;
+  }
+
+  function updateRotationUi(){
+    refreshRotationPool();
+
+    const enabled = !!rotEnabledEl.checked;
+    const running = !!rotTimer;
+
+    rotStatusTxt.textContent = enabled ? (running ? "RUNNING" : "ARMED") : "OFF";
+
+    rotChip.classList.toggle("off", !(enabled && running));
+    rotChip.textContent = enabled && running ? `⟳ Rotación: ON (${rotPool.length})` : "⟳ Rotación: OFF";
+
+    btnRotToggle.textContent = (enabled && running) ? "⟲ STOP" : "⟳ START";
+    btnRotToggle.classList.toggle("danger", enabled && running);
+    btnRotToggle.classList.toggle("primary", !(enabled && running));
+
+    // si enabled pero pool vacío: avisito
+    if (enabled && rotPool.length === 0){
+      // no spamear
+      const t = now();
+      if (t - lastRotAt > 2500) toast("Rotación: 0 candidatos (revisa tipo/tag/filtros)");
+    }
+    setTopH();
+  }
+
+  function stopRotation(){
+    if (rotTimer){ clearInterval(rotTimer); rotTimer = null; }
+    updateRotationUi();
+  }
+
+  function startRotation(){
+    stopRotation();
+    if (!rotEnabledEl.checked) return;
+
+    const everySec = clamp(parseInt(rotEveryEl.value||"30",10), 3, 3600) | 0;
+    saveRotationOpts();
+    updateRotationUi();
+
+    if (rotPool.length === 0){
+      rotEnabledEl.checked = false;
+      saveRotationOpts();
+      updateRotationUi();
+      toast("Rotación desactivada (0 candidatos)");
+      return;
+    }
+
+    rotTimer = setInterval(()=>{
+      if (!rotEnabledEl.checked) { stopRotation(); return; }
+      rotateOnce("tick");
+    }, everySec * 1000);
+
+    updateRotationUi();
+    toast(`Rotación ON (${everySec}s)`);
+  }
+
+  function pickNextId(){
+    if (!rotPool.length) return "";
+
+    const mode = String(rotModeEl.value || "seq");
+    if (mode === "seq"){
+      const id = rotPool[rotIndex % rotPool.length];
+      rotIndex = (rotIndex + 1) % rotPool.length;
+      return id;
+    }
+
+    if (mode === "rnd"){
+      const id = rotPool[(Math.random() * rotPool.length) | 0];
+      return id;
+    }
+
+    // rndNoRep
+    if (mode === "rndNoRep"){
+      if (rotUsed.size >= rotPool.length) rotUsed.clear();
+      const candidates = rotPool.filter(id => !rotUsed.has(id));
+      const id = candidates.length ? candidates[(Math.random()*candidates.length)|0] : rotPool[(Math.random()*rotPool.length)|0];
+      rotUsed.add(id);
+      return id;
+    }
+
+    // fallback
+    const id = rotPool[rotIndex % rotPool.length];
+    rotIndex = (rotIndex + 1) % rotPool.length;
+    return id;
+  }
+
+  function rotateOnce(reason="manual"){
+    refreshRotationPool();
+    if (!rotPool.length){
+      stopRotation();
+      rotEnabledEl.checked = false;
+      saveRotationOpts();
+      updateRotationUi();
+      toast("Rotación OFF (0 candidatos)");
+      return;
+    }
+
+    const id = pickNextId();
+    if (!id) return;
+
+    lastRotAt = now();
+    sendCmd("GOTO", { id, camId:id, targetId:id, gotoId:id, setCamId:id, reason: "ROTATE_"+reason });
+    updateRotationUi();
+  }
+
+  function resetRotationCycle(){
+    rotIndex = 0;
+    rotUsed.clear();
+    toast("Rotación: ciclo reseteado");
+    updateRotationUi();
+  }
+
+  function saveRotationOpts(){
+    saveOpts({
+      rotEnabled: !!rotEnabledEl.checked,
+      rotEvery: clamp(parseInt(rotEveryEl.value||"30",10),3,3600)|0,
+      rotMode: String(rotModeEl.value || "seq"),
+      rotUseUiFilters: String(rotUseUiFiltersEl.value||"1")==="1",
+      rotKind: String(rotKindEl.value || ""),
+      rotTag: String(rotTagEl.value || ""),
+      rotFavsOnly: !!rotFavsOnlyEl.checked,
+      rotTagStrict: !!rotTagStrictEl.checked
+    });
   }
 
   // ───────────────────────── Controls ─────────────────────────
@@ -1728,6 +2170,57 @@
   btnCopyState.addEventListener("click", ()=>copyText(diagState.value));
   btnCopyCmd.addEventListener("click", ()=>copyText(diagCmd.value));
 
+  // Rotation listeners
+  function onRotationChange(){
+    saveRotationOpts();
+    updateRotationUi();
+
+    // si está corriendo y cambias interval/mode/filtros, reinicia timer para aplicar
+    if (rotTimer){
+      startRotation();
+    }
+  }
+
+  rotEnabledEl.addEventListener("change", ()=>{
+    saveRotationOpts();
+    if (rotEnabledEl.checked) startRotation();
+    else stopRotation();
+  });
+  rotEveryEl.addEventListener("change", onRotationChange);
+  rotModeEl.addEventListener("change", onRotationChange);
+  rotUseUiFiltersEl.addEventListener("change", onRotationChange);
+  rotKindEl.addEventListener("change", onRotationChange);
+  rotTagEl.addEventListener("input", ()=>{
+    saveRotationOpts();
+    updateRotationUi();
+  });
+  rotFavsOnlyEl.addEventListener("change", onRotationChange);
+  rotTagStrictEl.addEventListener("change", onRotationChange);
+
+  btnRotToggle.addEventListener("click", ()=>{
+    if (rotTimer){
+      rotEnabledEl.checked = false;
+      saveRotationOpts();
+      stopRotation();
+      toast("Rotación OFF");
+    } else {
+      rotEnabledEl.checked = true;
+      saveRotationOpts();
+      startRotation();
+    }
+  });
+
+  btnRotNow.addEventListener("click", ()=>{
+    if (!rotEnabledEl.checked){
+      // permitir “rotar ahora” aunque esté OFF
+      rotateOnce("manual_off");
+    } else {
+      rotateOnce("manual");
+    }
+  });
+
+  btnRotReset.addEventListener("click", ()=>resetRotationCycle());
+
   // ───────────────────────── Diag / watchdog ─────────────────────────
   function updateDiag(){
     const age = lastSeenAt ? (now() - lastSeenAt) : null;
@@ -1784,6 +2277,7 @@
 
     markActiveCam();
     updateDiag();
+    updateRotationUi();
   }
 
   // ───────────────────────── Boot ─────────────────────────
@@ -1817,6 +2311,17 @@
     if (KEY) ping.key = KEY;
     for (const bc of bcs) { try { bc.postMessage(ping); } catch(_){} }
   } catch(_){}
+
+  // si rotEnabled venía guardado: arranca
+  try{
+    const o = loadOpts();
+    if (o && o.rotEnabled){
+      rotEnabledEl.checked = true;
+      startRotation();
+    } else {
+      updateRotationUi();
+    }
+  }catch(_){}
 
   setInterval(tick, 750);
 })();
