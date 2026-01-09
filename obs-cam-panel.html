@@ -19,6 +19,12 @@
      - Espera inteligente a que cams.js cargue y publique listas (sin loops agresivos)
      - Fallbacks extra: RLCCams (si expone listas), detail variants, y re-render automático al poblar
      - “Recargar lista” ahora fuerza “ensure lists” + refresh suave
+
+  ✅ NUEVO (2026-01): HUD Catálogo 4-UP integrado (sin archivo nuevo)
+     - Solo aparece en vista “Catálogo” (y “News (catálogo)”)
+     - Muestra estructura 2x2 (TL/TR/BL/BR) con tipo/estado por slot (best-effort)
+     - Permite elegir SLOT destino (1-4) y asignar una cámara a ese slot usando “IR”
+     - NEXT/PREV en catálogo respetan el slot seleccionado (envía payload con slot*; fallback seguro)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -393,6 +399,93 @@
     }
     .toast.on{opacity:1; transform:translateY(0)}
 
+    /* ───────────────────────── HUD Catálogo 4-UP (NUEVO) ───────────────────────── */
+    .hudCard{ margin-top:var(--gap); }
+    .hudBar{
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      padding:8px 10px;
+      border:1px solid var(--stroke);
+      background:rgba(0,0,0,.18);
+      border-radius:14px;
+      margin-top:8px;
+    }
+    .hudGrid{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+    }
+    .hudTile{
+      border:1px solid var(--stroke);
+      border-radius:16px;
+      background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
+      padding:10px 10px;
+      min-height:110px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      cursor:pointer;
+      transition: transform .10s ease, border-color .12s ease, background .12s ease;
+      position:relative;
+      overflow:hidden;
+    }
+    .hudTile:hover{ transform: translateY(-1px); border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.07); }
+    .hudTile.sel{ border-color:rgba(55,214,255,.62); background:rgba(55,214,255,.10); box-shadow: var(--focus); }
+    .hudTopRow{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .hudSlot{
+      display:flex; gap:8px; align-items:center;
+      font-weight:1000;
+      letter-spacing:.2px;
+      font-size:12px;
+      color:rgba(255,255,255,.92);
+    }
+    .hudSlot .pos{
+      font-family:var(--mono);
+      padding:3px 7px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(0,0,0,.22);
+      color:rgba(255,255,255,.86);
+      font-size:11px;
+      font-weight:1000;
+    }
+    .hudBadge{
+      font-family:var(--mono);
+      font-weight:1000;
+      font-size:11px;
+      padding:3px 7px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(0,0,0,.22);
+      color:rgba(255,255,255,.86);
+      white-space:nowrap;
+    }
+    .hudBadge.yt{ border-color:rgba(55,214,255,.28); background:rgba(55,214,255,.10); }
+    .hudBadge.hls{ border-color:rgba(25,226,138,.24); background:rgba(25,226,138,.10); }
+    .hudBadge.img{ border-color:rgba(255,206,87,.26); background:rgba(255,206,87,.10); }
+    .hudTitle{
+      font-weight:1000;
+      font-size:13px;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .hudSubline{
+      font-size:12px;
+      color:var(--mut);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .hudMiniHint{
+      position:absolute;
+      right:10px; bottom:10px;
+      font-family:var(--mono);
+      font-size:11px;
+      font-weight:1000;
+      opacity:.75;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.18);
+      padding:3px 7px;
+      border-radius:999px;
+    }
+
     @media (max-width:1060px){
       .row3{grid-template-columns:1fr 1fr;}
     }
@@ -710,6 +803,34 @@
       </div>
     </div>
 
+    <!-- ✅ HUD Catálogo (aparece solo en catálogo/newsCatalog) -->
+    <div class="card hudCard" id="hudCard" style="display:none;">
+      <div class="cardTitle">
+        <div class="h">HUD Catálogo (4-UP)</div>
+        <div class="sub" id="hudSub">Destino: —</div>
+      </div>
+
+      <div class="hudBar">
+        <div class="seg" id="segHudMode">
+          <button data-mode="auto" class="segOn">AUTO</button>
+          <button data-mode="main">Principal</button>
+          <button data-mode="slot">Slot</button>
+        </div>
+        <div class="sp"></div>
+        <button class="smallBtn" id="btnHudPrev">⟵ PREV SLOT</button>
+        <button class="smallBtn primary" id="btnHudNext">NEXT SLOT ⟶</button>
+        <button class="smallBtn" id="btnHudSync">Sync desde STATE</button>
+        <button class="smallBtn danger" id="btnHudClear">Limpiar HUD</button>
+      </div>
+
+      <div class="hudGrid" id="hudGrid"></div>
+
+      <div class="hint">
+        En catálogo, selecciona un <b>slot</b> (TL/TR/BL/BR). Luego pulsa <b>IR</b> en una cámara para asignarla a ese slot.
+        (Envía payload con <span class="mono">slot/targetSlot</span>; si tu player no soporta slots, hará fallback al cambio normal.)
+      </div>
+    </div>
+
     <div class="listTop">
       <div class="meta" id="countTxt">Cams: —</div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -921,7 +1042,11 @@
     if (typeof o.rotFavsOnly === "boolean") qs("#rotFavsOnly").checked = o.rotFavsOnly;
     if (typeof o.rotTagStrict === "boolean") qs("#rotTagStrict").checked = o.rotTagStrict;
 
-    // sync seg buttons
+    // HUD (nuevo)
+    if (o.hudMode) hudMode = String(o.hudMode);
+    if (o.hudSlot != null) hudSlot = clamp(parseInt(o.hudSlot,10), 1, 4) | 0;
+
+    syncHudModeSeg();
     syncKindSeg();
   }
 
@@ -970,6 +1095,8 @@
 
     applyOptsToUI();
     renderList();
+    updateHudVisibility(); // HUD
+    renderHud(); // HUD
     updateDiag();
     updateRotationUi();
     toast(KEY ? `key=${KEY}` : "key vacía");
@@ -1037,6 +1164,16 @@
   const rotStatusTxt = qs("#rotStatusTxt");
   const rotDiagMini = qs("#rotDiagMini");
   const rotDiag = qs("#rotDiag");
+
+  // HUD UI (nuevo)
+  const hudCard = qs("#hudCard");
+  const hudSub = qs("#hudSub");
+  const hudGrid = qs("#hudGrid");
+  const segHudMode = qs("#segHudMode");
+  const btnHudPrev = qs("#btnHudPrev");
+  const btnHudNext = qs("#btnHudNext");
+  const btnHudSync = qs("#btnHudSync");
+  const btnHudClear = qs("#btnHudClear");
 
   // ───────────────────────── BroadcastChannels (player/control bus) ─────────────────────────
   let bcs = [];
@@ -1215,6 +1352,10 @@
       lastStateKeyUsed = busName || lastStateKeyUsed;
       renderTopFromState(msg);
       markActiveCam();
+      // HUD (best-effort)
+      updateHudVisibility();
+      syncHudFromState(msg);
+      renderHud();
       updateDiag();
       return;
     }
@@ -1226,6 +1367,9 @@
       lastStateKeyUsed = busName || lastStateKeyUsed;
       renderTopFromState(msg);
       markActiveCam();
+      updateHudVisibility();
+      syncHudFromState(msg);
+      renderHud();
       updateDiag();
     }
   }
@@ -1241,6 +1385,9 @@
       lastSeenAt = now();
       renderTopFromState(s);
       markActiveCam();
+      updateHudVisibility();
+      syncHudFromState(s);
+      renderHud();
       updateDiag();
     }
   });
@@ -1297,7 +1444,8 @@
       try { bc.postMessage(pkt); } catch(_){}
     }
 
-    toast(`CMD → ${cmd}${payload && payload.id!=null ? " ("+payload.id+")" : ""}`);
+    const extra = (payload && payload.id!=null) ? " ("+payload.id+")" : "";
+    toast(`CMD → ${cmd}${extra}`);
     updateDiag();
   }
 
@@ -1425,6 +1573,8 @@
     lastCamsDetail = (ev && ev.detail) ? ev.detail : null;
     applyCamsUiFromDetail(lastCamsDetail);
     renderList();
+    updateHudVisibility();
+    renderHud();
     updateDiag();
     updateRotationUi();
   });
@@ -1498,6 +1648,343 @@
     lsSet(favStoreKey(), JSON.stringify(Array.from(set)));
   }
   let favs = loadFavs();
+
+  // ───────────────────────── HUD Catálogo (NUEVO) ─────────────────────────
+  // hudMode: auto/main/slot  (auto => en catálogo usa slot; fuera usa main)
+  let hudMode = "auto";
+  let hudSlot = 1; // 1..4
+  let hudSlots = [
+    { id:"", title:"—", place:"", kind:"", source:"" },
+    { id:"", title:"—", place:"", kind:"", source:"" },
+    { id:"", title:"—", place:"", kind:"", source:"" },
+    { id:"", title:"—", place:"", kind:"", source:"" }
+  ];
+
+  const SLOT_POS = ["TL","TR","BL","BR"];
+
+  function isCatalogLikeView(v){
+    v = String(v || "");
+    return v === "catalog" || v === "newsCatalog";
+  }
+
+  function effectiveTargetMode(){
+    const v = String(viewEl.value || "catalog");
+    if (hudMode === "main") return "main";
+    if (hudMode === "slot") return "slot";
+    // auto
+    return isCatalogLikeView(v) ? "slot" : "main";
+  }
+
+  function syncHudModeSeg(){
+    if (!segHudMode) return;
+    for (const b of segHudMode.querySelectorAll("button[data-mode]")){
+      const m = String(b.getAttribute("data-mode")||"auto");
+      b.classList.toggle("segOn", m === hudMode);
+    }
+  }
+
+  function updateHudVisibility(){
+    if (!hudCard) return;
+    const show = isCatalogLikeView(viewEl.value);
+    hudCard.style.display = show ? "" : "none";
+    updateHudSub();
+    setTopH();
+  }
+
+  function updateHudSub(){
+    const mode = effectiveTargetMode();
+    const pos = SLOT_POS[(hudSlot-1)|0] || "—";
+    if (hudSub){
+      hudSub.textContent = (mode === "slot")
+        ? `Destino: SLOT ${hudSlot} (${pos})`
+        : `Destino: Principal`;
+    }
+  }
+
+  function badgeClassForKind(kind){
+    const k = norm(kind);
+    if (k === "youtube") return "yt";
+    if (k === "hls") return "hls";
+    if (k === "image") return "img";
+    return "";
+  }
+
+  function ensureHudGrid(){
+    if (!hudGrid) return;
+    if (hudGrid.childElementCount) return;
+
+    for (let i=1;i<=4;i++){
+      const tile = document.createElement("div");
+      tile.className = "hudTile";
+      tile.dataset.slot = String(i);
+
+      const top = document.createElement("div");
+      top.className = "hudTopRow";
+
+      const slot = document.createElement("div");
+      slot.className = "hudSlot";
+      slot.innerHTML = `SLOT <b>${i}</b> <span class="pos">${SLOT_POS[i-1]}</span>`;
+
+      const badge = document.createElement("div");
+      badge.className = "hudBadge";
+      badge.textContent = "—";
+      badge.dataset.role = "badge";
+
+      top.appendChild(slot);
+      top.appendChild(badge);
+
+      const title = document.createElement("div");
+      title.className = "hudTitle";
+      title.textContent = "—";
+      title.dataset.role = "title";
+
+      const sub = document.createElement("div");
+      sub.className = "hudSubline";
+      sub.textContent = "—";
+      sub.dataset.role = "sub";
+
+      const hint = document.createElement("div");
+      hint.className = "hudMiniHint";
+      hint.textContent = "click → seleccionar";
+      hint.dataset.role = "hint";
+
+      tile.appendChild(top);
+      tile.appendChild(title);
+      tile.appendChild(sub);
+      tile.appendChild(hint);
+
+      tile.addEventListener("click", ()=>{
+        hudSlot = i;
+        saveOpts({ hudSlot: hudSlot });
+        updateHudSub();
+        renderHud();
+        toast(`HUD: slot ${hudSlot} (${SLOT_POS[hudSlot-1]})`);
+      });
+
+      hudGrid.appendChild(tile);
+    }
+  }
+
+  function renderHud(){
+    if (!hudCard || hudCard.style.display === "none") return;
+    ensureHudGrid();
+    updateHudSub();
+    syncHudModeSeg();
+
+    const tiles = hudGrid.querySelectorAll(".hudTile");
+    tiles.forEach((t)=>{
+      const slot = clamp(parseInt(t.dataset.slot,10),1,4)|0;
+      const info = hudSlots[slot-1] || {};
+      const sel = (slot === hudSlot);
+      t.classList.toggle("sel", sel);
+
+      const badge = t.querySelector('[data-role="badge"]');
+      const title = t.querySelector('[data-role="title"]');
+      const sub = t.querySelector('[data-role="sub"]');
+      const hint = t.querySelector('[data-role="hint"]');
+
+      const kind = String(info.kind || "");
+      const id = String(info.id || "");
+      const ttl = String(info.title || "—");
+      const plc = String(info.place || "");
+      const src = String(info.source || "");
+
+      if (badge){
+        badge.className = "hudBadge " + badgeClassForKind(kind);
+        badge.textContent = kind ? kind.toUpperCase() : "—";
+      }
+      if (title){
+        title.textContent = ttl || (id ? `Cam ${id}` : "—");
+      }
+      if (sub){
+        const s = `${id ? "id:"+id : ""}${plc ? " · "+plc : ""}${src ? " · "+src : ""}`.trim();
+        sub.textContent = s || "—";
+      }
+      if (hint){
+        hint.textContent = sel ? "DESTINO ✓" : "click → seleccionar";
+        hint.style.opacity = sel ? "1" : ".75";
+      }
+    });
+  }
+
+  function extractCamLike(o){
+    if (!o || typeof o !== "object") return null;
+    // Si viene como {cam:{...}} o parecido
+    const c = extractCam(o);
+    if (c && (c.id || c.title || c.kind || c.place || c.source)) return c;
+    // Si viene ya como cam directa
+    const id = (o.id!=null) ? String(o.id) : (o.camId!=null) ? String(o.camId) : "";
+    const title = (o.title!=null) ? String(o.title) : "";
+    const place = (o.place!=null) ? String(o.place) : "";
+    const kind = (o.kind!=null) ? String(o.kind) : "";
+    const source = (o.source!=null) ? String(o.source) : "";
+    if (id || title || kind || place || source) return { id, title, place, kind, source, raw:o };
+    return null;
+  }
+
+  function findArrayDeep(obj, maxDepth=4){
+    const seen = new Set();
+    const q = [{v:obj,d:0}];
+    while(q.length){
+      const {v,d} = q.shift();
+      if (!v || typeof v !== "object") continue;
+      if (seen.has(v)) continue;
+      seen.add(v);
+
+      // arrays candidatas de 4
+      if (Array.isArray(v) && v.length >= 4){
+        const first4 = v.slice(0,4);
+        // heurística: elementos con id/camId/cam/kind/title
+        const ok = first4.some(x=>{
+          if (!x || typeof x !== "object") return false;
+          return (x.id!=null || x.camId!=null || x.cam || x.kind || x.title);
+        });
+        if (ok) return v;
+      }
+
+      if (d >= maxDepth) continue;
+      for (const k of Object.keys(v)){
+        const child = v[k];
+        if (child && typeof child === "object") q.push({v:child,d:d+1});
+      }
+    }
+    return null;
+  }
+
+  function syncHudFromState(s){
+    // Solo nos interesa “best-effort” para dibujar el HUD.
+    // Si no encontramos slots, dejamos los últimos.
+    if (!s || typeof s !== "object") return false;
+
+    const candidates = [];
+
+    // 1) keys típicas
+    const directArrays = [
+      s.slots, s.slotCams, s.grid, s.gridSlots, s.catalogSlots, s.catalog,
+      s.multi, s.multicam, s.layout, s.tiles, s.panels
+    ].filter(Array.isArray);
+
+    for (const arr of directArrays){
+      if (Array.isArray(arr) && arr.length >= 4){
+        candidates.push(arr);
+      }
+    }
+
+    // 2) objetos contenedores típicos
+    const containers = [
+      s.catalog, s.multicam, s.multi, s.layout, s.grid, s.scene, s.view, s.screen
+    ].filter(x=>x && typeof x === "object");
+
+    for (const c of containers){
+      for (const key of ["slots","cams","items","views","panes","tiles","grid","cells","cards"]){
+        const arr = c[key];
+        if (Array.isArray(arr) && arr.length >= 4) candidates.push(arr);
+      }
+    }
+
+    // 3) deep scan (último recurso)
+    if (!candidates.length){
+      const deep = findArrayDeep(s, 4);
+      if (Array.isArray(deep) && deep.length >= 4) candidates.push(deep);
+    }
+
+    // elegir la mejor: la que tenga más “cam-likeness” en los 4 primeros
+    let best = null;
+    let bestScore = -1;
+
+    for (const arr of candidates){
+      let sc = 0;
+      for (let i=0;i<4;i++){
+        const x = arr[i];
+        const c = extractCamLike(x);
+        if (c && (c.id || c.title || c.kind)) sc += 1;
+        if (c && c.id) sc += 1;
+      }
+      if (sc > bestScore){
+        bestScore = sc;
+        best = arr;
+      }
+    }
+
+    if (!best || bestScore <= 0) return false;
+
+    const next = [];
+    for (let i=0;i<4;i++){
+      const c = extractCamLike(best[i]) || { id:"", title:"—", place:"", kind:"", source:"", raw: best[i] };
+      next.push({ id:c.id||"", title:c.title||"—", place:c.place||"", kind:c.kind||"", source:c.source||"" });
+    }
+    if (next.length === 4){
+      hudSlots = next;
+      return true;
+    }
+    return false;
+  }
+
+  function makeTargetPayload(){
+    const mode = effectiveTargetMode();
+    if (mode !== "slot") return { target:"main" };
+
+    const slot = clamp(hudSlot, 1, 4) | 0;
+    const idx = slot - 1;
+    const pos = SLOT_POS[idx] || "";
+    return {
+      target: "slot",
+      slot: slot,
+      targetSlot: slot,
+      slotIndex: idx,
+      gridIndex: idx,
+      paneIndex: idx,
+      cellIndex: idx,
+      pos: pos,
+      layout: "2x2",
+      view: "catalog"
+    };
+  }
+
+  function gotoCamWithTarget(camObjOrId){
+    const id = (typeof camObjOrId === "string") ? camObjOrId : String(camObjOrId?.id || "");
+    if (!id) return;
+
+    // buscar cam en lista actual (para HUD inmediato)
+    let cObj = null;
+    try{
+      const base = getListByView();
+      cObj = (Array.isArray(base) ? base.find(x=>x && String(x.id)===id) : null) || null;
+    }catch(_){}
+
+    const target = makeTargetPayload();
+
+    const payload = Object.assign({
+      id, camId:id, targetId:id, gotoId:id, setCamId:id
+    }, target, {
+      // extras compat
+      scope: target.target === "slot" ? "slot" : "main",
+      assign: target.target === "slot" ? "slot" : "main",
+      setSlot: target.target === "slot" ? target.slot : undefined
+    });
+
+    // actualiza HUD local “optimista” si vamos a slot
+    if (target.target === "slot"){
+      const slot = clamp(target.slot,1,4)|0;
+      const info = cObj ? {
+        id:String(cObj.id||id),
+        title:String(cObj.title||`Cam ${id}`),
+        place:String(cObj.place||""),
+        kind:String(cObj.kind||""),
+        source:String(cObj.source||"")
+      } : {
+        id:id, title:`Cam ${id}`, place:"", kind:"", source:""
+      };
+      hudSlots[slot-1] = info;
+      renderHud();
+    }
+
+    sendCmd("GOTO", payload);
+
+    if (target.target === "slot"){
+      toast(`IR → slot ${target.slot} (${SLOT_POS[(target.slot-1)|0]}) · id:${id}`);
+    }
+  }
 
   // ───────────────────────── Render list ─────────────────────────
   function camKindBadge(kind){
@@ -1650,12 +2137,18 @@
       ? " · <b>Esperando cams…</b> (si tarda: pulsa REFRESH o revisa cams.js)"
       : "";
 
+    const mode = effectiveTargetMode();
+    const tgt = (mode === "slot" && isCatalogLikeView(v))
+      ? ` · target=slot${hudSlot}(${SLOT_POS[hudSlot-1]})`
+      : ` · target=main`;
+
     countTxt.innerHTML =
       `Mostrando: <b>${filtered.length}</b> · vista <b>${vLabel}</b>` +
       `${favOnly ? " · ★ favs" : ""}` +
       `${hideAltEl.checked ? " · sin ALT" : ""}` +
       `${lim ? " · limit " + lim : ""}` +
       ` · totals: main=${totalMain}, cat=${totalCat}, news=${totalNews}` +
+      tgt +
       emptyHint;
 
     listEl.innerHTML = "";
@@ -1753,6 +2246,16 @@
         tags.appendChild(a);
       }
 
+      // target badge (solo si estamos en catálogo y destino slot)
+      if (isCatalogLikeView(viewEl.value) && effectiveTargetMode() === "slot"){
+        const tb = document.createElement("div");
+        tb.className = "tag";
+        tb.style.borderColor = "rgba(55,214,255,.35)";
+        tb.style.background = "rgba(55,214,255,.12)";
+        tb.textContent = `→ slot${hudSlot}:${SLOT_POS[hudSlot-1]}`;
+        tags.appendChild(tb);
+      }
+
       body.appendChild(t1);
       body.appendChild(t2);
       body.appendChild(tags);
@@ -1765,7 +2268,7 @@
       bGo.textContent = "IR";
       bGo.addEventListener("click", (ev)=>{
         ev.preventDefault();
-        sendCmd("GOTO", { id, camId:id, targetId:id, gotoId:id, setCamId:id });
+        gotoCamWithTarget(id);
       });
 
       const bStar = document.createElement("button");
@@ -1778,6 +2281,7 @@
         else favs.add(id);
         saveFavs(favs);
         renderList();
+        renderHud();
         updateRotationUi();
       });
 
@@ -1814,6 +2318,8 @@
       favOnly: !!favOnly
     });
 
+    updateHudVisibility();
+    renderHud();
     updateRotationUi();
   }
 
@@ -2167,8 +2673,25 @@
   }
 
   // ───────────────────────── Controls ─────────────────────────
-  btnNext.addEventListener("click", ()=>sendCmd("NEXT"));
-  btnPrev.addEventListener("click", ()=>sendCmd("PREV"));
+  btnNext.addEventListener("click", ()=>{
+    const mode = effectiveTargetMode();
+    if (isCatalogLikeView(viewEl.value) && mode === "slot"){
+      const t = makeTargetPayload();
+      sendCmd("NEXT", Object.assign({}, t, { scope:"slot" }));
+    } else {
+      sendCmd("NEXT");
+    }
+  });
+
+  btnPrev.addEventListener("click", ()=>{
+    const mode = effectiveTargetMode();
+    if (isCatalogLikeView(viewEl.value) && mode === "slot"){
+      const t = makeTargetPayload();
+      sendCmd("PREV", Object.assign({}, t, { scope:"slot" }));
+    } else {
+      sendCmd("PREV");
+    }
+  });
 
   btnPlay.addEventListener("click", ()=>{
     const s = lastState || readState();
@@ -2211,6 +2734,7 @@
     favs = new Set();
     saveFavs(favs);
     renderList();
+    renderHud();
   });
 
   qEl.addEventListener("input", ()=>renderList());
@@ -2222,6 +2746,8 @@
   viewEl.addEventListener("change", ()=>{
     saveOpts({ view: viewEl.value });
     renderList();
+    updateHudVisibility();
+    renderHud();
   });
   hideAltEl.addEventListener("change", ()=>{
     saveOpts({ hideAlt: !!hideAltEl.checked });
@@ -2339,6 +2865,60 @@
 
   btnRotReset.addEventListener("click", ()=>resetRotationCycle());
 
+  // ───────────────────────── HUD events (NUEVO) ─────────────────────────
+  if (segHudMode){
+    segHudMode.addEventListener("click", (ev)=>{
+      const b = ev.target && ev.target.closest("button[data-mode]");
+      if (!b) return;
+      hudMode = String(b.getAttribute("data-mode")||"auto");
+      saveOpts({ hudMode: hudMode });
+      syncHudModeSeg();
+      updateHudSub();
+      renderList(); // para actualizar badge target
+      renderHud();
+      toast(`HUD mode → ${hudMode}`);
+    });
+  }
+
+  btnHudPrev && btnHudPrev.addEventListener("click", ()=>{
+    const t = makeTargetPayload();
+    if (t.target === "slot"){
+      sendCmd("PREV", Object.assign({}, t, { scope:"slot" }));
+    } else {
+      sendCmd("PREV");
+    }
+  });
+
+  btnHudNext && btnHudNext.addEventListener("click", ()=>{
+    const t = makeTargetPayload();
+    if (t.target === "slot"){
+      sendCmd("NEXT", Object.assign({}, t, { scope:"slot" }));
+    } else {
+      sendCmd("NEXT");
+    }
+  });
+
+  btnHudSync && btnHudSync.addEventListener("click", ()=>{
+    const s = lastState || readState();
+    if (s && syncHudFromState(s)){
+      renderHud();
+      toast("HUD: sync OK");
+    } else {
+      toast("HUD: no se encontró layout en STATE");
+    }
+  });
+
+  btnHudClear && btnHudClear.addEventListener("click", ()=>{
+    hudSlots = [
+      { id:"", title:"—", place:"", kind:"", source:"" },
+      { id:"", title:"—", place:"", kind:"", source:"" },
+      { id:"", title:"—", place:"", kind:"", source:"" },
+      { id:"", title:"—", place:"", kind:"", source:"" }
+    ];
+    renderHud();
+    toast("HUD: limpiado");
+  });
+
   // ───────────────────────── Diag / watchdog ─────────────────────────
   function updateDiag(){
     const age = lastSeenAt ? (now() - lastSeenAt) : null;
@@ -2356,6 +2936,11 @@
     const totalCat  = (getWindowCatalog() || []).length;
     const totalNews = (getWindowNews() || []).length;
 
+    const mode = effectiveTargetMode();
+    const tgtTxt = (isCatalogLikeView(viewEl.value) && mode === "slot")
+      ? `slot${hudSlot}(${SLOT_POS[hudSlot-1]})`
+      : "main";
+
     diagTxt.innerHTML =
       `<b>origin</b>: ${origin}<br>`+
       `<b>KEY</b>: ${KEY ? `<span class="mono">${KEY}</span>` : "(vacía)"} · allowLegacy=${allowLegacy ? "1":"0"} · lastKey=<span class="mono">${(localStorage.getItem("rlc_last_key_v1")||"")}</span><br>`+
@@ -2364,6 +2949,7 @@
       `<b>STATE keys</b>: <span class="mono">${STATE_KEYS.join(", ")}</span><br>`+
       `<b>BUS</b>: ${busInfo} · <b>cams.js</b>: <span class="mono">${camsVer}</span><br>`+
       `<b>Listas</b>: CAM_LIST=${totalMain}, CAT=${totalCat}, NEWS=${totalNews}<br>`+
+      `<b>HUD</b>: mode=<span class="mono">${hudMode}</span> · target=<span class="mono">${tgtTxt}</span><br>`+
       `<b>Tip</b>: si en OBS no sincroniza, suele ser por aislamiento de storage/BC entre Dock y BrowserSource. Abre el player con la misma <span class="mono">key</span> y prueba en ventana normal para confirmar.`;
 
     const s = lastState || readState();
@@ -2380,6 +2966,10 @@
       lastState = s;
       lastSeenAt = now();
       renderTopFromState(s);
+      // HUD
+      updateHudVisibility();
+      syncHudFromState(s);
+      renderHud();
     }
 
     const age = now() - (lastSeenAt || 0);
@@ -2410,6 +3000,7 @@
     lastState = s0;
     lastSeenAt = now();
     renderTopFromState(s0);
+    syncHudFromState(s0);
   } else {
     statusTxt.textContent = "SIN STATE";
   }
@@ -2419,10 +3010,13 @@
     renderList();
     syncUiFromRLCCams();
     ensureListsLoaded(true);
+    updateHudVisibility();
+    renderHud();
   } catch(_){}
 
   updateDiag();
   syncKindSeg();
+  syncHudModeSeg();
   setTopH();
 
   // Ping suave al bus
