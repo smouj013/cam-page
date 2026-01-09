@@ -592,18 +592,8 @@
       source: "earthTV (YouTube Live)",
       kind: "youtube",
       youtubeId: "XaI4meBJr20",
-      originUrl: "https://www.youtube.com/watch?v=XaI4meBJr20",
+      originUrl: "https://www.youtube.com/watch?v=Fu8vYoIkaeM",
       tags: ["usa","washington","white_house","landmark"]
-    },
-    {
-      id: "us_white_house_earthtv_alt",
-      title: "White House (Alt) — Live Cam",
-      place: "Washington, D.C., USA",
-      source: "earthTV (YouTube Live)",
-      kind: "youtube",
-      youtubeId: "5OYlzN9cr5w",
-      originUrl: "https://www.youtube.com/watch?v=5OYlzN9cr5w",
-      tags: ["usa","washington","white_house","landmark","alt"]
     },
 
     // (VIDEO ONLY) — entradas image se ignoran en export
