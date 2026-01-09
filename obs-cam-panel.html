@@ -14,6 +14,11 @@
      - Respeta allowLegacy=0: no legacy base si KEY existe
      - State/cam fields variantes + rlc_cam_list_updated.detail variantes
      - CMD robusto (ts Number, nonce) + storage + BC según allowLegacy
+
+  ✅ MEJORA CLAVE (2026-01): “Encuentra cams” mucho mejor
+     - Espera inteligente a que cams.js cargue y publique listas (sin loops agresivos)
+     - Fallbacks extra: RLCCams (si expone listas), detail variants, y re-render automático al poblar
+     - “Recargar lista” ahora fuerza “ensure lists” + refresh suave
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -234,7 +239,6 @@
     .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
     .grid2{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr;}
     .grid3{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr 1fr;}
-    .grid4{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr 1fr 1fr;}
 
     .tog{
       display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -1319,24 +1323,80 @@
     return Array.from(m.values());
   }
 
+  // ✅ API list helpers (mucho más tolerante)
+  function camsApi(){
+    return (window.RLCCams && typeof window.RLCCams === "object") ? window.RLCCams : null;
+  }
+  function apiTryGetList(api, name){
+    if (!api) return null;
+    try {
+      if (typeof api.getList === "function") {
+        const v = api.getList(name);
+        if (Array.isArray(v)) return v;
+      }
+    } catch(_){}
+    try {
+      if (typeof api.getLists === "function") {
+        const o = api.getLists();
+        if (o && typeof o === "object") {
+          const v = o[name];
+          if (Array.isArray(v)) return v;
+        }
+      }
+    } catch(_){}
+    try {
+      // algunos builds guardan en api.state / api.data
+      const bag = api.state || api.data || api._state || api._data;
+      if (bag && typeof bag === "object") {
+        const v = bag[name];
+        if (Array.isArray(v)) return v;
+      }
+    } catch(_){}
+    return null;
+  }
+
+  function getWindowList(){
+    return (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : null)
+      || (Array.isArray(window.camList) ? window.camList : null)
+      || (Array.isArray(window.cams) ? window.cams : null)
+      || null;
+  }
+  function getWindowCatalog(){
+    return (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : null) || null;
+  }
+  function getWindowNews(){
+    return (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : null) || null;
+  }
+
   function getListByView(){
     const v = String(viewEl.value || "catalog");
     const d = lastCamsDetail || null;
+    const api = camsApi();
 
-    const main = pickDetailList(d,"list","main","mainList","cams","camList")
-      || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : []);
+    // prioridad 1: event.detail
+    const mainFromDetail = pickDetailList(d,"list","main","mainList","cams","camList");
+    const catFromDetail  = pickDetailList(d,"catalog","catalogList","cat","catList","catalogCams");
+    const newsFromDetail = pickDetailList(d,"news","newsList","newsCams","news_items");
+    const newsCatFromDetail = pickDetailList(d,"newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList");
 
-    const cat  = pickDetailList(d,"catalog","catalogList","cat","catList","catalogCams")
-      || (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : []);
+    // prioridad 2: globals
+    const mainFromWindow = getWindowList();
+    const catFromWindow  = getWindowCatalog();
+    const newsFromWindow = getWindowNews();
 
-    const news = pickDetailList(d,"news","newsList","newsCams","news_items")
-      || (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : []);
+    // prioridad 3: RLCCams (si expone)
+    const mainFromApi = apiTryGetList(api, "main") || apiTryGetList(api, "list") || apiTryGetList(api, "cams");
+    const catFromApi  = apiTryGetList(api, "catalog") || apiTryGetList(api, "catalogList") || apiTryGetList(api, "cat");
+    const newsFromApi = apiTryGetList(api, "news") || apiTryGetList(api, "newsList");
+    const newsCatFromApi = apiTryGetList(api, "newsCatalog") || apiTryGetList(api, "newsCatalogList") || null;
 
-    const newsCat = pickDetailList(d,"newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList")
-      || news;
+    const main = mainFromDetail || mainFromWindow || mainFromApi || [];
+    const cat  = catFromDetail  || catFromWindow  || catFromApi  || [];
+    const news = newsFromDetail || newsFromWindow || newsFromApi || [];
+    const newsCat = newsCatFromDetail || newsCatFromApi || news;
 
     if (v === "main") return main;
-    if (v === "catalog") return cat;
+    if (v === "catalog") return cat.length ? cat : main;
     if (v === "news") return news;
     if (v === "newsCatalog") return newsCat;
 
@@ -1368,6 +1428,54 @@
     updateDiag();
     updateRotationUi();
   });
+
+  // ✅ Espera inteligente para “encontrar cams” (sin matar rendimiento)
+  let ensureTimer = null;
+  let ensureTry = 0;
+  function listsTotals(){
+    const main = (getWindowList() || []).length;
+    const cat  = (getWindowCatalog() || []).length;
+    const news = (getWindowNews() || []).length;
+    // también cuenta por getListByView (por si viene de detail/api)
+    const viewLen = (getListByView() || []).length;
+    return { main, cat, news, viewLen };
+  }
+  function hasAnyCams(){
+    const t = listsTotals();
+    return (t.main + t.cat + t.news + t.viewLen) > 0;
+  }
+  function ensureListsLoaded(force=false){
+    clearTimeout(ensureTimer);
+    if (force) ensureTry = 0;
+
+    // ya hay cams => re-render y listo
+    if (hasAnyCams()){
+      ensureTry = 0;
+      renderList();
+      return;
+    }
+
+    // intentos con backoff suave
+    ensureTry++;
+    const delay = clamp(250 * ensureTry, 250, 2500);
+
+    // “toquecito” a cams.js por si aún no refrescó (solo en los primeros intentos)
+    if (ensureTry <= 3){
+      try { camsRefresh(); } catch(_){}
+    }
+
+    ensureTimer = setTimeout(()=>{
+      // si sigue vacío, intenta re-render (por si justo entró algo)
+      try { renderList(); } catch(_){}
+      // reintenta hasta un máximo razonable
+      if (ensureTry < 12 && !hasAnyCams()){
+        ensureListsLoaded(false);
+      } else if (!hasAnyCams()){
+        // mensaje útil (no spam)
+        toast("Aún sin cams: revisa que cams.js cargue y que no esté bloqueado por CORS/OBS");
+      }
+    }, delay);
+  }
 
   function syncUiFromRLCCams(){
     const api = camsApi();
@@ -1448,6 +1556,7 @@
     if (!c) return false;
     if (Array.isArray(c.tags) && c.tags.includes("news")) return true;
     if (typeof c.tag === "string" && String(c.tag).toLowerCase().includes("news")) return true;
+    if (typeof c.category === "string" && String(c.category).toLowerCase().includes("news")) return true;
     return false;
   }
 
@@ -1474,7 +1583,7 @@
     const sortMode = String(sortEl.value || "activeFav");
     const lim = clamp(parseInt(limitEl.value||"0", 10), 0, 5000) | 0;
 
-    let filtered = baseList
+    let filtered = (Array.isArray(baseList) ? baseList : [])
       .filter(c => c && c.id != null)
       .filter(kindFilterOk)
       .filter(queryOk)
@@ -1523,9 +1632,9 @@
     // guarda IDs renderizados (para rotación con filtros UI)
     lastRenderedIds = filtered.map(c => String(c.id));
 
-    const totalMain = (Array.isArray(window.CAM_LIST) ? window.CAM_LIST.length : 0);
-    const totalCat  = (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST.length : 0);
-    const totalNews = (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST.length : 0);
+    const totalMain = (getWindowList() || []).length;
+    const totalCat  = (getWindowCatalog() || []).length;
+    const totalNews = (getWindowNews() || []).length;
 
     const v = String(viewEl.value || "catalog");
     const vLabel = (v === "main") ? "MAIN"
@@ -1536,12 +1645,18 @@
       : (v === "allNoAlt") ? "ALL_NO_ALT"
       : "LIST";
 
+    // si no hay nada todavía, mensaje útil
+    const emptyHint = (!filtered.length && !hasAnyCams())
+      ? " · <b>Esperando cams…</b> (si tarda: pulsa REFRESH o revisa cams.js)"
+      : "";
+
     countTxt.innerHTML =
       `Mostrando: <b>${filtered.length}</b> · vista <b>${vLabel}</b>` +
       `${favOnly ? " · ★ favs" : ""}` +
       `${hideAltEl.checked ? " · sin ALT" : ""}` +
       `${lim ? " · limit " + lim : ""}` +
-      ` · totals: main=${totalMain}, cat=${totalCat}, news=${totalNews}`;
+      ` · totals: main=${totalMain}, cat=${totalCat}, news=${totalNews}` +
+      emptyHint;
 
     listEl.innerHTML = "";
     const frag = document.createDocumentFragment();
@@ -1718,17 +1833,14 @@
   }
 
   // ───────────────────────── cams.js actions ─────────────────────────
-  function camsApi(){
-    return (window.RLCCams && typeof window.RLCCams === "object") ? window.RLCCams : null;
-  }
-
   function camsRefresh(){
     const api = camsApi();
     if (api && typeof api.refresh === "function"){
-      try { api.refresh(); toast("cams.js → refresh()"); return; } catch(_){}
+      try { api.refresh(); toast("cams.js → refresh()"); ensureListsLoaded(true); return; } catch(_){}
     }
     postCamsBC({ type:"CAMS_REFRESH", ts: now(), key: KEY || "" });
     toast("CAMS_REFRESH → BC");
+    ensureListsLoaded(true);
   }
 
   function camsClearCache(){
@@ -1789,20 +1901,39 @@
 
   function pickFeatured4(){
     const api = camsApi();
-    if (!api || typeof api.getCatalogFeatured !== "function"){
-      toast("RLCCams.getCatalogFeatured no disponible");
+    if (api && typeof api.getCatalogFeatured === "function"){
+      try {
+        const items = api.getCatalogFeatured(4) || [];
+        if (Array.isArray(items) && items.length){
+          viewEl.value = "catalog";
+          renderList(items);
+          toast("Mostrando featured (4)");
+          return;
+        }
+      } catch(_){}
+    }
+
+    // fallback: intenta filtrar “featured” dentro del catálogo
+    const cat = getListByView().filter(c => c && c.id != null);
+    const featured = cat.filter(c => camText(c).includes("featured") || (Array.isArray(c.tags) && c.tags.includes("featured")));
+    const pool = featured.length ? featured : cat;
+    if (!pool.length){
+      toast("No hay catálogo aún (esperando cams)");
+      ensureListsLoaded(true);
       return;
     }
-    try {
-      const items = api.getCatalogFeatured(4) || [];
-      if (Array.isArray(items) && items.length){
-        viewEl.value = "catalog";
-        renderList(items);
-        toast("Mostrando featured (4)");
-      }
-    } catch(_){
-      toast("Error obteniendo featured");
+    const out = [];
+    const used = new Set();
+    while (out.length < 4 && used.size < pool.length){
+      const c = pool[(Math.random()*pool.length)|0];
+      const id = String(c.id);
+      if (used.has(id)) continue;
+      used.add(id);
+      out.push(c);
     }
+    viewEl.value = "catalog";
+    renderList(out);
+    toast("Mostrando random (4)");
   }
 
   // ───────────────────────── Kind Segmented ─────────────────────────
@@ -1846,7 +1977,6 @@
     const t = stripDiacritics(norm(rotTag));
     if (!t) return strict ? false : true;
     const blob = camTagsBlob(c);
-    // contiene
     return blob.includes(t);
   }
 
@@ -1857,28 +1987,23 @@
     const favsOnly = !!rotFavsOnlyEl.checked;
     const strictTag = !!rotTagStrictEl.checked;
 
-    // base list: vista actual siempre (para que “catalog/main/news” siga teniendo sentido)
     const base = getListByView()
       .filter(c => c && c.id != null)
-      .filter(c => hideAltOk(c)); // ALT siempre respetado (y view allNoAlt)
+      .filter(c => hideAltOk(c));
 
-    // si usamos filtros UI, arrancamos de lo renderizado (respeta búsqueda/limit/favOnly/kindEl)
     let list;
     if (useUi){
       const idSet = new Set(lastRenderedIds || []);
       list = base.filter(c => idSet.has(String(c.id)));
     } else {
-      // no UI: no aplicamos búsqueda/limit/kindEl/favOnly; solo rot filters + (opcional) favsOnly
       list = base.slice();
     }
 
-    // aplicar filtros de rotación
     list = list
       .filter(c => kindOkForRotation(c, rotKind))
       .filter(c => tagOkForRotation(c, rotTag, strictTag))
       .filter(c => !favsOnly || favs.has(String(c.id)));
 
-    // uniq por id, por si vienen duplicados
     const seen = new Set();
     const out = [];
     for (const c of list){
@@ -1893,22 +2018,14 @@
   function refreshRotationPool(){
     const list = buildRotationCandidates();
     rotPool = list.map(c => String(c.id));
-
-    // ajustar índice para no salirse
     if (rotIndex >= rotPool.length) rotIndex = 0;
 
-    // lee una vez el modo
     const rotMode = String(rotModeEl.value || "seq");
-
-    // si el pool cambió, podemos resetear rndNoRep si ya no cuadra
     if (rotMode === "rndNoRep"){
-      // limpia usados que ya no existen
       const poolSet = new Set(rotPool);
       const nextUsed = new Set();
-      for (const id of rotUsed) {
-        if (poolSet.has(id)) nextUsed.add(id);
-      }
-      rotUsed = nextUsed; // ✅ requiere que rotUsed sea LET, no CONST
+      for (const id of rotUsed) if (poolSet.has(id)) nextUsed.add(id);
+      rotUsed = nextUsed;
       if (rotUsed.size >= rotPool.length) rotUsed.clear();
     }
 
@@ -1916,7 +2033,6 @@
     const meta = `cands=${rotPool.length} · useUI=${useUi ? 1 : 0}`;
     rotDiagMini.textContent = meta;
 
-    // diag bonito
     const rk = String(rotKindEl.value || "") || "(any)";
     const rt = String(rotTagEl.value || "") || "(none)";
     const favsOnly = rotFavsOnlyEl.checked ? "1" : "0";
@@ -1946,9 +2062,7 @@
     btnRotToggle.classList.toggle("danger", enabled && running);
     btnRotToggle.classList.toggle("primary", !(enabled && running));
 
-    // si enabled pero pool vacío: avisito
     if (enabled && rotPool.length === 0){
-      // no spamear
       const t = now();
       if (t - lastRotAt > 2500) toast("Rotación: 0 candidatos (revisa tipo/tag/filtros)");
     }
@@ -2000,7 +2114,6 @@
       return id;
     }
 
-    // rndNoRep
     if (mode === "rndNoRep"){
       if (rotUsed.size >= rotPool.length) rotUsed.clear();
       const candidates = rotPool.filter(id => !rotUsed.has(id));
@@ -2009,7 +2122,6 @@
       return id;
     }
 
-    // fallback
     const id = rotPool[rotIndex % rotPool.length];
     rotIndex = (rotIndex + 1) % rotPool.length;
     return id;
@@ -2067,8 +2179,10 @@
   });
 
   btnReload.addEventListener("click", ()=>{
+    // fuerza “encontrar cams” y re-render
+    ensureListsLoaded(true);
     renderList();
-    toast("Lista re-render");
+    toast("Lista recargada");
   });
 
   btnRefresh.addEventListener("click", ()=>camsRefresh());
@@ -2079,7 +2193,6 @@
 
     if (KEY) url.searchParams.set("key", KEY);
     if (!allowLegacy) url.searchParams.set("allowLegacy", "0");
-
     if (!url.searchParams.has("v")) url.searchParams.set("v", (window.APP_VERSION || "2.3.9"));
 
     window.open(url.toString(), "_blank", "noopener");
@@ -2171,6 +2284,7 @@
   // Key change manual
   qs("#key").addEventListener("change", ()=>{
     setKey((qs("#key").value || "").trim());
+    ensureListsLoaded(true);
   });
 
   // Copy buttons
@@ -2181,8 +2295,6 @@
   function onRotationChange(){
     saveRotationOpts();
     updateRotationUi();
-
-    // si está corriendo y cambias interval/mode/filtros, reinicia timer para aplicar
     if (rotTimer){
       startRotation();
     }
@@ -2219,7 +2331,6 @@
 
   btnRotNow.addEventListener("click", ()=>{
     if (!rotEnabledEl.checked){
-      // permitir “rotar ahora” aunque esté OFF
       rotateOnce("manual_off");
     } else {
       rotateOnce("manual");
@@ -2241,9 +2352,9 @@
     const api = camsApi();
     const camsVer = (api && api.version) ? String(api.version) : "(sin RLCCams)";
 
-    const totalMain = (Array.isArray(window.CAM_LIST) ? window.CAM_LIST.length : 0);
-    const totalCat  = (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST.length : 0);
-    const totalNews = (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST.length : 0);
+    const totalMain = (getWindowList() || []).length;
+    const totalCat  = (getWindowCatalog() || []).length;
+    const totalNews = (getWindowNews() || []).length;
 
     diagTxt.innerHTML =
       `<b>origin</b>: ${origin}<br>`+
@@ -2303,9 +2414,11 @@
     statusTxt.textContent = "SIN STATE";
   }
 
+  // primer render + “encuentra cams” suave
   try {
     renderList();
     syncUiFromRLCCams();
+    ensureListsLoaded(true);
   } catch(_){}
 
   updateDiag();
