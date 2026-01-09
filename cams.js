@@ -591,7 +591,7 @@
       place: "Washington, D.C., USA",
       source: "earthTV (YouTube Live)",
       kind: "youtube",
-      youtubeId: "XaI4meBJr20",
+      youtubeId: "Fu8vYoIkaeM",
       originUrl: "https://www.youtube.com/watch?v=Fu8vYoIkaeM",
       tags: ["usa","washington","white_house","landmark"]
     },
