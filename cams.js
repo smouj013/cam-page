@@ -15,21 +15,13 @@
       - evento "rlc_cam_list_updated"
       - BroadcastChannel: rlc_bus_v1 y rlc_bus_v1:{key}
 
-   🔥 MEJORA CLAVE (sin subir versión):
-      - FIX REAL: antes se descartaban casi todos los resultados porque MUCHAS instancias Invidious
-        NO devuelven r.liveNow===true aunque el search sea features=live.
-        Ahora:
-          * Acepta múltiples flags (liveNow/live_now/isLive/etc.)
-          * Si vienen badges LIVE o lengthSeconds=0 => LIVE
-          * Si features=live y no hay señal clara => NO lo descartamos (best-effort), y dejamos que
-            la validación embed + live-check haga el filtro “real”.
-      - Proxies CORS extra para subir tasa de éxito (corsproxy.io / codetabs).
-      - Discovery “2 pasadas”: si no llega al mínimo (p.e. 500), relaja un poco el filtro (SIN dejar pasar tours/loops)
-        y cambia sort (views/date) para encontrar más directos reales.
-
-   🔧 Hotfix v2.3.9 (sin subir versión):
-      - Evita arrays de tareas gigantes (cap dinámico basado en presupuesto)
-      - Evita bitwise en horas de cache (más seguro)
+   🔥 MEJORAS/ARREGLOS (SIN SUBIR VERSIÓN):
+      - Cache interna de validaciones (embed/live) para NO revalidar el mismo video 20 veces.
+      - Backoff por instancia Invidious que falla (evita martilleo y sube tasa de éxito).
+      - FIX REAL: Invidious “features=live” con liveNow mal: aceptamos múltiples señales y dejamos
+        que embed/live-check decida.
+      - Presupuestos más estables y caps dinámicos (evita arrays/tareas gigantes).
+      - Limpieza extra de duplicados + canonicalización HLS.
 */
 
 (() => {
@@ -53,7 +45,13 @@
   MOD._timers = MOD._timers || [];
   MOD._abort = MOD._abort || new AbortController();
   MOD._bcs = MOD._bcs || [];
-  MOD._msgSig = "";
+  MOD._msgSig = MOD._msgSig || "";
+  MOD._readyResolved = MOD._readyResolved || false;
+
+  // caches internas (sesión) para evitar revalidaciones repetidas
+  MOD._embedCache = MOD._embedCache || new Map(); // videoId -> { ok, ts }
+  MOD._liveCache  = MOD._liveCache  || new Map(); // videoId -> { ok, ts }
+  MOD._instHealth = MOD._instHealth || new Map(); // instance -> { fail, untilTs }
 
   MOD.destroy = function destroy() {
     try { MOD._timers.forEach((t) => clearTimeout(t)); } catch (_) {}
@@ -63,6 +61,10 @@
     try { (MOD._bcs || []).forEach((c) => { try { c && c.close && c.close(); } catch (_) {} }); } catch (_) {}
     MOD._bcs = [];
     MOD._msgSig = "";
+    MOD._readyResolved = false;
+    try { MOD._embedCache && MOD._embedCache.clear(); } catch (_) {}
+    try { MOD._liveCache && MOD._liveCache.clear(); } catch (_) {}
+    try { MOD._instHealth && MOD._instHealth.clear(); } catch (_) {}
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -96,10 +98,6 @@
   const TARGET_CAMS_DEFAULT = 1200;
   let TARGET_CAMS = Math.max(50, Math.min(2500, parseIntSafe(getParam("camsTarget"), TARGET_CAMS_DEFAULT)));
 
-  // ⛳ Si quieres “asegurar” que el catálogo llegue a 500 sí o sí:
-  //    ?camsTarget=500   (recomendado)
-  // y si tu hosting es duro con proxies:
-  //    ?camsValidate=0&camsLiveCheck=0 (para llenar rápido; luego lo vuelves a activar)
   const MIN_CATALOG_GOAL = Math.max(50, Math.min(1200, parseIntSafe(getParam("camsMinCatalog"), 500)));
 
   // Catálogo
@@ -127,7 +125,7 @@
   // “Solo lives” (best-effort)
   let BEST_EFFORT_LIVE_CHECK = parseBool(getParam("camsLiveCheck"), true);
 
-  // Concurrencia (subida para que llegue a 500+ con más facilidad)
+  // Concurrencia
   const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(24, parseIntSafe(getParam("camsPages"), 14)));
   const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(1600, parseIntSafe(getParam("camsMaxPerQuery"), 900)));
   const DISCOVERY_CONCURRENCY = Math.max(1, Math.min(12, parseIntSafe(getParam("camsConc"), 8)));
@@ -469,7 +467,7 @@
     // Hints típicos
     if (includesAny(full, ALLOW_HINTS)) return true;
 
-    // último fallback: si tiene “live” + “cam/webcam/cctv” (evita directos random)
+    // último fallback: si tiene “live” + “cam/webcam/cctv”
     const hasLive = /\blive\b/i.test(full) || /\ben vivo\b/i.test(full) || /\ben directo\b/i.test(full);
     const hasCam = /\b(web\s?cam|webcam|cam|cctv|camera)\b/i.test(full) || /\b(cámara|camara)\b/i.test(full);
     return !!(hasLive && hasCam);
@@ -483,11 +481,14 @@
     if (!full) return false;
     if (matchesAnyRegex(full, BLOCK_RE)) return false;
 
-    // Si es marca webcam, entra
     if (includesAny(full, KNOWN_WEBCAM_BRANDS)) return true;
 
-    // Acepta “live” + alguna pista de lugar/escena típica aunque no diga webcam explícito
-    const hasLive = /\blive\b/i.test(full) || /\ben vivo\b/i.test(full) || /\ben directo\b/i.test(full) || /\b24\/7\b/.test(full) || /\b24-7\b/.test(full);
+    const hasLive =
+      /\blive\b/i.test(full) ||
+      /\ben vivo\b/i.test(full) ||
+      /\ben directo\b/i.test(full) ||
+      /\b24\/7\b/.test(full) ||
+      /\b24-7\b/.test(full);
     if (!hasLive) return false;
 
     const sceneHints = [
@@ -520,7 +521,7 @@
   function shuffleInPlace(arr) {
     if (!Array.isArray(arr) || arr.length < 2) return arr;
     for (let i = arr.length - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
+      const j = Math.floor(Math.random() * (i + 1));
       const t = arr[i];
       arr[i] = arr[j];
       arr[j] = t;
@@ -573,15 +574,18 @@
       originUrl: "https://www.youtube.com/watch?v=YRZMwOqHIEE",
       tags: ["beach","brazil"]
     },
+
+    // ❗️VIDEO ONLY: X broadcasts NO son youtube/hls → la deshabilitamos para no romper filtros
+    //    (si quieres, conviértela a HLS real o a YouTube Live)
     {
-      id: "caracas_venezuela",
-      title: "Caracas — Live Cam",
+      id: "caracas_venezuela_x",
+      title: "Caracas — Live (X Broadcast)",
       place: "Caracas, Venezuela",
       source: "X",
       kind: "x",
-      youtubeId: "1nAKEEAReXyKL",
       originUrl: "https://x.com/i/broadcasts/1nAKEEAReXyKL",
-      tags: ["venezuela","caracas"]
+      tags: ["venezuela","caracas"],
+      disabled: true
     },
 
     // ✅ USA — CASA BLANCA
@@ -1002,7 +1006,7 @@
         if (!url || !looksLikeM3U8(url)) continue;
 
         const canon = canonicalUrl(url);
-        const id = safeStr(cam.id) || `news_hls_${(Math.random() * 1e9) | 0}`;
+        const id = safeStr(cam.id) || `news_hls_${Math.floor(Math.random() * 1e9)}`;
         if (NEWS_SEEN_IDS.has(id)) continue;
         if (NEWS_SEEN_HLS.has(canon)) continue;
 
@@ -1084,10 +1088,7 @@
   }
 
   function compactCam(c) {
-    const o = {
-      id: cut(c.id, 64),
-      kind: c.kind
-    };
+    const o = { id: cut(c.id, 64), kind: c.kind };
     o.title = cut(c.title, 120);
     if (c.place) o.place = cut(c.place, 110);
     if (c.source) o.source = cut(c.source, 110);
@@ -1106,7 +1107,7 @@
   }
 
   // ✅ Cache robusta: si setItem falla por tamaño, reduce y reintenta
-  function saveCache(keyMain, listNonAlt, limit) {
+  function saveCache(keyMain, listNonAlt, limit, alsoLegacy) {
     let lim = Math.min(limit, listNonAlt.length);
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
@@ -1117,7 +1118,7 @@
           list: listNonAlt.slice(0, lim).map(compactCam)
         };
         localStorage.setItem(keyMain, JSON.stringify(payload));
-        if (!NS && keyMain === CACHE_KEY_V238) {
+        if (alsoLegacy) {
           localStorage.setItem(CACHE_KEY_LEGACY, JSON.stringify({ ts: payload.ts, list: payload.list }));
         }
         return;
@@ -1231,7 +1232,7 @@
     const maxTries = Math.max(60, n * 30);
     let tries = 0;
     while (out.length < n && tries++ < maxTries) {
-      const c = list[(Math.random() * list.length) | 0];
+      const c = list[Math.floor(Math.random() * list.length)];
       if (!c || !c.id || used.has(c.id)) continue;
       used.add(c.id);
       out.push(c);
@@ -1330,6 +1331,7 @@
     if (s.includes("this video is unavailable")) return true;
     if (s.includes("has been removed")) return true;
     if (s.includes("sign in to confirm your age")) return true;
+    if (s.includes("forbidden")) return true;
     return false;
   }
 
@@ -1416,33 +1418,70 @@
     throw new Error("fetchJsonSmart: JSON parse failed");
   }
 
+  // caches internos (sesión)
+  const VALIDATION_CACHE_TTL_MS = Math.max(10 * 60 * 1000, Math.min(6 * 60 * 60 * 1000, parseIntSafe(getParam("camsValidationCacheMs"), 2 * 60 * 60 * 1000)));
+  function cacheGet(map, key) {
+    try {
+      const it = map.get(key);
+      if (!it) return null;
+      if ((Date.now() - it.ts) > VALIDATION_CACHE_TTL_MS) { map.delete(key); return null; }
+      return it.ok === true;
+    } catch (_) { return null; }
+  }
+  function cacheSet(map, key, ok) {
+    try { map.set(key, { ok: !!ok, ts: Date.now() }); } catch (_) {}
+  }
+
   async function isReallyLiveYouTube(videoId, signal) {
     if (!BEST_EFFORT_LIVE_CHECK) return true;
+
+    const cached = cacheGet(MOD._liveCache, videoId);
+    if (cached !== null) return cached;
+
     if (!validateBudgetOk()) return true;
     __validateUsed++;
 
     try {
       const html = await fetchTextSmart(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, 12000, signal);
-      if (!html) return true;
+      if (!html) { cacheSet(MOD._liveCache, videoId, true); return true; }
       const h = html.toLowerCase();
-      if (textLooksNotLive(h)) return false;
+
+      if (textLooksNotLive(h)) { cacheSet(MOD._liveCache, videoId, false); return false; }
 
       // Señales típicas de live
-      if (h.includes("\"islive\":true") || h.includes("\"islivecontent\":true") || h.includes("\"islivenow\":true")) return true;
-      if (h.includes("hlsmanifesturl") || h.includes("livestreamability")) return true;
+      const liveSignals = [
+        "\"islive\":true",
+        "\"islivecontent\":true",
+        "\"islivenow\":true",
+        "hlsmanifesturl",
+        "livestreamability",
+        "live stream",
+        "\"is_live\":true"
+      ];
+      for (let i = 0; i < liveSignals.length; i++) {
+        if (h.includes(liveSignals[i])) { cacheSet(MOD._liveCache, videoId, true); return true; }
+      }
 
-      // Si no vemos señal, no bloqueamos (best-effort)
+      // si no hay señal clara, no bloqueamos (best-effort)
+      cacheSet(MOD._liveCache, videoId, true);
       return true;
     } catch (_) {
+      cacheSet(MOD._liveCache, videoId, true);
       return true;
     }
   }
 
   async function isEmbeddableYouTube(videoId, signal) {
+    const cached = cacheGet(MOD._embedCache, videoId);
+    if (cached !== null) return cached;
+
+    // si VALIDATE_EMBED off, hacemos solo live-check (barato)
     if (!VALIDATE_EMBED) {
-      // aun así hacemos live-check si está activo (barato comparado con embed)
-      return await isReallyLiveYouTube(videoId, signal);
+      const ok = await isReallyLiveYouTube(videoId, signal);
+      cacheSet(MOD._embedCache, videoId, ok);
+      return ok;
     }
+
     if (!validateBudgetOk()) return true;
     __validateUsed++;
 
@@ -1453,22 +1492,24 @@
       if (r && r.ok) {
         // ok
       } else if (r && r.status === 404) {
+        cacheSet(MOD._embedCache, videoId, false);
         return false;
       } else {
-        // 401/403 a veces es rate-limit: NO lo matamos aquí
+        // 401/403/rate-limit: no lo matamos aquí
       }
     } catch (_) {}
 
     // 2) embed HTML (best-effort)
     try {
       const html = await fetchTextSmart(`https://www.youtube.com/embed/${videoId}`, 10000, signal);
-      if (html && textLikelyBlockedEmbed(html)) return false;
+      if (html && textLikelyBlockedEmbed(html)) { cacheSet(MOD._embedCache, videoId, false); return false; }
     } catch (_) {}
 
     // 3) live check (best-effort)
     const liveOk = await isReallyLiveYouTube(videoId, signal);
-    if (!liveOk) return false;
+    if (!liveOk) { cacheSet(MOD._embedCache, videoId, false); return false; }
 
+    cacheSet(MOD._embedCache, videoId, true);
     return true;
   }
 
@@ -1528,9 +1569,12 @@
     const full = (title + " " + author).trim();
     if (!full) return false;
 
-    // excluye cosas tipo upcoming/premiere si vienen marcadas
+    // excluye “upcoming/premiere”
     if (r.isUpcoming === true || r.upcoming === true || r.premiere === true) return false;
     if (textLooksNotLive(title)) return false;
+
+    // shorts (a veces cuelan)
+    if (r.isShort === true || r.is_short === true) return false;
 
     // flags comunes
     const flags = [
@@ -1557,12 +1601,11 @@
       if (b.includes("live")) return true;
     }
 
-    // lengthSeconds 0 (muy típico en live)
+    // lengthSeconds 0 (típico en live)
     const ls = (r.lengthSeconds != null) ? Number(r.lengthSeconds) : (r.length_seconds != null ? Number(r.length_seconds) : NaN);
     if (Number.isFinite(ls) && ls === 0) return true;
 
-    // si el endpoint era features=live, muchas instancias devuelven liveNow false/undefined:
-    // NO lo descartamos; dejamos que isEmbeddable + live-check haga el filtro real.
+    // features=live: si no hay señal clara, NO descartamos: validación decide.
     return true;
   }
 
@@ -1610,8 +1653,35 @@
     }
   }
 
+  function instIsInBackoff(instance) {
+    const it = MOD._instHealth.get(instance);
+    if (!it) return false;
+    return (Date.now() < it.untilTs);
+  }
+  function instFail(instance) {
+    try {
+      const it = MOD._instHealth.get(instance) || { fail: 0, untilTs: 0 };
+      it.fail = Math.min(50, (it.fail || 0) + 1);
+      // backoff progresivo: 10s, 20s, 40s... cap 5min
+      const backoff = Math.min(5 * 60 * 1000, 10000 * Math.pow(2, Math.min(5, it.fail - 1)));
+      it.untilTs = Date.now() + backoff;
+      MOD._instHealth.set(instance, it);
+    } catch (_) {}
+  }
+  function instOk(instance) {
+    try {
+      const it = MOD._instHealth.get(instance);
+      if (!it) return;
+      // si va bien, bajamos fallos gradualmente
+      it.fail = Math.max(0, (it.fail || 0) - 1);
+      it.untilTs = 0;
+      MOD._instHealth.set(instance, it);
+    } catch (_) {}
+  }
+
   async function invidiousSearch(instance, q, page, region, sort, signal) {
     if (!budgetOk()) return [];
+    if (instIsInBackoff(instance)) return [];
     const base = instance.replace(/\/+$/, "");
     const url =
       `${base}/api/v1/search` +
@@ -1621,13 +1691,18 @@
       `&features=live` +
       `&sort=${encodeURIComponent(sort || "relevance")}` +
       `&region=${encodeURIComponent(region || "US")}`;
-    const res = await fetchJsonSmart(url, 13000, signal);
-    return Array.isArray(res) ? res : [];
+    try {
+      const res = await fetchJsonSmart(url, 13000, signal);
+      instOk(instance);
+      return Array.isArray(res) ? res : [];
+    } catch (e) {
+      instFail(instance);
+      throw e;
+    }
   }
 
   function capTasks(tasks) {
-    // cap dinámico: muchas queries + páginas pueden crear arrays enormes.
-    // margen de fallos (proxies, instancias caídas) sin petar memoria.
+    // cap dinámico: margen sin petar memoria.
     const max = Math.max(300, Math.min(42000, Math.floor(DISCOVERY_REQUEST_BUDGET * 4)));
     if (tasks.length <= max) return tasks;
     shuffleInPlace(tasks);
@@ -1674,7 +1749,7 @@
         try {
           const key = t.q + "|" + t.sort;
           foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) { await sleep(20); continue; }
+          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) { await sleep(15); continue; }
 
           const results = await invidiousSearch(t.inst, t.q, t.p, t.region, t.sort, signal);
 
@@ -1684,7 +1759,6 @@
             const r = results[i];
             if (!r || String(r.type || "").toLowerCase() !== "video") continue;
 
-            // ✅ FIX: NO dependemos solo de r.liveNow === true
             if (!isLiveResult(r)) continue;
 
             const cam = toAutoCam(r, relaxed);
@@ -1705,7 +1779,7 @@
         } catch (_) {
           // silencio
         } finally {
-          await sleep(relaxed ? 55 : 75);
+          await sleep(relaxed ? 45 : 60);
         }
       }
     }
@@ -1756,7 +1830,7 @@
         try {
           const key = t.q;
           foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= Math.max(60, Math.min(900, DISCOVERY_MAX_PER_QUERY))) { await sleep(20); continue; }
+          if (foundForQuery[key] >= Math.max(60, Math.min(900, DISCOVERY_MAX_PER_QUERY))) { await sleep(15); continue; }
 
           const results = await invidiousSearch(t.inst, t.q, t.p, t.region, t.sort, signal);
 
@@ -1785,7 +1859,7 @@
         } catch (_) {
           // silencio
         } finally {
-          await sleep(85);
+          await sleep(70);
         }
       }
     }
@@ -1832,7 +1906,7 @@
       if (kind === "youtube") {
         const yid = safeStr(n.youtubeId);
         let id = safeStr(n.id) || `news_${yid}`;
-        if (seenIds.has(id)) id = `${id}_${suffixTag}_${(Math.random() * 1e6) | 0}`;
+        if (seenIds.has(id)) id = `${id}_${suffixTag}_${Math.floor(Math.random() * 1e6)}`;
 
         return Object.assign({}, n, {
           id,
@@ -1843,8 +1917,8 @@
 
       if (kind === "hls") {
         const url = safeStr(n.url) || safeStr(n.originUrl);
-        let id = safeStr(n.id) || `news_hls_${(Math.random() * 1e9) | 0}`;
-        if (seenIds.has(id)) id = `${id}_${suffixTag}_${(Math.random() * 1e6) | 0}`;
+        let id = safeStr(n.id) || `news_hls_${Math.floor(Math.random() * 1e9)}`;
+        if (seenIds.has(id)) id = `${id}_${suffixTag}_${Math.floor(Math.random() * 1e6)}`;
 
         return Object.assign({}, n, {
           id,
@@ -1897,9 +1971,9 @@
 
     try {
       if (!AUTO_DISCOVERY && !NEWS_ENABLED) {
-        saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS);
+        saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS, (!NS));
         emitUpdate();
-        if (__resolveReady) __resolveReady(g.CAM_LIST);
+        if (__resolveReady && !MOD._readyResolved) { MOD._readyResolved = true; __resolveReady(g.CAM_LIST); }
         return;
       }
 
@@ -1932,7 +2006,7 @@
         let k = 0;
         while (OUT.length < TARGET_CAMS && k < 90000) {
           const src = OUT[k % baseLen];
-          const altN = ((k / baseLen) | 0) + 1;
+          const altN = (Math.floor(k / baseLen) + 1);
           const altId = `${src.id}_alt_${altN}`;
           if (!seenIds.has(altId)) {
             seenIds.add(altId);
@@ -1953,16 +2027,16 @@
       g.CAM_CATALOG_LIST = OUT_CATALOG;
       g.CAM_NEWS_LIST = OUT_NEWS;
 
-      saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS);
-      if (NEWS_ENABLED) saveCache(CACHE_NEWS_KEY_V238, OUT_NEWS_CATALOG, NEWS_TARGET);
+      saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS, (!NS));
+      if (NEWS_ENABLED) saveCache(CACHE_NEWS_KEY_V238, OUT_NEWS_CATALOG, NEWS_TARGET, false);
 
       emitUpdate();
-      if (__resolveReady) __resolveReady(g.CAM_LIST);
+      if (__resolveReady && !MOD._readyResolved) { MOD._readyResolved = true; __resolveReady(g.CAM_LIST); }
     } catch (_) {
-      try { saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS); } catch (_) {}
-      try { if (NEWS_ENABLED) saveCache(CACHE_NEWS_KEY_V238, OUT_NEWS_CATALOG, NEWS_TARGET); } catch (_) {}
+      try { saveCache(CACHE_KEY_V238, OUT_CATALOG, TARGET_CAMS, (!NS)); } catch (_) {}
+      try { if (NEWS_ENABLED) saveCache(CACHE_NEWS_KEY_V238, OUT_NEWS_CATALOG, NEWS_TARGET, false); } catch (_) {}
       try { emitUpdate(); } catch (_) {}
-      try { if (__resolveReady) __resolveReady(g.CAM_LIST); } catch (_) {}
+      try { if (__resolveReady && !MOD._readyResolved) { MOD._readyResolved = true; __resolveReady(g.CAM_LIST); } } catch (_) {}
     }
   }
 
