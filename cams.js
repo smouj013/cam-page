@@ -3,7 +3,7 @@
    ✅ VIDEO ONLY: exporta SOLO "youtube" y "hls" (descarta "image")
    ✅ Objetivo: 1200 cams reales por defecto (override: ?camsTarget=500/800/1200/1600...)
    ✅ Auto-discovery MUY ampliado:
-      - Invidious /api/v1/search?features=live + liveNow
+      - Invidious /api/v1/search?features=live + tolerancia a instancias que NO devuelven liveNow correctamente
       - Multi-región (rota region)
       - Queries generadas (lugares + categorías + hubs webcam) + pack grande
       - Filtros mejorados (evita “walk/tour/recorded/loop/timelapse”, sin matar “boardwalk”)
@@ -14,6 +14,18 @@
       - window.RLCCams.* API
       - evento "rlc_cam_list_updated"
       - BroadcastChannel: rlc_bus_v1 y rlc_bus_v1:{key}
+
+   🔥 MEJORA CLAVE (sin subir versión):
+      - FIX REAL: antes se descartaban casi todos los resultados porque MUCHAS instancias Invidious
+        NO devuelven r.liveNow===true aunque el search sea features=live.
+        Ahora:
+          * Acepta múltiples flags (liveNow/live_now/isLive/etc.)
+          * Si vienen badges LIVE o lengthSeconds=0 => LIVE
+          * Si features=live y no hay señal clara => NO lo descartamos (best-effort), y dejamos que
+            la validación embed + live-check haga el filtro “real”.
+      - Proxies CORS extra para subir tasa de éxito (corsproxy.io / codetabs).
+      - Discovery “2 pasadas”: si no llega al mínimo (p.e. 500), relaja un poco el filtro (SIN dejar pasar tours/loops)
+        y cambia sort (views/date) para encontrar más directos reales.
 
    🔧 Hotfix v2.3.9 (sin subir versión):
       - Evita arrays de tareas gigantes (cap dinámico basado en presupuesto)
@@ -80,9 +92,15 @@
     return Number.isFinite(n) ? n : def;
   }
 
-  // ✅ Objetivo por defecto: ~1200 (pediste)
+  // ✅ Objetivo por defecto
   const TARGET_CAMS_DEFAULT = 1200;
   let TARGET_CAMS = Math.max(50, Math.min(2500, parseIntSafe(getParam("camsTarget"), TARGET_CAMS_DEFAULT)));
+
+  // ⛳ Si quieres “asegurar” que el catálogo llegue a 500 sí o sí:
+  //    ?camsTarget=500   (recomendado)
+  // y si tu hosting es duro con proxies:
+  //    ?camsValidate=0&camsLiveCheck=0 (para llenar rápido; luego lo vuelves a activar)
+  const MIN_CATALOG_GOAL = Math.max(50, Math.min(1200, parseIntSafe(getParam("camsMinCatalog"), 500)));
 
   // Catálogo
   const CATALOG_PAGE_SIZE = 4;
@@ -92,7 +110,7 @@
   const CACHE_KEY_V238 = `rlc_bus_v1:cams_cache_v1${NS}`;      // nuevo (string estable)
   const CACHE_NEWS_KEY_V238 = `rlc_bus_v1:news_cache_v1${NS}`; // news (string estable)
 
-  // ✅ Para 1200 cams, cache vieja 12h ok. Si quieres más frescura: ?camsCacheHours=6
+  // ✅ Cache (12h default)
   const cacheHours = Math.max(0.5, Math.min(72, Number(parseIntSafe(getParam("camsCacheHours"), 12)) || 12));
   const CACHE_MAX_AGE_MS = Math.max(30 * 60 * 1000, Math.min(72 * 60 * 60 * 1000, cacheHours * 60 * 60 * 1000));
 
@@ -102,21 +120,21 @@
   // Validación embed (si da problemas en tu hosting: ?camsValidate=0)
   let VALIDATE_EMBED = parseBool(getParam("camsValidate"), true);
 
-  // Presupuesto de validaciones (sube un poco para 1200)
-  const VALIDATE_BUDGET = Math.max(0, Math.min(5000, parseIntSafe(getParam("camsValidateBudget"), 620)));
+  // Presupuesto de validaciones (sube un poco para targets grandes)
+  const VALIDATE_BUDGET = Math.max(0, Math.min(9000, parseIntSafe(getParam("camsValidateBudget"), 1200)));
   let __validateUsed = 0;
 
   // “Solo lives” (best-effort)
   let BEST_EFFORT_LIVE_CHECK = parseBool(getParam("camsLiveCheck"), true);
 
-  // Concurrencia (más agresiva para llegar a 1200)
-  const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(20, parseIntSafe(getParam("camsPages"), 10)));
-  const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(1200, parseIntSafe(getParam("camsMaxPerQuery"), 520)));
-  const DISCOVERY_CONCURRENCY = Math.max(1, Math.min(10, parseIntSafe(getParam("camsConc"), 6)));
-  const DISCOVERY_MAX_INSTANCES = Math.max(5, Math.min(28, parseIntSafe(getParam("camsInstances"), 18)));
+  // Concurrencia (subida para que llegue a 500+ con más facilidad)
+  const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(24, parseIntSafe(getParam("camsPages"), 14)));
+  const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(1600, parseIntSafe(getParam("camsMaxPerQuery"), 900)));
+  const DISCOVERY_CONCURRENCY = Math.max(1, Math.min(12, parseIntSafe(getParam("camsConc"), 8)));
+  const DISCOVERY_MAX_INSTANCES = Math.max(5, Math.min(40, parseIntSafe(getParam("camsInstances"), 26)));
 
   // Presupuesto global de requests
-  const DISCOVERY_REQUEST_BUDGET = Math.max(240, Math.min(8000, parseIntSafe(getParam("camsBudget"), 1800)));
+  const DISCOVERY_REQUEST_BUDGET = Math.max(240, Math.min(12000, parseIntSafe(getParam("camsBudget"), 3200)));
 
   // Failsafe ALT
   // ✅ Para targets grandes, si no quieres duplicados: ?camsAltFill=0
@@ -128,6 +146,9 @@
   let NEWS_IN_CATALOG = parseBool(getParam("camsNewsCatalog"), false);
   let NEWS_DISCOVERY = parseBool(getParam("camsNewsDiscovery"), true);
   let NEWS_TARGET = Math.max(10, Math.min(300, parseIntSafe(getParam("camsNewsTarget"), 60)));
+
+  // “Relajación” automática si no llegamos al mínimo (sin dejar pasar tours/loops)
+  const RELAX_PASSES = Math.max(0, Math.min(2, parseIntSafe(getParam("camsRelaxPasses"), 2)));
 
   // Regiones para discovery (rota)
   const DISCOVERY_REGIONS = [
@@ -230,8 +251,8 @@
     for (let i = 0; i < HUB_QUERIES.length; i++) set.add(HUB_QUERIES[i]);
 
     // más target => más combinaciones
-    const placeCap = Math.max(30, Math.min(PLACE_SEEDS.length, (target >= 1400 ? 90 : target >= 1000 ? 70 : 50)));
-    const suffixCap = Math.max(8, Math.min(PLACE_SUFFIXES.length, (target >= 1400 ? 18 : target >= 1000 ? 14 : 12)));
+    const placeCap = Math.max(30, Math.min(PLACE_SEEDS.length, (target >= 1400 ? 90 : target >= 1000 ? 70 : 60)));
+    const suffixCap = Math.max(10, Math.min(PLACE_SUFFIXES.length, (target >= 1400 ? 20 : target >= 1000 ? 16 : 14)));
 
     for (let i = 0; i < placeCap; i++) {
       const p = PLACE_SEEDS[i];
@@ -263,7 +284,10 @@
       "live mountain cam",
       "live volcano cam",
       "24/7 live webcam",
-      "webcam 24/7 live"
+      "webcam 24/7 live",
+      "city webcam live",
+      "downtown webcam live",
+      "bridge webcam live"
     ];
     for (let i = 0; i < extras.length; i++) set.add(extras[i]);
 
@@ -451,6 +475,30 @@
     return !!(hasLive && hasCam);
   }
 
+  // Un pelín más flexible, pero SIN permitir tours/loops/etc. (seguimos usando BLOCK_RE)
+  function camTitleOkRelaxed(title, author) {
+    const t = safeStr(title).toLowerCase();
+    const a = safeStr(author).toLowerCase();
+    const full = (t + " " + a).trim();
+    if (!full) return false;
+    if (matchesAnyRegex(full, BLOCK_RE)) return false;
+
+    // Si es marca webcam, entra
+    if (includesAny(full, KNOWN_WEBCAM_BRANDS)) return true;
+
+    // Acepta “live” + alguna pista de lugar/escena típica aunque no diga webcam explícito
+    const hasLive = /\blive\b/i.test(full) || /\ben vivo\b/i.test(full) || /\ben directo\b/i.test(full) || /\b24\/7\b/.test(full) || /\b24-7\b/.test(full);
+    if (!hasLive) return false;
+
+    const sceneHints = [
+      "downtown","city","harbor","harbour","port","beach","pier","boardwalk","promenade",
+      "square","plaza","street","traffic","bridge","airport","station","rail","train",
+      "mountain","alps","ski","snow","volcano","crater","lake","river","zoo","aquarium","wildlife"
+    ];
+    const hasScene = includesAny(full, sceneHints) || includesAny(full, ALLOW_HINTS);
+    return !!hasScene;
+  }
+
   function newsTitleOk(title, author) {
     const t = safeStr(title).toLowerCase();
     const a = safeStr(author).toLowerCase();
@@ -463,7 +511,9 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function clampInt(v, a, b) {
-    v = (v | 0);
+    v = Number(v);
+    if (!Number.isFinite(v)) v = 0;
+    v = Math.trunc(v);
     return Math.max(a, Math.min(b, v));
   }
 
@@ -900,7 +950,7 @@
       base.youtubeId = youtubeId;
       base.originUrl = safeStr(cam.originUrl) || `https://www.youtube.com/watch?v=${encodeURIComponent(youtubeId)}`;
       base.thumb = safeStr(cam.thumb) || youtubeThumb(youtubeId);
-      if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
+      if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = Math.trunc(cam.maxSeconds);
 
       pushCam(base);
       continue;
@@ -915,7 +965,7 @@
 
       base.url = url;
       base.originUrl = safeStr(cam.originUrl) || url;
-      if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = cam.maxSeconds | 0;
+      if (typeof cam.maxSeconds === "number" && cam.maxSeconds > 0) base.maxSeconds = Math.trunc(cam.maxSeconds);
 
       pushCam(base);
       continue;
@@ -1060,7 +1110,7 @@
       o.url = cut(c.url || "", 240);
     }
 
-    if (typeof c.maxSeconds === "number" && c.maxSeconds > 0) o.maxSeconds = c.maxSeconds | 0;
+    if (typeof c.maxSeconds === "number" && c.maxSeconds > 0) o.maxSeconds = Math.trunc(c.maxSeconds);
     if (Array.isArray(c.tags) && c.tags.length) o.tags = c.tags.slice(0, 8);
     return o;
   }
@@ -1170,13 +1220,13 @@
 
   function getCatalogTotalPages(pageSize = CATALOG_PAGE_SIZE) {
     const list = getCatalogList();
-    const ps = Math.max(1, (pageSize | 0));
+    const ps = Math.max(1, Math.trunc(pageSize) || 1);
     return Math.max(1, Math.ceil(list.length / ps));
   }
 
   function getCatalogPage(pageIndex, pageSize = CATALOG_PAGE_SIZE) {
     const list = getCatalogList();
-    const ps = Math.max(1, (pageSize | 0));
+    const ps = Math.max(1, Math.trunc(pageSize) || 1);
     const totalPages = Math.max(1, Math.ceil(list.length / ps));
     const pi = clampInt(pageIndex || 0, 0, totalPages - 1);
     const start = pi * ps;
@@ -1205,7 +1255,7 @@
 
   function getCatalogFeatured(count = CATALOG_PAGE_SIZE) {
     const list = getCatalogList();
-    const n = Math.max(1, (count | 0));
+    const n = Math.max(1, Math.trunc(count) || 1);
     return pickRandomUnique(list, n);
   }
 
@@ -1221,6 +1271,7 @@
       version: VERSION,
       key: ROOM_KEY || "",
       target: TARGET_CAMS,
+      minCatalogGoal: MIN_CATALOG_GOAL,
       autoDiscovery: !!AUTO_DISCOVERY,
       validateEmbed: !!VALIDATE_EMBED,
       liveCheck: !!BEST_EFFORT_LIVE_CHECK,
@@ -1252,7 +1303,7 @@
   // Utilidades
   g.RLCCams.getTarget = () => TARGET_CAMS;
   g.RLCCams.setTarget = (n) => {
-    const nn = Math.max(50, Math.min(2500, (n | 0) || TARGET_CAMS_DEFAULT));
+    const nn = Math.max(50, Math.min(2500, (Math.trunc(Number(n)) || TARGET_CAMS_DEFAULT)));
     TARGET_CAMS = nn;
     emitUpdate();
     return TARGET_CAMS;
@@ -1272,7 +1323,7 @@
   g.RLCCams.setNewsEnabled = (v) => { NEWS_ENABLED = !!v; emitUpdate(); return NEWS_ENABLED; };
   g.RLCCams.setNewsMix = (v) => { NEWS_MIX_IN_MAIN = !!v; emitUpdate(); return NEWS_MIX_IN_MAIN; };
   g.RLCCams.setNewsInCatalog = (v) => { NEWS_IN_CATALOG = !!v; emitUpdate(); return NEWS_IN_CATALOG; };
-  g.RLCCams.setNewsTarget = (n) => { NEWS_TARGET = Math.max(10, Math.min(300, (n|0) || 60)); emitUpdate(); return NEWS_TARGET; };
+  g.RLCCams.setNewsTarget = (n) => { NEWS_TARGET = Math.max(10, Math.min(300, (Math.trunc(Number(n)) || 60))); emitUpdate(); return NEWS_TARGET; };
 
   // compat extra
   g.RLC_CATALOG_PAGE_SIZE = CATALOG_PAGE_SIZE;
@@ -1333,10 +1384,12 @@
     return s;
   }
 
-  // Proxies/fallbacks
+  // Proxies/fallbacks (más opciones = más tasa de éxito)
   const PROXIES_TEXT = [
     (u) => normalizeUrl(u),
     (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(normalizeUrl(u)),
+    (u) => "https://corsproxy.io/?" + encodeURIComponent(normalizeUrl(u)),
+    (u) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(normalizeUrl(u)),
     (u) => "https://r.jina.ai/http://" + normalizeUrl(u).replace(/^https?:\/\//, ""),
     (u) => "https://r.jina.ai/https://" + normalizeUrl(u).replace(/^https?:\/\//, "")
   ];
@@ -1396,7 +1449,10 @@
   }
 
   async function isEmbeddableYouTube(videoId, signal) {
-    if (!VALIDATE_EMBED) return true;
+    if (!VALIDATE_EMBED) {
+      // aun así hacemos live-check si está activo (barato comparado con embed)
+      return await isReallyLiveYouTube(videoId, signal);
+    }
     if (!validateBudgetOk()) return true;
     __validateUsed++;
 
@@ -1406,8 +1462,10 @@
       const r = await fetchWithTimeout(o, { method: "GET", cache: "no-store", signal }, 8000);
       if (r && r.ok) {
         // ok
-      } else if (r && (r.status === 401 || r.status === 403 || r.status === 404)) {
+      } else if (r && r.status === 404) {
         return false;
+      } else {
+        // 401/403 a veces es rate-limit: NO lo matamos aquí
       }
     } catch (_) {}
 
@@ -1424,15 +1482,16 @@
     return true;
   }
 
-  function toAutoCam(entry) {
-    const vid = safeStr(entry && entry.videoId);
+  function toAutoCam(entry, relaxed) {
+    const vid = safeStr(entry && (entry.videoId || entry.video_id));
     if (!isValidYouTubeId(vid)) return null;
 
     const title = safeStr(entry.title) || "Live Cam";
     const author = safeStr(entry.author);
 
     // filtro webcam
-    if (!camTitleOk(title, author)) return null;
+    const okTitle = relaxed ? camTitleOkRelaxed(title, author) : camTitleOk(title, author);
+    if (!okTitle) return null;
 
     return {
       id: `yt_${vid}`,
@@ -1443,13 +1502,13 @@
       youtubeId: vid,
       originUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`,
       thumb: youtubeThumb(vid),
-      tags: ["auto","live","webcam"],
+      tags: relaxed ? ["auto","live","webcam","relaxed"] : ["auto","live","webcam"],
       isAlt: false
     };
   }
 
   function toAutoNews(entry) {
-    const vid = safeStr(entry && entry.videoId);
+    const vid = safeStr(entry && (entry.videoId || entry.video_id));
     if (!isValidYouTubeId(vid)) return null;
 
     const title = safeStr(entry.title) || "News Live";
@@ -1468,6 +1527,53 @@
       tags: ["news","auto","live"],
       isAlt: false
     };
+  }
+
+  // ✅ FIX CLAVE: detectar “live” en resultados Invidious aunque liveNow venga mal
+  function isLiveResult(r) {
+    if (!r || typeof r !== "object") return false;
+
+    const title = safeStr(r.title).toLowerCase();
+    const author = safeStr(r.author).toLowerCase();
+    const full = (title + " " + author).trim();
+    if (!full) return false;
+
+    // excluye cosas tipo upcoming/premiere si vienen marcadas
+    if (r.isUpcoming === true || r.upcoming === true || r.premiere === true) return false;
+    if (textLooksNotLive(title)) return false;
+
+    // flags comunes
+    const flags = [
+      r.liveNow, r.live_now,
+      r.isLive, r.is_live,
+      r.live, r.isLiveContent, r.is_live_content,
+      r.liveNowText, r.live_text
+    ];
+    for (let i = 0; i < flags.length; i++) {
+      if (flags[i] === true) return true;
+      const s = safeStr(flags[i]).toLowerCase();
+      if (s && s.includes("live")) return true;
+    }
+
+    // badges
+    const badges = r.badges || r.badge || r.badgeText || r.badge_text;
+    if (Array.isArray(badges)) {
+      for (let i = 0; i < badges.length; i++) {
+        const b = safeStr(badges[i]).toLowerCase();
+        if (b.includes("live")) return true;
+      }
+    } else {
+      const b = safeStr(badges).toLowerCase();
+      if (b.includes("live")) return true;
+    }
+
+    // lengthSeconds 0 (muy típico en live)
+    const ls = (r.lengthSeconds != null) ? Number(r.lengthSeconds) : (r.length_seconds != null ? Number(r.length_seconds) : NaN);
+    if (Number.isFinite(ls) && ls === 0) return true;
+
+    // si el endpoint era features=live, muchas instancias devuelven liveNow false/undefined:
+    // NO lo descartamos; dejamos que isEmbeddable + live-check haga el filtro real.
+    return true;
   }
 
   // Instancias Invidious
@@ -1514,7 +1620,7 @@
     }
   }
 
-  async function invidiousSearch(instance, q, page, region, signal) {
+  async function invidiousSearch(instance, q, page, region, sort, signal) {
     if (!budgetOk()) return [];
     const base = instance.replace(/\/+$/, "");
     const url =
@@ -1523,7 +1629,7 @@
       `&page=${encodeURIComponent(String(page))}` +
       `&type=video` +
       `&features=live` +
-      `&sort=relevance` +
+      `&sort=${encodeURIComponent(sort || "relevance")}` +
       `&region=${encodeURIComponent(region || "US")}`;
     const res = await fetchJsonSmart(url, 13000, signal);
     return Array.isArray(res) ? res : [];
@@ -1531,30 +1637,37 @@
 
   function capTasks(tasks) {
     // cap dinámico: muchas queries + páginas pueden crear arrays enormes.
-    // dejamos margen de fallos (proxies, instancias caídas) sin petar memoria.
-    const max = Math.max(250, Math.min(30000, Math.floor(DISCOVERY_REQUEST_BUDGET * 3)));
+    // margen de fallos (proxies, instancias caídas) sin petar memoria.
+    const max = Math.max(300, Math.min(42000, Math.floor(DISCOVERY_REQUEST_BUDGET * 4)));
     if (tasks.length <= max) return tasks;
     shuffleInPlace(tasks);
     return tasks.slice(0, max);
   }
 
-  async function runDiscoveryWebcams(instances, signal) {
+  async function runDiscoveryWebcams(instances, signal, passIndex) {
     if (!AUTO_DISCOVERY) return;
     if (OUT_CATALOG.length >= TARGET_CAMS) return;
 
+    const relaxed = (passIndex >= 1);
     const candidates = [];
     const addedNow = new Set();
 
     const queries = buildDiscoveryQueries(TARGET_CAMS);
+
+    // 1ª pasada: relevance. 2ª: views/date para encontrar más directos.
+    const sorts = relaxed ? ["views", "date", "relevance"] : ["relevance"];
     const tasks = [];
     let instCursor = 0;
 
     for (let qi = 0; qi < queries.length; qi++) {
       const q = queries[qi];
-      for (let p = 1; p <= DISCOVERY_MAX_PAGES_PER_QUERY; p++) {
-        const inst = instances[instCursor++ % instances.length];
-        const region = DISCOVERY_REGIONS[(qi + p) % DISCOVERY_REGIONS.length];
-        tasks.push({ q, p, inst, region });
+      for (let si = 0; si < sorts.length; si++) {
+        const sort = sorts[si];
+        for (let p = 1; p <= DISCOVERY_MAX_PAGES_PER_QUERY; p++) {
+          const inst = instances[instCursor++ % instances.length];
+          const region = DISCOVERY_REGIONS[(qi + p + si) % DISCOVERY_REGIONS.length];
+          tasks.push({ q, p, inst, region, sort });
+        }
       }
     }
 
@@ -1569,20 +1682,22 @@
         const t = cappedTasks[cursor++];
 
         try {
-          const key = t.q;
+          const key = t.q + "|" + t.sort;
           foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) { await sleep(25); continue; }
+          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) { await sleep(20); continue; }
 
-          const results = await invidiousSearch(t.inst, t.q, t.p, t.region, signal);
+          const results = await invidiousSearch(t.inst, t.q, t.p, t.region, t.sort, signal);
 
           for (let i = 0; i < results.length; i++) {
             if (!budgetOk()) break;
 
             const r = results[i];
-            if (!r || r.type !== "video") continue;
-            if (r.liveNow !== true) continue;
+            if (!r || String(r.type || "").toLowerCase() !== "video") continue;
 
-            const cam = toAutoCam(r);
+            // ✅ FIX: NO dependemos solo de r.liveNow === true
+            if (!isLiveResult(r)) continue;
+
+            const cam = toAutoCam(r, relaxed);
             if (!cam) continue;
 
             const vid = cam.youtubeId;
@@ -1600,13 +1715,13 @@
         } catch (_) {
           // silencio
         } finally {
-          await sleep(85);
+          await sleep(relaxed ? 55 : 75);
         }
       }
     }
 
     const workers = [];
-    const n = Math.max(1, Math.min(DISCOVERY_CONCURRENCY, 10));
+    const n = Math.max(1, Math.min(DISCOVERY_CONCURRENCY, 12));
     for (let i = 0; i < n; i++) workers.push(worker());
     await Promise.all(workers);
 
@@ -1631,10 +1746,10 @@
 
     for (let qi = 0; qi < NEWS_QUERIES.length; qi++) {
       const q = NEWS_QUERIES[qi];
-      for (let p = 1; p <= Math.max(2, Math.min(10, DISCOVERY_MAX_PAGES_PER_QUERY)); p++) {
+      for (let p = 1; p <= Math.max(2, Math.min(12, DISCOVERY_MAX_PAGES_PER_QUERY)); p++) {
         const inst = instances[instCursor++ % instances.length];
         const region = DISCOVERY_REGIONS[(qi + p) % DISCOVERY_REGIONS.length];
-        tasks.push({ q, p, inst, region });
+        tasks.push({ q, p, inst, region, sort: "relevance" });
       }
     }
 
@@ -1651,16 +1766,16 @@
         try {
           const key = t.q;
           foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= Math.max(60, Math.min(600, DISCOVERY_MAX_PER_QUERY))) { await sleep(25); continue; }
+          if (foundForQuery[key] >= Math.max(60, Math.min(900, DISCOVERY_MAX_PER_QUERY))) { await sleep(20); continue; }
 
-          const results = await invidiousSearch(t.inst, t.q, t.p, t.region, signal);
+          const results = await invidiousSearch(t.inst, t.q, t.p, t.region, t.sort, signal);
 
           for (let i = 0; i < results.length; i++) {
             if (!budgetOk()) break;
 
             const r = results[i];
-            if (!r || r.type !== "video") continue;
-            if (r.liveNow !== true) continue;
+            if (!r || String(r.type || "").toLowerCase() !== "video") continue;
+            if (!isLiveResult(r)) continue;
 
             const cam = toAutoNews(r);
             if (!cam) continue;
@@ -1680,7 +1795,7 @@
         } catch (_) {
           // silencio
         } finally {
-          await sleep(95);
+          await sleep(85);
         }
       }
     }
@@ -1801,8 +1916,18 @@
       const instancesRaw = await getInvidiousInstances(signal);
       const instances = shuffleInPlace(instancesRaw.slice(0, Math.max(5, DISCOVERY_MAX_INSTANCES)));
 
+      // PASADA 0: strict
       if (AUTO_DISCOVERY && OUT_CATALOG.length < TARGET_CAMS) {
-        await runDiscoveryWebcams(instances, signal);
+        await runDiscoveryWebcams(instances, signal, 0);
+      }
+
+      // PASADAS extra: si no llegamos al mínimo (ej. 500), relaja y cambia sort
+      for (let pass = 1; pass <= RELAX_PASSES; pass++) {
+        if (!AUTO_DISCOVERY) break;
+        if (OUT_CATALOG.length >= TARGET_CAMS) break;
+        if (OUT_CATALOG.length >= MIN_CATALOG_GOAL) break;
+        if (!budgetOk()) break;
+        await runDiscoveryWebcams(instances, signal, pass);
       }
 
       if (NEWS_ENABLED && OUT_NEWS_CATALOG.length < NEWS_TARGET) {
@@ -1811,6 +1936,7 @@
 
       applyNewsMixing();
 
+      // ALT fill: solo para LISTA total, NO para catálogo (catálogo requiere reales)
       if (HARD_FAILSAFE_ALT_FILL && OUT.length > 0 && OUT.length < TARGET_CAMS) {
         const baseLen = OUT.length;
         let k = 0;
