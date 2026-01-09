@@ -1893,34 +1893,41 @@
   function refreshRotationPool(){
     const list = buildRotationCandidates();
     rotPool = list.map(c => String(c.id));
+
     // ajustar índice para no salirse
     if (rotIndex >= rotPool.length) rotIndex = 0;
 
+    // lee una vez el modo
+    const rotMode = String(rotModeEl.value || "seq");
+
     // si el pool cambió, podemos resetear rndNoRep si ya no cuadra
-    const mode = String(rotModeEl.value || "seq");
-    if (mode === "rndNoRep"){
+    if (rotMode === "rndNoRep"){
       // limpia usados que ya no existen
       const poolSet = new Set(rotPool);
       const nextUsed = new Set();
-      for (const id of rotUsed) if (poolSet.has(id)) nextUsed.add(id);
-      rotUsed = nextUsed;
+      for (const id of rotUsed) {
+        if (poolSet.has(id)) nextUsed.add(id);
+      }
+      rotUsed = nextUsed; // ✅ requiere que rotUsed sea LET, no CONST
       if (rotUsed.size >= rotPool.length) rotUsed.clear();
     }
 
-    const meta = `cands=${rotPool.length} · useUI=${(String(rotUseUiFiltersEl.value||"1")==="1")?1:0}`;
+    const useUi = (String(rotUseUiFiltersEl.value || "1") === "1");
+    const meta = `cands=${rotPool.length} · useUI=${useUi ? 1 : 0}`;
     rotDiagMini.textContent = meta;
 
     // diag bonito
-    const rk = String(rotKindEl.value||"") || "(any)";
-    const rt = String(rotTagEl.value||"") || "(none)";
+    const rk = String(rotKindEl.value || "") || "(any)";
+    const rt = String(rotTagEl.value || "") || "(none)";
     const favsOnly = rotFavsOnlyEl.checked ? "1" : "0";
     const strict = rotTagStrictEl.checked ? "1" : "0";
-    const mode = String(rotModeEl.value||"seq");
+    const everyS = clamp(parseInt(rotEveryEl.value || "30", 10), 3, 3600);
+
     rotDiag.innerHTML =
       `<b>Pool</b>: ${rotPool.length} cámaras<br>`+
-      `<b>Modo</b>: ${mode} · <b>Intervalo</b>: ${clamp(parseInt(rotEveryEl.value||"30",10),3,3600)}s<br>`+
+      `<b>Modo</b>: ${rotMode} · <b>Intervalo</b>: ${everyS}s<br>`+
       `<b>Filtros</b>: kind=${rk} · tag~=${rt} · favsOnly=${favsOnly} · tagStrict=${strict}<br>`+
-      `<b>Usar filtros UI</b>: ${String(rotUseUiFiltersEl.value||"1")==="1" ? "sí" : "no"}<br>`+
+      `<b>Usar filtros UI</b>: ${useUi ? "sí" : "no"}<br>`+
       `<b>Pos</b>: idx=${rotIndex} · usados=${rotUsed.size}`;
   }
 
