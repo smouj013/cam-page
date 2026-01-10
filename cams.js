@@ -15,7 +15,11 @@
       - evento "rlc_cam_list_updated"
       - BroadcastChannel: rlc_bus_v1 y rlc_bus_v1:{key}
 
-   🔥 MEJORAS/ARREGLOS (SIN SUBIR VERSIÓN):
+   🔥 MEJORAS/ARREGLOS (SIN SUBIR VERSIÓN) — v2.3.9 (MÁS CAMS REALISTAS):
+      - Pack de QUERIES MUCHO más grande (hubs + idiomas + landmarks + transport + coastal + weather).
+      - Sampling + shuffle estable de seeds para NO repetir siempre los mismos queries (mejor cobertura real).
+      - Más hints multi-idioma (webcam/cámara/telecamera/kamera/webkamera/canlı/ao vivo/en directo).
+      - Canonicalización HLS más agresiva (quita params volátiles típicos) para reducir duplicados.
       - Cache interna de validaciones (embed/live) para NO revalidar el mismo video 20 veces.
       - Backoff por instancia Invidious que falla (evita martilleo y sube tasa de éxito).
       - FIX REAL: Invidious “features=live” con liveNow mal: aceptamos múltiples señales y dejamos
@@ -126,13 +130,17 @@
   let BEST_EFFORT_LIVE_CHECK = parseBool(getParam("camsLiveCheck"), true);
 
   // Concurrencia
-  const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(24, parseIntSafe(getParam("camsPages"), 14)));
-  const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(1600, parseIntSafe(getParam("camsMaxPerQuery"), 900)));
+  const DISCOVERY_MAX_PAGES_PER_QUERY = Math.max(1, Math.min(28, parseIntSafe(getParam("camsPages"), 14)));
+  const DISCOVERY_MAX_PER_QUERY = Math.max(50, Math.min(2000, parseIntSafe(getParam("camsMaxPerQuery"), 900)));
   const DISCOVERY_CONCURRENCY = Math.max(1, Math.min(12, parseIntSafe(getParam("camsConc"), 8)));
   const DISCOVERY_MAX_INSTANCES = Math.max(5, Math.min(40, parseIntSafe(getParam("camsInstances"), 26)));
 
   // Presupuesto global de requests
-  const DISCOVERY_REQUEST_BUDGET = Math.max(240, Math.min(12000, parseIntSafe(getParam("camsBudget"), 3200)));
+  const DISCOVERY_REQUEST_BUDGET = Math.max(240, Math.min(16000, parseIntSafe(getParam("camsBudget"), 3200)));
+
+  // Shuffling extra (más variedad) — ?camsQueryShuffle=0/1
+  const QUERY_SHUFFLE = parseBool(getParam("camsQueryShuffle"), true);
+  const QUERY_CAP = Math.max(200, Math.min(3200, parseIntSafe(getParam("camsQueryCap"), 1400))); // cap para queries (evita sets enormes)
 
   // Failsafe ALT
   // ✅ Para targets grandes, si no quieres duplicados: ?camsAltFill=0
@@ -161,33 +169,35 @@
   // Queries: generador grande (lugares + categorías + hubs webcam)
   // ─────────────────────────────────────────────────────────────
   const HUB_QUERIES = [
+    // hubs/brands
     "earthcam live cam",
     "earthcam live webcam",
     "skylinewebcams live webcam",
     "skylinewebcams live cam",
     "ozolio live webcam",
     "webcam galore live cam",
-    "live cam 24/7 webcam",
-    "live webcam 24/7",
-    "live cctv camera",
-    "ip cam live",
     "ipcamlive webcam",
-    "railcam live",
-    "airport webcam live",
+    "ip cam live",
+    "live cctv camera",
+    "live traffic camera",
+    "traffic camera live stream",
+    "street camera live",
+    "downtown live cam",
+    "city center live cam",
+    "town square live cam",
+    "boardwalk live cam",
+    "promenade live cam",
+    "pier cam live",
+    "beach webcam live",
     "harbor webcam live",
     "harbour webcam live",
     "port webcam live",
     "marina live cam",
-    "downtown live cam",
-    "city center live cam",
-    "town square live cam",
-    "street camera live",
-    "traffic camera live",
+    "airport webcam live",
+    "train station live cam",
+    "railcam live",
+    "rail cam live",
     "bridge cam live",
-    "beach webcam live",
-    "pier cam live",
-    "boardwalk live cam",
-    "promenade live cam",
     "mountain webcam live",
     "ski cam live",
     "snow cam live",
@@ -198,49 +208,174 @@
     "zoo live webcam",
     "aquarium live cam",
     "wildlife live cam",
-    "nest cam live"
+    "nest cam live",
+
+    // extra coverage (más “real webcams”)
+    "webcam live 24/7",
+    "live webcam 24/7",
+    "24/7 live webcam",
+    "live cam 24/7",
+    "ptz webcam live",
+    "pan tilt zoom webcam live",
+    "4k live webcam",
+    "live webcam 4k",
+    "live skyline cam",
+    "live city cam",
+    "live beach cam 24/7",
+    "live harbor cam 24/7",
+    "live airport cam 24/7",
+    "live marina webcam 24/7",
+    "live traffic cam 24/7",
+    "live street cam 24/7",
+    "live square cam 24/7",
+    "live port cam 24/7",
+
+    // multi-idioma (sube tasa real)
+    "webcam en vivo 24/7",
+    "cámara en vivo 24/7",
+    "camara en vivo 24/7",
+    "webcam en directo 24/7",
+    "cámara en directo 24/7",
+    "caméra en direct webcam",
+    "webcam en direct",
+    "telecamera live",
+    "telecamera in diretta",
+    "webcam in diretta",
+    "kamera na żywo",
+    "kamera canlı",
+    "webcam ao vivo",
+    "câmera ao vivo",
+    "kamera live webcam",
   ];
 
+  // Seed de lugares (AMPLIADO)
   const PLACE_SEEDS = [
     // USA/CA
     "New York","Times Square","Brooklyn","Manhattan","Las Vegas","Miami","Orlando","Los Angeles","San Francisco","Seattle","Chicago","Boston","Washington DC","Philadelphia","New Orleans","Honolulu","Anchorage",
-    "Toronto","Vancouver","Montreal","Niagara Falls",
+    "Dallas","Austin","Houston","San Diego","Phoenix","Denver","Portland","Atlanta","Nashville","Detroit","Minneapolis","Salt Lake City","Tampa","Key West","Savannah","Charleston","Baltimore","Pittsburgh",
+    "Toronto","Vancouver","Montreal","Niagara Falls","Calgary","Ottawa","Quebec City",
+
     // LATAM
-    "Caracas","Venezuela","Bogotá","Medellín","Ciudad de México","Cancún","Guadalajara","Buenos Aires","Santiago","Lima","Rio de Janeiro","São Paulo","Copacabana",
-    // Europa
-    "Madrid","Barcelona","Valencia","Sevilla","Málaga","Bilbao","Tenerife","Gran Canaria",
-    "Lisbon","Porto","London","Paris","Rome","Venice","Milan","Naples","Florence","Zurich","Geneva","Amsterdam","Rotterdam","Prague","Vienna","Berlin","Munich","Hamburg","Copenhagen","Stockholm","Oslo","Reykjavík","Dublin","Edinburgh","Athens","Santorini","Istanbul",
+    "Caracas","Venezuela","Bogotá","Medellín","Cali","Cartagena",
+    "Ciudad de México","Cancún","Guadalajara","Monterrey","Tijuana",
+    "Buenos Aires","Santiago","Valparaíso","Lima","Cusco","Rio de Janeiro","São Paulo","Copacabana","Salvador","Fortaleza",
+    "Montevideo","Asunción","La Paz","Santa Cruz","Quito","Guayaquil","Panama City","San José Costa Rica","Havana",
+
+    // Europa (mucho más)
+    "Madrid","Barcelona","Valencia","Sevilla","Málaga","Bilbao","Granada","Córdoba","Zaragoza","Alicante","San Sebastián","Palma","Ibiza","Tenerife","Gran Canaria","Mallorca",
+    "Lisbon","Porto","Braga","Faro",
+    "London","Westminster","Big Ben","Tower Bridge","Edinburgh","Glasgow","Dublin",
+    "Paris","Eiffel Tower","Montmartre","Nice","Cannes","Marseille","Lyon","Bordeaux",
+    "Rome","Vatican","Colosseum","Venice","Milan","Naples","Florence","Bologna","Turin",
+    "Zurich","Geneva","Lucerne",
+    "Amsterdam","Rotterdam","The Hague","Utrecht",
+    "Prague","Vienna","Budapest","Bratislava",
+    "Berlin","Munich","Hamburg","Cologne","Frankfurt","Dresden",
+    "Copenhagen","Stockholm","Oslo","Bergen","Reykjavík","Helsinki",
+    "Warsaw","Krakow","Gdansk","Wroclaw",
+    "Brussels","Antwerp",
+    "Athens","Santorini","Mykonos","Crete",
+    "Istanbul","Ankara","Izmir",
+    "Sofia","Bucharest","Belgrade","Zagreb","Ljubljana",
+    "Kyiv","Odessa",
+
     // Asia/Oceanía
-    "Tokyo","Shibuya","Osaka","Seoul","Singapore","Hong Kong","Taipei","Bangkok","Phuket","Dubai","Abu Dhabi","Jerusalem",
-    "Sydney","Melbourne","Auckland",
+    "Tokyo","Shibuya","Shinjuku","Osaka","Kyoto","Sapporo","Fukuoka",
+    "Seoul","Busan",
+    "Singapore","Hong Kong","Taipei","Bangkok","Phuket","Chiang Mai","Hanoi","Ho Chi Minh City","Da Nang",
+    "Kuala Lumpur","Jakarta","Bali","Manila",
+    "Dubai","Abu Dhabi","Doha","Jerusalem","Tel Aviv",
+    "Sydney","Melbourne","Brisbane","Perth","Auckland","Wellington",
+
     // África
-    "Cape Town","Johannesburg","Marrakesh","Casablanca","Cairo"
+    "Cape Town","Johannesburg","Durban",
+    "Marrakesh","Casablanca","Rabat","Tanger",
+    "Cairo","Alexandria",
+    "Nairobi","Lagos"
   ];
 
   const PLACE_SUFFIXES = [
+    // en
     "live webcam",
     "webcam live",
     "live cam",
     "cctv live",
     "street cam live",
+    "street camera live",
     "downtown live cam",
     "beach webcam live",
     "harbor webcam live",
+    "harbour webcam live",
     "airport webcam live",
     "traffic camera live",
     "port webcam live",
     "marina live cam",
     "town square live cam",
     "boardwalk live cam",
+    "train station live cam",
+    "railcam live",
+    "bridge webcam live",
+    "city webcam live",
+    "live skyline cam",
+    "ptz live cam",
+
+    // es
     "webcam en vivo",
     "cámara en vivo",
     "camara en vivo",
+    "webcam en directo",
+    "cámara en directo",
     "en directo webcam",
+    "camara en directo",
+    "cámara tráfico en vivo",
+    "camara trafico en vivo",
+    "playa webcam en vivo",
+    "puerto webcam en vivo",
+
+    // fr/it/pt/pl/tr
     "caméra en direct",
+    "webcam en direct",
     "telecamera live",
+    "telecamera in diretta",
+    "webcam in diretta",
+    "webcam ao vivo",
+    "câmera ao vivo",
     "kamera na żywo",
     "webkamera canlı"
   ];
+
+  function stableRandSeed() {
+    // estable por día (reduce repetición, sin “random loco”)
+    try {
+      const d = new Date();
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth() + 1;
+      const day = d.getUTCDate();
+      const key = (ROOM_KEY || "nokey");
+      let h = 2166136261 >>> 0;
+      const s = `${y}-${m}-${day}|${key}|${TARGET_CAMS}`;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+      }
+      return h >>> 0;
+    } catch (_) { return (Date.now() >>> 0); }
+  }
+  function seededShuffle(arr, seed) {
+    if (!Array.isArray(arr) || arr.length < 2) return arr;
+    let x = (seed >>> 0) || 1;
+    for (let i = arr.length - 1; i > 0; i--) {
+      // xorshift32
+      x ^= x << 13; x >>>= 0;
+      x ^= x >> 17; x >>>= 0;
+      x ^= x << 5;  x >>>= 0;
+      const j = (x % (i + 1)) >>> 0;
+      const t = arr[i];
+      arr[i] = arr[j];
+      arr[j] = t;
+    }
+    return arr;
+  }
 
   function buildDiscoveryQueries(target) {
     const set = new Set();
@@ -249,25 +384,35 @@
     for (let i = 0; i < HUB_QUERIES.length; i++) set.add(HUB_QUERIES[i]);
 
     // más target => más combinaciones
-    const placeCap = Math.max(30, Math.min(PLACE_SEEDS.length, (target >= 1400 ? 90 : target >= 1000 ? 70 : 60)));
-    const suffixCap = Math.max(10, Math.min(PLACE_SUFFIXES.length, (target >= 1400 ? 20 : target >= 1000 ? 16 : 14)));
+    const placeCap = Math.max(40, Math.min(PLACE_SEEDS.length, (target >= 1800 ? 160 : target >= 1400 ? 130 : target >= 1000 ? 110 : 90)));
+    const suffixCap = Math.max(12, Math.min(PLACE_SUFFIXES.length, (target >= 1800 ? 28 : target >= 1400 ? 24 : target >= 1000 ? 20 : 18)));
 
-    for (let i = 0; i < placeCap; i++) {
-      const p = PLACE_SEEDS[i];
-      for (let j = 0; j < suffixCap; j++) {
-        set.add(`${p} ${PLACE_SUFFIXES[j]}`);
-      }
+    // sampling + shuffle estable
+    const seed = stableRandSeed();
+    const places = PLACE_SEEDS.slice(0, placeCap);
+    const suffixes = PLACE_SUFFIXES.slice(0, suffixCap);
+    if (QUERY_SHUFFLE) {
+      seededShuffle(places, seed ^ 0xA5A5A5A5);
+      seededShuffle(suffixes, seed ^ 0x5A5A5A5A);
     }
 
-    // extras genéricos multi-idioma
+    for (let i = 0; i < places.length; i++) {
+      const p = places[i];
+      for (let j = 0; j < suffixes.length; j++) {
+        set.add(`${p} ${suffixes[j]}`);
+        if (target >= 1400 && j % 3 === 0) set.add(`${suffixes[j]} ${p}`);
+      }
+      if (i % 4 === 0) set.add(`${p} live cam 24/7`);
+      if (i % 7 === 0) set.add(`${p} traffic camera live`);
+      if (i % 9 === 0) set.add(`${p} harbor webcam live`);
+      if (i % 11 === 0) set.add(`${p} airport webcam live`);
+    }
+
+    // queries “genéricas” para encontrar webcams reales
     const extras = [
       "live webcam",
       "webcam live",
-      "webcam en vivo",
-      "cámara en vivo",
-      "camara en vivo",
       "live cam",
-      "cctv live cam",
       "cctv camera live",
       "live traffic camera",
       "live street camera",
@@ -285,11 +430,31 @@
       "webcam 24/7 live",
       "city webcam live",
       "downtown webcam live",
-      "bridge webcam live"
+      "bridge webcam live",
+      "ptz webcam live",
+      "pan tilt zoom webcam live",
+
+      // multi-idioma
+      "webcam en vivo",
+      "cámara en vivo",
+      "camara en vivo",
+      "webcam en directo",
+      "cámara en directo",
+      "camara en directo",
+      "caméra en direct",
+      "webcam en direct",
+      "telecamera in diretta",
+      "webcam in diretta",
+      "webcam ao vivo",
+      "câmera ao vivo",
+      "kamera na żywo",
+      "webkamera canlı",
     ];
     for (let i = 0; i < extras.length; i++) set.add(extras[i]);
 
-    return Array.from(set);
+    const out = Array.from(set);
+    if (QUERY_SHUFFLE) seededShuffle(out, stableRandSeed() ^ 0xC0FFEE);
+    return out.slice(0, Math.max(60, Math.min(QUERY_CAP, out.length)));
   }
 
   // Queries NEWS (solo si camsNews=1)
@@ -361,7 +526,9 @@
     "earthcam","skylinewebcams","ozolio","webcams","ipcamlive","ip cam",
     "boardwalk","promenade",
     "cámara","camara","en directo","en vivo","directo",
-    "telecamera","kamera","kamera na żywo","webkamera","caméra"
+    "telecamera","in diretta","webcam in diretta",
+    "kamera","kamera na żywo","webkamera","canlı","ao vivo","câmera","caméra","en direct",
+    "ptz","pan tilt zoom","pan-tilt-zoom"
   ];
 
   const KNOWN_WEBCAM_BRANDS = [
@@ -433,6 +600,23 @@
     try {
       const x = new URL(s);
       x.hash = "";
+
+      // 🔥 Quita params volátiles típicos en HLS/CDN (reduce duplicados)
+      const kill = [
+        "token","sig","signature","expires","exp","e","hdnts","session","sess","auth","jwt","key","acl",
+        "Policy","Signature","Key-Pair-Id",
+        "X-Amz-Algorithm","X-Amz-Credential","X-Amz-Date","X-Amz-Expires","X-Amz-SignedHeaders","X-Amz-Signature",
+        "wmsAuthSign","st","t","ts"
+      ];
+      for (let i = 0; i < kill.length; i++) x.searchParams.delete(kill[i]);
+
+      // limpia tracking
+      x.searchParams.delete("utm_source");
+      x.searchParams.delete("utm_medium");
+      x.searchParams.delete("utm_campaign");
+      x.searchParams.delete("utm_term");
+      x.searchParams.delete("utm_content");
+
       return x.toString();
     } catch (_) {
       return s;
@@ -468,8 +652,8 @@
     if (includesAny(full, ALLOW_HINTS)) return true;
 
     // último fallback: si tiene “live” + “cam/webcam/cctv”
-    const hasLive = /\blive\b/i.test(full) || /\ben vivo\b/i.test(full) || /\ben directo\b/i.test(full);
-    const hasCam = /\b(web\s?cam|webcam|cam|cctv|camera)\b/i.test(full) || /\b(cámara|camara)\b/i.test(full);
+    const hasLive = /\blive\b/i.test(full) || /\ben vivo\b/i.test(full) || /\ben directo\b/i.test(full) || /\bin diretta\b/i.test(full) || /\ben direct\b/i.test(full) || /\bao vivo\b/i.test(full) || /\bcanlı\b/i.test(full);
+    const hasCam = /\b(web\s?cam|webcam|cam|cctv|camera)\b/i.test(full) || /\b(cámara|camara|telecamera|kamera|webkamera|câmera|caméra)\b/i.test(full);
     return !!(hasLive && hasCam);
   }
 
@@ -487,6 +671,9 @@
       /\blive\b/i.test(full) ||
       /\ben vivo\b/i.test(full) ||
       /\ben directo\b/i.test(full) ||
+      /\bin diretta\b/i.test(full) ||
+      /\ben direct\b/i.test(full) ||
+      /\bao vivo\b/i.test(full) ||
       /\b24\/7\b/.test(full) ||
       /\b24-7\b/.test(full);
     if (!hasLive) return false;
@@ -494,7 +681,8 @@
     const sceneHints = [
       "downtown","city","harbor","harbour","port","beach","pier","boardwalk","promenade",
       "square","plaza","street","traffic","bridge","airport","station","rail","train",
-      "mountain","alps","ski","snow","volcano","crater","lake","river","zoo","aquarium","wildlife"
+      "mountain","alps","ski","snow","volcano","crater","lake","river","zoo","aquarium","wildlife",
+      "marina","coast","bay","fjord","canal"
     ];
     const hasScene = includesAny(full, sceneHints) || includesAny(full, ALLOW_HINTS);
     return !!hasScene;
@@ -1332,6 +1520,9 @@
     if (s.includes("has been removed")) return true;
     if (s.includes("sign in to confirm your age")) return true;
     if (s.includes("forbidden")) return true;
+
+    // playability status patterns (best-effort)
+    if (s.includes("\"playabilitystatus\"") && (s.includes("unplayable") || s.includes("login_required") || s.includes("age_verification_required"))) return true;
     return false;
   }
 
@@ -1703,7 +1894,7 @@
 
   function capTasks(tasks) {
     // cap dinámico: margen sin petar memoria.
-    const max = Math.max(300, Math.min(42000, Math.floor(DISCOVERY_REQUEST_BUDGET * 4)));
+    const max = Math.max(400, Math.min(52000, Math.floor(DISCOVERY_REQUEST_BUDGET * 4)));
     if (tasks.length <= max) return tasks;
     shuffleInPlace(tasks);
     return tasks.slice(0, max);
@@ -1749,7 +1940,7 @@
         try {
           const key = t.q + "|" + t.sort;
           foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) { await sleep(15); continue; }
+          if (foundForQuery[key] >= DISCOVERY_MAX_PER_QUERY) { await sleep(12); continue; }
 
           const results = await invidiousSearch(t.inst, t.q, t.p, t.region, t.sort, signal);
 
@@ -1779,7 +1970,7 @@
         } catch (_) {
           // silencio
         } finally {
-          await sleep(relaxed ? 45 : 60);
+          await sleep(relaxed ? 38 : 55);
         }
       }
     }
@@ -1830,7 +2021,7 @@
         try {
           const key = t.q;
           foundForQuery[key] = foundForQuery[key] || 0;
-          if (foundForQuery[key] >= Math.max(60, Math.min(900, DISCOVERY_MAX_PER_QUERY))) { await sleep(15); continue; }
+          if (foundForQuery[key] >= Math.max(60, Math.min(900, DISCOVERY_MAX_PER_QUERY))) { await sleep(12); continue; }
 
           const results = await invidiousSearch(t.inst, t.q, t.p, t.region, t.sort, signal);
 
@@ -1859,7 +2050,7 @@
         } catch (_) {
           // silencio
         } finally {
-          await sleep(70);
+          await sleep(60);
         }
       }
     }
