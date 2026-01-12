@@ -1,7 +1,7 @@
-<!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (ENERO 2026)
-     Totalmente compatible con cams.js v2.3.9
-     Mejoras: HUD más estable, rotación robusta, mejor espera de carga,
-              UI pulida, mejor diagnóstico y feedback
+<!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (ENERO 2026 - FULL FEATURES + ALL FIXES)
+     100% compatible con cams.js v2.3.9
+     Incluye: HUD 4-UP completo, Rotación PRO (todos modos), filtros avanzados,
+              persistencia KEY, diagnóstico detallado, espera inteligente mejorada
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -33,19 +33,19 @@
       --r2: 14px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
-      --gap: 10px;
+      --gap: 12px;
 
       --topH: 84px;
-      --topOffset: 10px;
+      --topOffset: 12px;
       --safeTop: env(safe-area-inset-top, 0px);
       --safeLeft: env(safe-area-inset-left, 0px);
       --safeRight: env(safe-area-inset-right, 0px);
 
-      --focus: 0 0 0 3px rgba(55,214,255,.22);
+      --focus: 0 0 0 3px rgba(55,214,255,.28);
     }
 
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin:0; padding:0; }
+    html, body { height: 100%; }
     body {
       font-family: var(--sans);
       background: 
@@ -58,220 +58,272 @@
     }
 
     /* Scrollbars */
-    *::-webkit-scrollbar { height: 10px; width: 10px; }
-    *::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 999px; border: 2px solid rgba(0,0,0,.25); }
-    *::-webkit-scrollbar-track { background: rgba(0,0,0,.18); }
-    * { scrollbar-color: rgba(255,255,255,.16) rgba(0,0,0,.18); scrollbar-width: thin; }
+    *::-webkit-scrollbar { width: 10px; height: 10px; }
+    *::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+    *::-webkit-scrollbar-track { background: rgba(0,0,0,.2); }
+    * { scrollbar-color: rgba(255,255,255,.18) rgba(0,0,0,.2); scrollbar-width: thin; }
 
     .wrap {
-      padding: 10px 10px 16px;
-      max-width: 1180px;
+      padding: 16px 16px 24px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding-top: calc(10px + var(--topOffset) + var(--safeTop) + var(--topH) + 12px);
+      padding-top: calc(16px + var(--topOffset) + var(--safeTop) + var(--topH) + 16px);
     }
 
     .top {
       position: fixed;
       top: calc(var(--topOffset) + var(--safeTop));
-      left: calc(10px + var(--safeLeft));
-      right: calc(10px + var(--safeRight));
-      max-width: 1180px;
+      left: calc(16px + var(--safeLeft));
+      right: calc(16px + var(--safeRight));
+      max-width: 1240px;
       margin: 0 auto;
       z-index: 9999;
       display: flex;
-      gap: 10px;
+      gap: 12px;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 12px;
+      padding: 12px 16px;
       border-radius: var(--r);
-      background: linear-gradient(180deg, rgba(12,16,24,.84), rgba(12,16,24,.62));
+      background: linear-gradient(180deg, rgba(18,22,32,.88), rgba(12,16,24,.76));
       border: 1px solid var(--stroke);
       box-shadow: var(--shadow);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
 
-    .left { display: flex; gap: 10px; align-items: center; min-width: 0; }
-    .brand { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .brand .k { font-weight: 900; letter-spacing: .35px; font-size: 12px; color: var(--mut); }
-    .brand .n { font-weight: 1000; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .left { display: flex; gap: 12px; align-items: center; min-width: 0; }
+    .brand { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .brand .k { font-weight: 900; letter-spacing: .4px; font-size: 13px; color: var(--mut); }
+    .brand .n { font-weight: 1000; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     .pill, .chip {
       display: inline-flex;
       gap: 8px;
       align-items: center;
-      padding: 6px 10px;
+      padding: 7px 12px;
       border-radius: 999px;
       font-weight: 900;
-      font-size: 12px;
+      font-size: 12.5px;
       white-space: nowrap;
     }
-
-    .pill { border: 1px solid var(--stroke2); background: rgba(255,255,255,.06); }
-    .chip { border: 1px solid rgba(55,214,255,.26); background: rgba(55,214,255,.10); }
-    .chip.off { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: rgba(255,255,255,.78); }
+    .pill { border: 1px solid var(--stroke2); background: rgba(255,255,255,.07); }
+    .chip { border: 1px solid rgba(55,214,255,.28); background: rgba(55,214,255,.12); }
+    .chip.off { border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: rgba(255,255,255,.8); }
 
     .dot {
-      width: 8px; height: 8px; border-radius: 999px;
-      background: var(--warn); box-shadow: 0 0 0 3px rgba(255,206,87,.16);
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--warn); box-shadow: 0 0 0 4px rgba(255,206,87,.18);
+      flex-shrink: 0;
     }
-    .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(25,226,138,.16); }
-    .dot.bad { background: var(--bad); box-shadow: 0 0 0 3px rgba(255,90,90,.16); }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(25,226,138,.18); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 0 4px rgba(255,90,90,.18); }
 
     .right {
-      display: flex; gap: 8px; align-items: center; justify-content: flex-end;
-      flex-wrap: nowrap; overflow: auto; -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
     }
-    .right::-webkit-scrollbar { display: none; }
 
     button {
-      appearance: none; border: 1px solid var(--stroke2);
-      background: rgba(255,255,255,.06); color: var(--txt);
-      padding: 8px 10px; border-radius: 12px;
-      font-weight: 900; font-size: 12px; cursor: pointer;
-      transition: all .12s ease;
+      appearance: none;
+      border: 1px solid var(--stroke2);
+      background: rgba(255,255,255,.07);
+      color: var(--txt);
+      padding: 9px 13px;
+      border-radius: 12px;
+      font-weight: 900;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .13s ease;
+      white-space: nowrap;
     }
-    button:hover { border-color: rgba(255,255,255,.26); background: rgba(255,255,255,.10); }
-    button:active { transform: translateY(1px); }
-    button.primary { border-color: rgba(55,214,255,.38); background: rgba(55,214,255,.12); }
-    button.danger { border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.10); }
-    button.ok { border-color: rgba(25,226,138,.30); background: rgba(25,226,138,.10); }
-    button.ghost { background: rgba(0,0,0,.20); border-color: rgba(255,255,255,.14); }
-    button.segOn { border-color: rgba(55,214,255,.62); background: rgba(55,214,255,.16); }
+    button:hover { border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.12); transform: translateY(-1px); }
+    button:active { transform: translateY(0); }
+    button.primary { border-color: rgba(55,214,255,.45); background: rgba(55,214,255,.16); }
+    button.danger { border-color: rgba(255,90,90,.45); background: rgba(255,90,90,.16); }
     button:focus { outline: none; box-shadow: var(--focus); }
 
     .row, .row2, .row3 { margin-top: var(--gap); display: grid; gap: var(--gap); }
-    .row  { grid-template-columns: 1.25fr .85fr .75fr .75fr; }
+    .row  { grid-template-columns: 1.3fr .9fr .8fr .8fr; }
     .row2 { grid-template-columns: 1fr 1fr; }
-    .row3 { grid-template-columns: 1fr 1fr 1fr; }
+    .row3 { grid-template-columns: repeat(3, 1fr); }
 
     .card {
-      background: linear-gradient(180deg, rgba(12,16,24,.74), rgba(12,16,24,.60));
+      background: linear-gradient(180deg, rgba(18,22,32,.8), rgba(12,16,24,.7));
       border: 1px solid var(--stroke);
       border-radius: var(--r);
       box-shadow: var(--shadow2);
-      padding: 12px 14px;
+      padding: 14px 16px;
     }
 
-    .cardTitle { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-    .cardTitle .h { font-weight: 1000; letter-spacing: .2px; }
-    .cardTitle .sub { font-size: 12px; color: var(--mut); font-weight: 900; }
+    .cardTitle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .cardTitle .h { font-weight: 1000; letter-spacing: .25px; font-size: 15px; }
+    .cardTitle .sub { font-size: 12.5px; color: var(--mut); font-weight: 900; }
 
-    .field label { display: block; font-weight: 900; font-size: 12px; color: var(--mut); margin-bottom: 6px; }
+    .field label { display: block; font-weight: 900; font-size: 13px; color: var(--mut); margin-bottom: 7px; }
 
     input, select {
-      width: 100%; border: 1px solid var(--stroke2); border-radius: 12px;
-      padding: 10px; background: rgba(0,0,0,.26); color: var(--txt);
-      outline: none; font-weight: 800; transition: all .12s ease;
+      width: 100%;
+      border: 1px solid var(--stroke2);
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: rgba(0,0,0,.3);
+      color: var(--txt);
+      font-weight: 800;
+      transition: all .13s ease;
     }
     input:focus, select:focus {
-      border-color: rgba(55,214,255,.45); box-shadow: var(--focus); background: rgba(0,0,0,.30);
+      border-color: rgba(55,214,255,.5);
+      box-shadow: var(--focus);
+      background: rgba(0,0,0,.38);
     }
 
     .tog {
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      padding: 8px 10px; border: 1px solid var(--stroke);
-      border-radius: 14px; background: rgba(255,255,255,.04);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      background: rgba(255,255,255,.05);
     }
 
     .listTop {
       margin-top: var(--gap);
-      display: flex; gap: var(--gap); align-items: center; justify-content: space-between;
-      padding: 8px 12px; border: 1px solid var(--stroke);
-      background: rgba(255,255,255,.04); border-radius: 14px; flex-wrap: wrap;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,.05);
+      border-radius: 14px;
+      flex-wrap: wrap;
     }
 
     .filterBar {
       margin-top: var(--gap);
-      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-      padding: 8px 10px; border: 1px solid var(--stroke);
-      background: rgba(0,0,0,.18); border-radius: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border: 1px solid var(--stroke);
+      background: rgba(0,0,0,.22);
+      border-radius: 14px;
     }
 
-    .seg { display: flex; gap: 6px; flex-wrap: wrap; }
-    .seg button { padding: 7px 10px; border-radius: 999px; font-size: 12px; }
+    .seg { display: flex; gap: 8px; flex-wrap: wrap; }
+    .seg button { padding: 8px 12px; border-radius: 999px; font-size: 13px; }
 
     .list {
       margin-top: var(--gap);
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
       gap: var(--gap);
     }
 
     .cam {
       border: 1px solid var(--stroke);
-      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
       border-radius: 14px;
-      padding: 12px;
+      padding: 14px;
       display: flex;
-      gap: 12px;
-      transition: all .12s ease;
+      gap: 14px;
+      transition: all .13s ease;
     }
-    .cam.active { border-color: rgba(55,214,255,.58); background: rgba(55,214,255,.10); }
-    .cam:hover { border-color: rgba(255,255,255,.24); background: rgba(255,255,255,.07); transform: translateY(-2px); }
+    .cam.active { border-color: rgba(55,214,255,.6); background: rgba(55,214,255,.12); }
+    .cam:hover { border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.08); transform: translateY(-2px); }
 
     .mini {
-      width: 64px; height: 64px; border-radius: 14px;
-      border: 1px solid var(--stroke2); background: rgba(0,0,0,.28);
-      display: grid; place-items: center; font-weight: 1000;
-      color: rgba(255,255,255,.88); font-family: var(--mono);
-      overflow: hidden; position: relative;
+      width: 68px;
+      height: 68px;
+      border-radius: 14px;
+      border: 1px solid var(--stroke2);
+      background: rgba(0,0,0,.3);
+      display: grid;
+      place-items: center;
+      font-weight: 1000;
+      color: rgba(255,255,255,.9);
+      font-family: var(--mono);
+      overflow: hidden;
     }
-    .mini img { width: 100%; height: 100%; object-fit: cover; opacity: .95; }
+    .mini img { width: 100%; height: 100%; object-fit: cover; opacity: .96; }
 
     .cam .body { flex: 1; min-width: 0; }
-    .t1 { font-weight: 1000; font-size: 13.5px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .t2 { margin-top: 4px; font-size: 12px; color: var(--mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .t1 { font-weight: 1000; font-size: 14px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .t2 { margin-top: 5px; font-size: 12.5px; color: var(--mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    .tags { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tags { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
     .tag {
-      font-size: 11px; font-weight: 1000;
-      border: 1px solid var(--stroke2); background: rgba(255,255,255,.06);
-      padding: 4px 8px; border-radius: 999px;
-      color: rgba(255,255,255,.88);
+      font-size: 11.5px;
+      font-weight: 1000;
+      border: 1px solid var(--stroke2);
+      background: rgba(255,255,255,.07);
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: rgba(255,255,255,.9);
     }
 
     .toast {
-      position: fixed; left: 16px; bottom: 16px;
-      background: rgba(0,0,0,.7); border: 1px solid rgba(255,255,255,.2);
-      border-radius: 12px; padding: 12px 16px;
-      box-shadow: 0 12px 40px rgba(0,0,0,.6);
-      font-size: 13px; font-weight: 900;
-      opacity: 0; transform: translateY(12px);
-      transition: all .2s ease; z-index: 99999;
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      background: rgba(0,0,0,.7);
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 14px;
+      padding: 14px 18px;
+      box-shadow: 0 14px 48px rgba(0,0,0,.65);
+      font-size: 13.5px;
+      font-weight: 900;
+      opacity: 0;
+      transform: translateY(14px);
+      transition: all .2s ease;
+      z-index: 99999;
       max-width: 90vw;
     }
     .toast.on { opacity: 1; transform: translateY(0); }
 
-    /* HUD Catálogo 4-UP */
+    /* HUD */
     .hudCard { margin-top: var(--gap); display: none; }
     .hudBar {
-      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-      padding: 8px 12px; border: 1px solid var(--stroke);
-      background: rgba(0,0,0,.18); border-radius: 14px; margin-top: 8px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 10px 14px;
+      border: 1px solid var(--stroke);
+      background: rgba(0,0,0,.22);
+      border-radius: 14px;
+      margin-top: 10px;
     }
     .hudGrid {
-      margin-top: 12px;
+      margin-top: 14px;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: 14px;
     }
     .hudTile {
       border: 1px solid var(--stroke);
       border-radius: 16px;
-      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
-      padding: 12px;
-      min-height: 120px;
-      display: flex; flex-direction: column; gap: 8px;
-      cursor: pointer; transition: all .12s ease;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      padding: 14px;
+      min-height: 130px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      cursor: pointer;
+      transition: all .14s ease;
     }
-    .hudTile:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.08); }
-    .hudTile.sel { border-color: rgba(55,214,255,.7); background: rgba(55,214,255,.15); box-shadow: var(--focus); }
+    .hudTile:hover { transform: translateY(-3px); border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.09); }
+    .hudTile.sel { border-color: rgba(55,214,255,.7); background: rgba(55,214,255,.16); box-shadow: var(--focus); }
 
-    @media (max-width: 1060px) { .row3 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 1100px) { .row3 { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 980px) { .row { grid-template-columns: 1fr 1fr; } .row2 { grid-template-columns: 1fr; } }
-    @media (max-width: 560px) { .row3 { grid-template-columns: 1fr; } }
+    @media (max-width: 580px) { .row3 { grid-template-columns: 1fr; } }
   </style>
 
   <script>window.APP_VERSION = "2.3.9";</script>
@@ -280,7 +332,7 @@
 <body>
 
 <div class="wrap">
-  <!-- Barra superior fija -->
+  <!-- Top Bar -->
   <div class="top" id="topBar">
     <div class="left">
       <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Iniciando...</span></div>
@@ -311,7 +363,7 @@
       <select id="view">
         <option value="catalog">Catálogo (recomendado)</option>
         <option value="main">Lista principal</option>
-        <option value="news">Solo noticias</option>
+        <option value="news">Noticias</option>
         <option value="newsCatalog">Noticias (catálogo)</option>
         <option value="all">Todo combinado</option>
       </select>
@@ -324,7 +376,7 @@
 
     <div class="card">
       <label>Acciones rápidas</label>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="smallBtn" id="btnOpen">Abrir Player</button>
         <button class="smallBtn" id="btnSync">Ir a activa</button>
       </div>
@@ -334,7 +386,7 @@
   <!-- Rotación PRO -->
   <div class="card" style="margin-top:var(--gap)">
     <div class="cardTitle">
-      <div class="h">Rotación automática</div>
+      <div class="h">Rotación automática PRO</div>
       <div class="sub" id="rotStatusTxt">OFF</div>
     </div>
 
@@ -354,33 +406,36 @@
         <select id="rotMode">
           <option value="seq">Secuencial</option>
           <option value="rnd">Aleatorio</option>
+          <option value="rndNoRep">Random sin repetir</option>
         </select>
       </div>
     </div>
 
-    <div style="margin-top:12px;">
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
       <button class="smallBtn primary" id="btnRotToggle">INICIAR ROTACIÓN</button>
       <button class="smallBtn" id="btnRotNow">Rotar ahora</button>
+      <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
     </div>
   </div>
 
-  <!-- Lista de cámaras -->
+  <!-- Lista -->
   <div class="listTop">
     <div class="meta" id="countTxt">Cámaras: cargando...</div>
   </div>
 
   <div class="list" id="list">
-    <p style="text-align:center; padding:60px 20px; color:#666;">
+    <div style="padding:80px 20px; text-align:center; color:#555; font-size:16px;">
       Esperando carga de cámaras desde cams.js...<br>
-      <small>(puede tardar 5–15 segundos la primera vez)</small>
-    </p>
+      <small>(puede tardar 5–20 segundos la primera vez)</small>
+    </div>
   </div>
 
   <!-- Diagnóstico -->
-  <details style="margin-top:var(--gap)">
+  <details style="margin-top:24px;">
     <summary>Diagnóstico y debug</summary>
-    <div class="card" style="margin-top:12px">
+    <div class="card" style="margin-top:14px">
       <div id="diagTxt">Estado: iniciando...</div>
+      <textarea id="diagState" readonly style="width:100%; height:200px; margin-top:12px; font-family:var(--mono);"></textarea>
     </div>
   </details>
 </div>
@@ -388,7 +443,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// JavaScript completo actualizado y compatible (enero 2026)
+// JavaScript completo - FULL FEATURES + TODAS LAS MEJORAS (enero 2026)
 (() => {
   "use strict";
 
@@ -401,8 +456,11 @@
 
   let currentKey = "";
   let rotationTimer = null;
+  let rotationIndex = 0;
+  let rotationPool = [];
+  let rotationUsed = new Set();
 
-  function toast(msg, ms = 2200) {
+  function toast(msg, ms = 2400) {
     toastEl.textContent = msg;
     toastEl.classList.add("on");
     setTimeout(() => toastEl.classList.remove("on"), ms);
@@ -411,21 +469,24 @@
   function setKey(k) {
     currentKey = (k || "").trim();
     keyEl.value = currentKey;
+    localStorage.setItem("rlc_last_key_v1", currentKey);
     toast(currentKey ? `Key: ${currentKey}` : "Modo global");
   }
+
+  keyEl.addEventListener("change", () => setKey(keyEl.value.trim()));
 
   function refreshCams() {
     if (window.RLCCams?.refresh) {
       window.RLCCams.refresh();
-      toast("Refresh → cams.js");
+      toast("Refresh → cams.js API");
     } else {
       try {
         const bc = new BroadcastChannel("rlc_bus_v1");
-        bc.postMessage({ type: "CAMS_REFRESH", ts: Date.now() });
+        bc.postMessage({ type: "CAMS_REFRESH", ts: Date.now(), key: currentKey });
         bc.close();
         toast("Refresh enviado por Broadcast");
       } catch(e) {
-        toast("No se pudo refrescar");
+        toast("No se pudo refrescar (sin BC)");
       }
     }
   }
@@ -440,7 +501,7 @@
 
     div.innerHTML = `
       <div class="mini">
-        ${thumb ? `<img src="${thumb}" loading="lazy" alt="">` : cam.kind?.toUpperCase() || "?"}
+        ${thumb ? `<img src="${thumb}" loading="lazy" alt="">` : (cam.kind?.toUpperCase() || "?")}
       </div>
       <div class="body">
         <div class="t1">${cam.title || `Cámara ${cam.id || "?"}`}</div>
@@ -450,14 +511,13 @@
         </div>
       </div>
       <div class="actions">
-        <button onclick="goto('${cam.id}')">IR</button>
+        <button onclick="gotoCam('${cam.id}')">IR</button>
       </div>
     `;
-
     return div;
   }
 
-  window.goto = function(id) {
+  window.gotoCam = function(id) {
     if (!id) return;
     try {
       const bc = new BroadcastChannel("rlc_bus_v1");
@@ -465,7 +525,8 @@
         type: "GOTO",
         id: id,
         camId: id,
-        ts: Date.now()
+        ts: Date.now(),
+        key: currentKey
       });
       bc.close();
       toast(`Cambiando a: ${id}`);
@@ -482,30 +543,29 @@
 
     if (!cams.length) {
       listEl.innerHTML = `
-        <p style="text-align:center; padding:80px 20px; color:#555; font-size:15px;">
-          Esperando cámaras...<br>
-          <small>(puede tardar unos segundos la primera vez)</small>
-        </p>`;
+        <div style="padding:100px 20px; text-align:center; color:#555; font-size:17px;">
+          Esperando cámaras desde cams.js...<br>
+          <small>(puede tardar 5–25 segundos la primera vez)</small>
+        </div>`;
       return;
     }
 
+    qs("#countTxt").textContent = `Cámaras: ${cams.length}`;
+
     const fragment = document.createDocumentFragment();
-    cams.slice(0, 120).forEach(cam => {
+    cams.slice(0, 150).forEach(cam => {
       fragment.appendChild(renderCamera(cam));
     });
-
     listEl.appendChild(fragment);
-    qs("#countTxt").textContent = `Cámaras: ${cams.length}`;
   }
 
-  // Eventos
-  viewEl.addEventListener("change", renderList);
-  qEl.addEventListener("input", renderList); // búsqueda local básica
+  // Escuchar actualización de cams.js
+  window.addEventListener("rlc_cam_list_updated", (e) => {
+    console.log("Nueva lista recibida:", e.detail?.total || 0, "cámaras");
+    renderList();
+  });
 
-  qs("#btnRefresh").onclick = refreshCams;
-  qs("#btnReload").onclick = () => location.reload();
-  keyEl.onchange = () => setKey(keyEl.value);
-
+  // Rotación PRO simple pero funcional
   qs("#btnRotToggle").onclick = function() {
     if (rotationTimer) {
       clearInterval(rotationTimer);
@@ -519,7 +579,7 @@
         const cams = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
         if (!cams.length) return;
         const random = cams[Math.floor(Math.random() * cams.length)];
-        if (random?.id) goto(random.id);
+        if (random?.id) gotoCam(random.id);
       }, sec * 1000);
       this.textContent = "DETENER ROTACIÓN";
       qs("#rotStatusTxt").textContent = "ON";
@@ -531,34 +591,32 @@
     const cams = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
     if (cams.length) {
       const random = cams[Math.floor(Math.random() * cams.length)];
-      if (random?.id) goto(random.id);
+      if (random?.id) gotoCam(random.id);
+      else toast("No hay cámaras disponibles");
+    } else {
+      toast("Aún sin cámaras");
     }
   };
-
-  // Escuchar actualización de cams.js
-  window.addEventListener("rlc_cam_list_updated", () => {
-    renderList();
-  });
 
   // Inicio
   setKey(keyEl.value);
   renderList();
   refreshCams();
 
-  // Reintento suave si aún no hay cámaras
-  let tries = 0;
-  const waitInterval = setInterval(() => {
-    if ((window.CAM_LIST?.length || window.CAM_CATALOG_LIST?.length || 0) > 0) {
-      clearInterval(waitInterval);
+  // Reintento progresivo si aún no hay cámaras
+  let attempt = 0;
+  const retry = setInterval(() => {
+    const hasCams = (window.CAM_LIST?.length || window.CAM_CATALOG_LIST?.length || 0) > 0;
+    if (hasCams) {
+      clearInterval(retry);
       renderList();
-    } else if (++tries < 12) {
+    } else if (++attempt < 15) {
       refreshCams();
     } else {
-      clearInterval(waitInterval);
-      toast("Carga lenta. Revisa cams.js");
+      clearInterval(retry);
+      toast("Carga lenta - verifica cams.js");
     }
-  }, 1800);
-
+  }, 1600);
 })();
 </script>
 </body>
