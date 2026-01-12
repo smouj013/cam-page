@@ -1,30 +1,13 @@
 <!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
   ✅ NO SUBE VERSION (2.3.9)
-  ✅ UI MUCHO más limpia (mejor spacing, tipografía, hover, focus, accesibilidad, badges)
-  ✅ HEADER FIJO + padding dinámico
-  ✅ Persistencia por KEY (incluye rotación)
-  ✅ Rotación PRO:
-     - Start/Stop
-     - Intervalo (seg)
-     - Rotar SOLO un kind (youtube/hls/image/other) y/o SOLO un tag (ej: "news", "spain", "featured")
-     - Opción: usar filtros actuales de la UI (view/kind/búsqueda/hideAlt/favs/limit)
-     - Modos: secuencial / random / random sin repetir
-     - “Rotar ahora” (salta al siguiente dentro del subset)
-  ✅ Compat reforzada:
-     - Respeta allowLegacy=0: no legacy base si KEY existe
-     - State/cam fields variantes + rlc_cam_list_updated.detail variantes
-     - CMD robusto (ts Number, nonce) + storage + BC según allowLegacy
-
-  ✅ MEJORA CLAVE (2026-01): “Encuentra cams” mucho mejor
-     - Espera inteligente a que cams.js cargue y publique listas (sin loops agresivos)
-     - Fallbacks extra: RLCCams (si expone listas), detail variants, y re-render automático al poblar
-     - “Recargar lista” ahora fuerza “ensure lists” + refresh suave
-
-  ✅ NUEVO (2026-01): HUD Catálogo 4-UP integrado (sin archivo nuevo)
-     - Solo aparece en vista “Catálogo” (y “News (catálogo)”)
-     - Muestra estructura 2x2 (TL/TR/BL/BR) con tipo/estado por slot (best-effort)
-     - Permite elegir SLOT destino (1-4) y asignar una cámara a ese slot usando “IR”
-     - NEXT/PREV en catálogo respetan el slot seleccionado (envía payload con slot*; fallback seguro)
+  ✅ PERF FIX (2026-01): evita cuelgues/lag
+     - Tick MUCHO más ligero (sin JSON.stringify gigante cada 750ms)
+     - Diagnóstico “RAW” solo cuando abres el panel o al copiar (throttle)
+     - Rotación UI throttled (no recalcula pool cada tick)
+     - Render de lista incremental por chunks (no bloquea con 1000+ cams)
+     - markActiveCam solo cuando cambia la cam activa
+     - TopH recalculado con throttle (sin MutationObserver agresivo)
+  ✅ Mantiene: KEY/allowLegacy, HUD 4-UP, rotación, favoritos, filtros, BC+storage, compat mensajes/state
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -399,7 +382,7 @@
     }
     .toast.on{opacity:1; transform:translateY(0)}
 
-    /* ───────────────────────── HUD Catálogo 4-UP (NUEVO) ───────────────────────── */
+    /* ───────────────────────── HUD Catálogo 4-UP ───────────────────────── */
     .hudCard{ margin-top:var(--gap); }
     .hudBar{
       display:flex; gap:8px; align-items:center; flex-wrap:wrap;
@@ -501,7 +484,6 @@
     }
   </style>
 
-  <!-- Carga cams.js -->
   <script>window.APP_VERSION="2.3.9";</script>
   <script src="./cams.js?v=2.3.9"></script>
 </head>
@@ -803,7 +785,7 @@
       </div>
     </div>
 
-    <!-- ✅ HUD Catálogo (aparece solo en catálogo/newsCatalog) -->
+    <!-- ✅ HUD Catálogo -->
     <div class="card hudCard" id="hudCard" style="display:none;">
       <div class="cardTitle">
         <div class="h">HUD Catálogo (4-UP)</div>
@@ -878,7 +860,7 @@
 
     <div class="list" id="list"></div>
 
-    <details>
+    <details id="diagDetails">
       <summary>Diagnóstico (por qué no llega al player / estado / buses)</summary>
       <div class="card" style="margin-top:10px">
         <div class="diag" id="diagTxt">—</div>
@@ -913,8 +895,21 @@
   const LOAD_GUARD = "__RLC_OBS_CAM_PANEL_LOADED_V239";
   try { if (window[LOAD_GUARD]) return; window[LOAD_GUARD] = true; } catch (_) {}
 
-  // ───────────────────────── Header fixed: altura dinámica ─────────────────────────
+  // ───────────────────────── PERF knobs ─────────────────────────
+  const PERF = {
+    TICK_MS: 1200,          // antes 750ms
+    DIAG_SMALL_MS: 1800,    // diagTxt (ligero)
+    DIAG_RAW_MS: 9000,      // textarea RAW (pesado)
+    ROT_UI_MS: 1500,        // throttling UI rotación/pool
+    TOPH_THROTTLE_MS: 250,  // recalcular topH sin spam
+    RENDER_CHUNK: 110,      // items por chunk
+    RENDER_BUDGET_MS: 10    // presupuesto por chunk (fallback sin idle)
+  };
+
+  // ───────────────────────── Header fixed: altura dinámica (throttled) ─────────────────────────
   const topBar = document.getElementById("topBar");
+  let _topHQueued = false;
+  let _topHLast = 0;
   function setTopH(){
     try{
       if (!topBar) return;
@@ -922,14 +917,19 @@
       document.documentElement.style.setProperty("--topH", h + "px");
     }catch(_){}
   }
-  window.addEventListener("resize", ()=>setTopH(), { passive:true });
-  try{
-    if ("MutationObserver" in window && topBar){
-      const mo = new MutationObserver(()=>setTopH());
-      mo.observe(topBar, { childList:true, subtree:true, characterData:true });
-    }
-  }catch(_){}
-  setTopH();
+  function scheduleTopH(force=false){
+    const t = Date.now();
+    if (!force && (t - _topHLast) < PERF.TOPH_THROTTLE_MS) return;
+    _topHLast = t;
+    if (_topHQueued) return;
+    _topHQueued = true;
+    requestAnimationFrame(()=>{
+      _topHQueued = false;
+      setTopH();
+    });
+  }
+  window.addEventListener("resize", ()=>scheduleTopH(true), { passive:true });
+  scheduleTopH(true);
 
   // ───────────────────────── Utils ─────────────────────────
   const qs = (s, r=document) => r.querySelector(s);
@@ -971,6 +971,44 @@
     toast._t = setTimeout(()=>el.classList.remove("on"), 1250);
   }
 
+  function debounce(fn, ms=140){
+    let t = null;
+    return (...args)=>{
+      clearTimeout(t);
+      t = setTimeout(()=>fn(...args), ms);
+    };
+  }
+
+  function throttle(fn, ms=250){
+    let last = 0;
+    let pending = false;
+    let lastArgs = null;
+    return (...args)=>{
+      const t = now();
+      lastArgs = args;
+      if (t - last >= ms){
+        last = t;
+        pending = false;
+        fn(...lastArgs);
+        return;
+      }
+      if (pending) return;
+      pending = true;
+      setTimeout(()=>{
+        pending = false;
+        last = now();
+        fn(...(lastArgs||[]));
+      }, Math.max(0, ms - (t - last)));
+    };
+  }
+
+  function scheduleIdle(cb){
+    if ("requestIdleCallback" in window){
+      return requestIdleCallback(cb, { timeout: 900 });
+    }
+    return setTimeout(()=>cb({ didTimeout:true, timeRemaining:()=>0 }), 0);
+  }
+
   // ───────────────────────── Params + KEY auto (2.3.9) ─────────────────────────
   const u = new URL(location.href);
 
@@ -1010,46 +1048,6 @@
 
   let favOnly = false;
 
-  function applyOptsToUI(){
-    const o = loadOpts();
-
-    // cams
-    if (o.camsTarget != null) qs("#camsTarget").value = String(o.camsTarget);
-    if (typeof o.camsDiscovery === "boolean") qs("#camsDiscovery").checked = o.camsDiscovery;
-    if (typeof o.camsValidate === "boolean") qs("#camsValidate").checked = o.camsValidate;
-
-    // news
-    if (typeof o.newsEnabled === "boolean") qs("#newsEnabled").checked = o.newsEnabled;
-    if (typeof o.newsMix === "boolean") qs("#newsMix").checked = o.newsMix;
-    if (typeof o.newsInCatalog === "boolean") qs("#newsInCatalog").checked = o.newsInCatalog;
-    if (o.newsTarget != null) qs("#newsTarget").value = String(o.newsTarget);
-
-    // view/filters
-    if (o.view) qs("#view").value = String(o.view);
-    if (o.kind != null) qs("#kind").value = String(o.kind);
-    if (typeof o.hideAlt === "boolean") qs("#hideAlt").checked = o.hideAlt;
-    if (o.sort) qs("#sort").value = String(o.sort);
-    if (o.limit != null) qs("#limit").value = String(o.limit);
-    if (typeof o.favOnly === "boolean") favOnly = o.favOnly;
-
-    // rotation
-    if (typeof o.rotEnabled === "boolean") qs("#rotEnabled").checked = o.rotEnabled;
-    if (o.rotEvery != null) qs("#rotEvery").value = String(o.rotEvery);
-    if (o.rotMode) qs("#rotMode").value = String(o.rotMode);
-    if (o.rotUseUiFilters != null) qs("#rotUseUiFilters").value = String(o.rotUseUiFilters ? 1 : 0);
-    if (o.rotKind != null) qs("#rotKind").value = String(o.rotKind);
-    if (o.rotTag != null) qs("#rotTag").value = String(o.rotTag);
-    if (typeof o.rotFavsOnly === "boolean") qs("#rotFavsOnly").checked = o.rotFavsOnly;
-    if (typeof o.rotTagStrict === "boolean") qs("#rotTagStrict").checked = o.rotTagStrict;
-
-    // HUD (nuevo)
-    if (o.hudMode) hudMode = String(o.hudMode);
-    if (o.hudSlot != null) hudSlot = clamp(parseInt(o.hudSlot,10), 1, 4) | 0;
-
-    syncHudModeSeg();
-    syncKindSeg();
-  }
-
   // ───────────────────────── Candidate keys/channels ─────────────────────────
   const BUS_CANDIDATES_ALL   = ["rlc_bus_v1","rlc_bus"];
   const CMD_CANDIDATES_ALL   = ["rlc_cmd_v1","rlc_cmd"];
@@ -1065,7 +1063,6 @@
     const out = [];
     for (const b of baseList){
       if (KEY) out.push(`${b}:${KEY}`);
-      // si allowLegacy=0 y hay KEY, NO añadimos base legacy
       if (!KEY || allowLegacy) out.push(b);
     }
     return Array.from(new Set(out));
@@ -1078,30 +1075,6 @@
     EVT_KEYS   = makeKeyList(EVT_CANDIDATES_ALL);
   }
   recomputeKeys();
-
-  function setKey(newKey){
-    const k = String(newKey||"").trim();
-    if (k === KEY) return false;
-    KEY = k;
-    qs("#key").value = KEY;
-
-    try { localStorage.setItem(KEY_STORE, KEY); } catch(_){}
-    try { if (KEY) localStorage.setItem(LAST_KEY_STORE, KEY); } catch(_){}
-
-    recomputeKeys();
-    openChannels();
-    openCamsBC();
-    favs = loadFavs();
-
-    applyOptsToUI();
-    renderList();
-    updateHudVisibility(); // HUD
-    renderHud(); // HUD
-    updateDiag();
-    updateRotationUi();
-    toast(KEY ? `key=${KEY}` : "key vacía");
-    return true;
-  }
 
   // ───────────────────────── UI refs ─────────────────────────
   const dot = qs("#dot");
@@ -1143,6 +1116,7 @@
   const btnViewNews = qs("#btnViewNews");
   const btnSendCamsCfg = qs("#btnSendCamsCfg");
 
+  const diagDetails = qs("#diagDetails");
   const diagTxt = qs("#diagTxt");
   const diagState = qs("#diagState");
   const diagCmd = qs("#diagCmd");
@@ -1165,7 +1139,7 @@
   const rotDiagMini = qs("#rotDiagMini");
   const rotDiag = qs("#rotDiag");
 
-  // HUD UI (nuevo)
+  // HUD UI
   const hudCard = qs("#hudCard");
   const hudSub = qs("#hudSub");
   const hudGrid = qs("#hudGrid");
@@ -1174,6 +1148,81 @@
   const btnHudNext = qs("#btnHudNext");
   const btnHudSync = qs("#btnHudSync");
   const btnHudClear = qs("#btnHudClear");
+
+  // ───────────────────────── Connection dot ─────────────────────────
+  function setConn(state){
+    dot.classList.remove("ok","bad");
+    if (state === true) dot.classList.add("ok");
+    else if (state === false) dot.classList.add("bad");
+  }
+
+  // ───────────────────────── Params persistence ─────────────────────────
+  let hudMode = "auto";
+  let hudSlot = 1;
+
+  function applyOptsToUI(){
+    const o = loadOpts();
+
+    // cams
+    if (o.camsTarget != null) qs("#camsTarget").value = String(o.camsTarget);
+    if (typeof o.camsDiscovery === "boolean") qs("#camsDiscovery").checked = o.camsDiscovery;
+    if (typeof o.camsValidate === "boolean") qs("#camsValidate").checked = o.camsValidate;
+
+    // news
+    if (typeof o.newsEnabled === "boolean") qs("#newsEnabled").checked = o.newsEnabled;
+    if (typeof o.newsMix === "boolean") qs("#newsMix").checked = o.newsMix;
+    if (typeof o.newsInCatalog === "boolean") qs("#newsInCatalog").checked = o.newsInCatalog;
+    if (o.newsTarget != null) qs("#newsTarget").value = String(o.newsTarget);
+
+    // view/filters
+    if (o.view) qs("#view").value = String(o.view);
+    if (o.kind != null) qs("#kind").value = String(o.kind);
+    if (typeof o.hideAlt === "boolean") qs("#hideAlt").checked = o.hideAlt;
+    if (o.sort) qs("#sort").value = String(o.sort);
+    if (o.limit != null) qs("#limit").value = String(o.limit);
+    if (typeof o.favOnly === "boolean") favOnly = o.favOnly;
+
+    // rotation
+    if (typeof o.rotEnabled === "boolean") qs("#rotEnabled").checked = o.rotEnabled;
+    if (o.rotEvery != null) qs("#rotEvery").value = String(o.rotEvery);
+    if (o.rotMode) qs("#rotMode").value = String(o.rotMode);
+    if (o.rotUseUiFilters != null) qs("#rotUseUiFilters").value = String(o.rotUseUiFilters ? 1 : 0);
+    if (o.rotKind != null) qs("#rotKind").value = String(o.rotKind);
+    if (o.rotTag != null) qs("#rotTag").value = String(o.rotTag);
+    if (typeof o.rotFavsOnly === "boolean") qs("#rotFavsOnly").checked = o.rotFavsOnly;
+    if (typeof o.rotTagStrict === "boolean") qs("#rotTagStrict").checked = o.rotTagStrict;
+
+    // HUD
+    if (o.hudMode) hudMode = String(o.hudMode);
+    if (o.hudSlot != null) hudSlot = clamp(parseInt(o.hudSlot,10), 1, 4) | 0;
+
+    syncHudModeSeg();
+    syncKindSeg();
+  }
+
+  function setKey(newKey){
+    const k = String(newKey||"").trim();
+    if (k === KEY) return false;
+    KEY = k;
+    qs("#key").value = KEY;
+
+    try { localStorage.setItem(KEY_STORE, KEY); } catch(_){}
+    try { if (KEY) localStorage.setItem(LAST_KEY_STORE, KEY); } catch(_){}
+
+    recomputeKeys();
+    openChannels();
+    openCamsBC();
+    favs = loadFavs();
+
+    applyOptsToUI();
+    renderList();
+    updateHudVisibility();
+    renderHud();
+    updateDiagSmallThrottled();
+    updateRotationUiThrottled();
+    toast(KEY ? `key=${KEY}` : "key vacía");
+    return true;
+  }
 
   // ───────────────────────── BroadcastChannels (player/control bus) ─────────────────────────
   let bcs = [];
@@ -1205,7 +1254,6 @@
 
     if (!("BroadcastChannel" in window)) return;
 
-    // cams.js escucha rlc_bus_v1 (legacy) y rlc_bus_v1:{key}
     try { if (allowLegacy || !KEY) camsBC = new BroadcastChannel("rlc_bus_v1"); } catch(_){}
     try { if (KEY) camsBCKeyed = new BroadcastChannel(`rlc_bus_v1:${KEY}`); } catch(_){}
   }
@@ -1215,30 +1263,21 @@
     try { if (camsBCKeyed) camsBCKeyed.postMessage(msg); } catch(_){}
   }
 
-  // ───────────────────────── State parse (2.3.9 + legacy) ─────────────────────────
+  // ───────────────────────── State parse + cache ─────────────────────────
   let lastState = null;
   let lastSeenAt = 0;
   let lastStateKeyUsed = "";
-
-  function setConn(state){
-    dot.classList.remove("ok","bad");
-    if (state === true) dot.classList.add("ok");
-    else if (state === false) dot.classList.add("bad");
-  }
+  let activeIdCache = "";
+  let lastActiveIdApplied = "";
 
   function keyOkForMsg(obj){
     const mk = String(obj?.key || "").trim();
 
-    // Si no hay KEY y llega mk, adoptamos
-    if (!KEY && mk) {
-      setKey(mk);
-      return true;
-    }
+    if (!KEY && mk) { setKey(mk); return true; }
 
     if (KEY) {
-      // allowLegacy=0 => no aceptamos mensajes sin mk (legacy) si ya estamos en KEY
       if (!allowLegacy && !mk) return false;
-      if (!mk) return true;           // legacy permitido
+      if (!mk) return true;
       return mk === KEY;
     }
     return true;
@@ -1320,6 +1359,8 @@
 
   function renderTopFromState(s){
     const cam = extractCam(s);
+    activeIdCache = cam.id ? String(cam.id) : "";
+
     const title = cam.title || (cam.id ? `Cam ${cam.id}` : "—");
     const place = cam.place ? ` — ${cam.place}` : "";
     const kind = cam.kind ? ` · ${cam.kind}` : "";
@@ -1331,7 +1372,7 @@
     else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = "⏯ PLAY"; }
 
     setConn(true);
-    setTopH();
+    scheduleTopH(false);
   }
 
   function onBus(msg, busName){
@@ -1345,33 +1386,24 @@
       return;
     }
 
-    if (t === "state" || msg.type === "state") {
-      if (!keyOkForMsg(msg)) return;
-      lastState = msg;
-      lastSeenAt = now();
-      lastStateKeyUsed = busName || lastStateKeyUsed;
-      renderTopFromState(msg);
-      markActiveCam();
-      // HUD (best-effort)
-      updateHudVisibility();
-      syncHudFromState(msg);
-      renderHud();
-      updateDiag();
-      return;
-    }
+    const looksLikeState = (t === "state" || msg.type === "state") ||
+      (!t && (msg.cam || msg.nowCam || msg.currentCam || msg.camId || msg.activeCamId || msg.currentCamId));
 
-    if (!t && (msg.cam || msg.nowCam || msg.currentCam || msg.camId || msg.activeCamId || msg.currentCamId)) {
-      if (!keyOkForMsg(msg)) return;
-      lastState = msg;
-      lastSeenAt = now();
-      lastStateKeyUsed = busName || lastStateKeyUsed;
-      renderTopFromState(msg);
-      markActiveCam();
-      updateHudVisibility();
-      syncHudFromState(msg);
-      renderHud();
-      updateDiag();
-    }
+    if (!looksLikeState) return;
+    if (!keyOkForMsg(msg)) return;
+
+    lastState = msg;
+    lastSeenAt = now();
+    lastStateKeyUsed = busName || lastStateKeyUsed;
+
+    renderTopFromState(msg);
+    markActiveCamOptimized();
+    updateHudVisibility();
+    syncHudFromState(msg);
+    renderHud();
+
+    updateDiagSmallThrottled();
+    updateRotationUiThrottled();
   }
 
   window.addEventListener("storage", (e)=>{
@@ -1384,15 +1416,17 @@
       lastState = s;
       lastSeenAt = now();
       renderTopFromState(s);
-      markActiveCam();
+      markActiveCamOptimized();
       updateHudVisibility();
       syncHudFromState(s);
       renderHud();
-      updateDiag();
+
+      updateDiagSmallThrottled();
+      updateRotationUiThrottled();
     }
   });
 
-  // ───────────────────────── Command send (2.3.9 compatible) ─────────────────────────
+  // ───────────────────────── Command send ─────────────────────────
   let lastSendAt = 0;
   let lastCmdRaw = "";
 
@@ -1446,11 +1480,12 @@
 
     const extra = (payload && payload.id!=null) ? " ("+payload.id+")" : "";
     toast(`CMD → ${cmd}${extra}`);
-    updateDiag();
+    updateDiagSmallThrottled();
   }
 
   // ───────────────────────── cams.js list + update events ─────────────────────────
   let lastCamsDetail = null;
+  let lastListSig = ""; // firma para throttling
 
   function pickDetailList(d, ...names){
     if (!d || typeof d !== "object") return null;
@@ -1471,7 +1506,6 @@
     return Array.from(m.values());
   }
 
-  // ✅ API list helpers (mucho más tolerante)
   function camsApi(){
     return (window.RLCCams && typeof window.RLCCams === "object") ? window.RLCCams : null;
   }
@@ -1493,7 +1527,6 @@
       }
     } catch(_){}
     try {
-      // algunos builds guardan en api.state / api.data
       const bag = api.state || api.data || api._state || api._data;
       if (bag && typeof bag === "object") {
         const v = bag[name];
@@ -1521,18 +1554,15 @@
     const d = lastCamsDetail || null;
     const api = camsApi();
 
-    // prioridad 1: event.detail
     const mainFromDetail = pickDetailList(d,"list","main","mainList","cams","camList");
     const catFromDetail  = pickDetailList(d,"catalog","catalogList","cat","catList","catalogCams");
     const newsFromDetail = pickDetailList(d,"news","newsList","newsCams","news_items");
     const newsCatFromDetail = pickDetailList(d,"newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList");
 
-    // prioridad 2: globals
     const mainFromWindow = getWindowList();
     const catFromWindow  = getWindowCatalog();
     const newsFromWindow = getWindowNews();
 
-    // prioridad 3: RLCCams (si expone)
     const mainFromApi = apiTryGetList(api, "main") || apiTryGetList(api, "list") || apiTryGetList(api, "cams");
     const catFromApi  = apiTryGetList(api, "catalog") || apiTryGetList(api, "catalogList") || apiTryGetList(api, "cat");
     const newsFromApi = apiTryGetList(api, "news") || apiTryGetList(api, "newsList");
@@ -1555,6 +1585,14 @@
     return cat.length ? cat : main;
   }
 
+  function computeListSig(){
+    const main = getWindowList() || [];
+    const cat  = getWindowCatalog() || [];
+    const news = getWindowNews() || [];
+    const vLen = (getListByView() || []).length;
+    return `m${main.length}-c${cat.length}-n${news.length}-v${vLen}`;
+  }
+
   function applyCamsUiFromDetail(d){
     if (!d || typeof d !== "object") return;
     const f = (d.flags && typeof d.flags === "object") ? d.flags : d;
@@ -1572,21 +1610,30 @@
   window.addEventListener("rlc_cam_list_updated", (ev)=>{
     lastCamsDetail = (ev && ev.detail) ? ev.detail : null;
     applyCamsUiFromDetail(lastCamsDetail);
-    renderList();
-    updateHudVisibility();
-    renderHud();
-    updateDiag();
-    updateRotationUi();
+
+    const sig = computeListSig();
+    if (sig !== lastListSig){
+      lastListSig = sig;
+      renderList();
+      updateHudVisibility();
+      renderHud();
+      updateDiagSmallThrottled();
+      updateRotationUiThrottled();
+    } else {
+      // si no cambia firma, evita re-render masivo
+      updateDiagSmallThrottled();
+      updateRotationUiThrottled();
+    }
   });
 
-  // ✅ Espera inteligente para “encontrar cams” (sin matar rendimiento)
+  // ✅ Espera inteligente para “encontrar cams” (suave)
   let ensureTimer = null;
   let ensureTry = 0;
+
   function listsTotals(){
     const main = (getWindowList() || []).length;
     const cat  = (getWindowCatalog() || []).length;
     const news = (getWindowNews() || []).length;
-    // también cuenta por getListByView (por si viene de detail/api)
     const viewLen = (getListByView() || []).length;
     return { main, cat, news, viewLen };
   }
@@ -1598,31 +1645,25 @@
     clearTimeout(ensureTimer);
     if (force) ensureTry = 0;
 
-    // ya hay cams => re-render y listo
     if (hasAnyCams()){
       ensureTry = 0;
       renderList();
       return;
     }
 
-    // intentos con backoff suave
     ensureTry++;
-    const delay = clamp(250 * ensureTry, 250, 2500);
+    const delay = clamp(260 * ensureTry, 260, 2600);
 
-    // “toquecito” a cams.js por si aún no refrescó (solo en los primeros intentos)
-    if (ensureTry <= 3){
+    if (ensureTry <= 2){
       try { camsRefresh(); } catch(_){}
     }
 
     ensureTimer = setTimeout(()=>{
-      // si sigue vacío, intenta re-render (por si justo entró algo)
       try { renderList(); } catch(_){}
-      // reintenta hasta un máximo razonable
-      if (ensureTry < 12 && !hasAnyCams()){
+      if (ensureTry < 10 && !hasAnyCams()){
         ensureListsLoaded(false);
       } else if (!hasAnyCams()){
-        // mensaje útil (no spam)
-        toast("Aún sin cams: revisa que cams.js cargue y que no esté bloqueado por CORS/OBS");
+        toast("Aún sin cams: revisa cams.js / CORS / OBS");
       }
     }, delay);
   }
@@ -1649,10 +1690,7 @@
   }
   let favs = loadFavs();
 
-  // ───────────────────────── HUD Catálogo (NUEVO) ─────────────────────────
-  // hudMode: auto/main/slot  (auto => en catálogo usa slot; fuera usa main)
-  let hudMode = "auto";
-  let hudSlot = 1; // 1..4
+  // ───────────────────────── HUD Catálogo ─────────────────────────
   let hudSlots = [
     { id:"", title:"—", place:"", kind:"", source:"" },
     { id:"", title:"—", place:"", kind:"", source:"" },
@@ -1671,7 +1709,6 @@
     const v = String(viewEl.value || "catalog");
     if (hudMode === "main") return "main";
     if (hudMode === "slot") return "slot";
-    // auto
     return isCatalogLikeView(v) ? "slot" : "main";
   }
 
@@ -1688,7 +1725,7 @@
     const show = isCatalogLikeView(viewEl.value);
     hudCard.style.display = show ? "" : "none";
     updateHudSub();
-    setTopH();
+    scheduleTopH(false);
   }
 
   function updateHudSub(){
@@ -1759,6 +1796,8 @@
         updateHudSub();
         renderHud();
         toast(`HUD: slot ${hudSlot} (${SLOT_POS[hudSlot-1]})`);
+        // actualizar badges de lista sin re-render total
+        updateListTargetBadges();
       });
 
       hudGrid.appendChild(tile);
@@ -1809,10 +1848,9 @@
 
   function extractCamLike(o){
     if (!o || typeof o !== "object") return null;
-    // Si viene como {cam:{...}} o parecido
     const c = extractCam(o);
     if (c && (c.id || c.title || c.kind || c.place || c.source)) return c;
-    // Si viene ya como cam directa
+
     const id = (o.id!=null) ? String(o.id) : (o.camId!=null) ? String(o.camId) : "";
     const title = (o.title!=null) ? String(o.title) : "";
     const place = (o.place!=null) ? String(o.place) : "";
@@ -1831,10 +1869,8 @@
       if (seen.has(v)) continue;
       seen.add(v);
 
-      // arrays candidatas de 4
       if (Array.isArray(v) && v.length >= 4){
         const first4 = v.slice(0,4);
-        // heurística: elementos con id/camId/cam/kind/title
         const ok = first4.some(x=>{
           if (!x || typeof x !== "object") return false;
           return (x.id!=null || x.camId!=null || x.cam || x.kind || x.title);
@@ -1852,28 +1888,21 @@
   }
 
   function syncHudFromState(s){
-    // Solo nos interesa “best-effort” para dibujar el HUD.
-    // Si no encontramos slots, dejamos los últimos.
     if (!s || typeof s !== "object") return false;
 
     const candidates = [];
 
-    // 1) keys típicas
     const directArrays = [
       s.slots, s.slotCams, s.grid, s.gridSlots, s.catalogSlots, s.catalog,
       s.multi, s.multicam, s.layout, s.tiles, s.panels
     ].filter(Array.isArray);
 
     for (const arr of directArrays){
-      if (Array.isArray(arr) && arr.length >= 4){
-        candidates.push(arr);
-      }
+      if (Array.isArray(arr) && arr.length >= 4) candidates.push(arr);
     }
 
-    // 2) objetos contenedores típicos
-    const containers = [
-      s.catalog, s.multicam, s.multi, s.layout, s.grid, s.scene, s.view, s.screen
-    ].filter(x=>x && typeof x === "object");
+    const containers = [ s.catalog, s.multicam, s.multi, s.layout, s.grid, s.scene, s.view, s.screen ]
+      .filter(x=>x && typeof x === "object");
 
     for (const c of containers){
       for (const key of ["slots","cams","items","views","panes","tiles","grid","cells","cards"]){
@@ -1882,13 +1911,11 @@
       }
     }
 
-    // 3) deep scan (último recurso)
     if (!candidates.length){
       const deep = findArrayDeep(s, 4);
       if (Array.isArray(deep) && deep.length >= 4) candidates.push(deep);
     }
 
-    // elegir la mejor: la que tenga más “cam-likeness” en los 4 primeros
     let best = null;
     let bestScore = -1;
 
@@ -1945,7 +1972,6 @@
     const id = (typeof camObjOrId === "string") ? camObjOrId : String(camObjOrId?.id || "");
     if (!id) return;
 
-    // buscar cam en lista actual (para HUD inmediato)
     let cObj = null;
     try{
       const base = getListByView();
@@ -1957,13 +1983,11 @@
     const payload = Object.assign({
       id, camId:id, targetId:id, gotoId:id, setCamId:id
     }, target, {
-      // extras compat
       scope: target.target === "slot" ? "slot" : "main",
       assign: target.target === "slot" ? "slot" : "main",
       setSlot: target.target === "slot" ? target.slot : undefined
     });
 
-    // actualiza HUD local “optimista” si vamos a slot
     if (target.target === "slot"){
       const slot = clamp(target.slot,1,4)|0;
       const info = cObj ? {
@@ -1986,7 +2010,7 @@
     }
   }
 
-  // ───────────────────────── Render list ─────────────────────────
+  // ───────────────────────── Render list (INCREMENTAL) ─────────────────────────
   function camKindBadge(kind){
     const k = norm(kind);
     if (k === "youtube") return "YT";
@@ -2008,13 +2032,19 @@
   }
 
   function camText(c){
+    if (!c) return "";
+    if (c.___camText) return c.___camText;
+
     const raw = [
       c.id, c.kind, c.title, c.place, c.source, c.originUrl, c.url,
       (Array.isArray(c.tags) ? c.tags.join(" ") : (c.tags || "")),
       (c.tag || ""), (c.category || ""), (c.categories || ""),
       (c.isAlt ? "alt" : ""), (c.altOf || "")
     ].map(x=>String(x||"")).join(" ");
-    return stripDiacritics(raw).toLowerCase();
+
+    const t = stripDiacritics(raw).toLowerCase();
+    try { Object.defineProperty(c, "___camText", { value: t, enumerable:false }); } catch(_){ c.___camText = t; }
+    return t;
   }
 
   function kindFilterOk(c){
@@ -2048,9 +2078,11 @@
   }
 
   function getActiveId(){
+    if (activeIdCache) return activeIdCache;
     const s = lastState || readState();
     const cam = s ? extractCam(s) : {id:""};
-    return cam && cam.id ? String(cam.id) : "";
+    activeIdCache = cam && cam.id ? String(cam.id) : "";
+    return activeIdCache;
   }
 
   function compareStr(a,b){
@@ -2061,10 +2093,175 @@
     return 0;
   }
 
-  // ✅ mantenemos la última lista renderizada (IDs) para rotación con filtros UI
   let lastRenderedIds = [];
+  let _renderToken = 0;
+  let _rendering = false;
+
+  function buildCamCard(c, activeId){
+    const id = String(c.id);
+    const el = document.createElement("div");
+    el.className = "cam" + ((activeId && id === activeId) ? " active" : "");
+    el.dataset.id = id;
+
+    const mini = document.createElement("div");
+    mini.className = "mini";
+
+    const badge = document.createElement("div");
+    badge.className = "badge";
+    badge.textContent = camKindBadge(c.kind);
+    mini.appendChild(badge);
+
+    let thumb = (c && c.thumb) ? String(c.thumb) : "";
+    if (!thumb && norm(c.kind) === "youtube") {
+      thumb = ytThumbFromUrl(c.url || c.originUrl || "");
+    }
+
+    if (thumb) {
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.alt = "thumb";
+      img.src = thumb;
+      mini.appendChild(img);
+    } else {
+      const fallback = document.createElement("div");
+      fallback.style.fontSize = "12px";
+      fallback.style.opacity = ".9";
+      fallback.textContent = camKindBadge(c.kind);
+      mini.appendChild(fallback);
+    }
+
+    const body = document.createElement("div");
+    body.className = "body";
+
+    const t1 = document.createElement("div");
+    t1.className = "t1";
+    t1.textContent = c.title || `Cam ${id}`;
+
+    const t2 = document.createElement("div");
+    t2.className = "t2";
+    t2.textContent = `${c.place ? c.place + " · " : ""}${c.source || ""}`.trim() || "—";
+
+    const tags = document.createElement("div");
+    tags.className = "tags";
+
+    const tagKind = document.createElement("div");
+    tagKind.className = "tag kind";
+    tagKind.textContent = (c.kind || "cam");
+    tags.appendChild(tagKind);
+
+    const tagId = document.createElement("div");
+    tagId.className = "tag";
+    tagId.textContent = `id:${id}`;
+    tags.appendChild(tagId);
+
+    if (favs.has(id)){
+      const f = document.createElement("div");
+      f.className = "tag fav";
+      f.textContent = "★";
+      tags.appendChild(f);
+    }
+
+    if (c.source){
+      const s = document.createElement("div");
+      s.className = "tag src";
+      s.textContent = c.source;
+      tags.appendChild(s);
+    }
+    if (c.place){
+      const p = document.createElement("div");
+      p.className = "tag place";
+      p.textContent = c.place;
+      tags.appendChild(p);
+    }
+
+    const isNews = isNewsCam(c) || (String(viewEl.value||"").includes("news"));
+    if (isNews) {
+      const n = document.createElement("div");
+      n.className = "tag news";
+      n.textContent = "NEWS";
+      tags.appendChild(n);
+    }
+    if (c.isAlt) {
+      const a = document.createElement("div");
+      a.className = "tag alt";
+      a.textContent = `ALT${c.altOf ? ":"+c.altOf : ""}`;
+      tags.appendChild(a);
+    }
+
+    if (isCatalogLikeView(viewEl.value) && effectiveTargetMode() === "slot"){
+      const tb = document.createElement("div");
+      tb.className = "tag";
+      tb.dataset.role = "targetBadge";
+      tb.style.borderColor = "rgba(55,214,255,.35)";
+      tb.style.background = "rgba(55,214,255,.12)";
+      tb.textContent = `→ slot${hudSlot}:${SLOT_POS[hudSlot-1]}`;
+      tags.appendChild(tb);
+    }
+
+    body.appendChild(t1);
+    body.appendChild(t2);
+    body.appendChild(tags);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const bGo = document.createElement("button");
+    bGo.className = "smallBtn primary";
+    bGo.textContent = "IR";
+    bGo.addEventListener("click", (ev)=>{
+      ev.preventDefault();
+      gotoCamWithTarget(id);
+    });
+
+    const bStar = document.createElement("button");
+    bStar.className = "smallBtn star" + (favs.has(id) ? " on" : "");
+    bStar.textContent = favs.has(id) ? "★" : "☆";
+    bStar.title = "Favorito";
+    bStar.addEventListener("click", (ev)=>{
+      ev.preventDefault();
+      if (favs.has(id)) favs.delete(id);
+      else favs.add(id);
+      saveFavs(favs);
+      renderList();
+      renderHud();
+      updateRotationUiThrottled();
+    });
+
+    const bOpen = document.createElement("button");
+    bOpen.className = "smallBtn";
+    bOpen.textContent = "ORIG";
+    bOpen.title = "Abrir originUrl";
+    bOpen.addEventListener("click", (ev)=>{
+      ev.preventDefault();
+      const url = c.originUrl || c.url || "";
+      if (url) window.open(url, "_blank", "noopener");
+    });
+
+    actions.appendChild(bGo);
+    actions.appendChild(bStar);
+    actions.appendChild(bOpen);
+
+    el.appendChild(mini);
+    el.appendChild(body);
+    el.appendChild(actions);
+
+    return el;
+  }
+
+  function updateListTargetBadges(){
+    if (!(isCatalogLikeView(viewEl.value) && effectiveTargetMode()==="slot")) return;
+    const badges = listEl.querySelectorAll('[data-role="targetBadge"]');
+    for (const b of badges){
+      b.textContent = `→ slot${hudSlot}:${SLOT_POS[hudSlot-1]}`;
+    }
+  }
 
   function renderList(customList=null){
+    const token = ++_renderToken;
+    _rendering = true;
+
     const baseList = Array.isArray(customList) ? customList : getListByView();
     const activeId = getActiveId();
     const sortMode = String(sortEl.value || "activeFav");
@@ -2116,7 +2313,6 @@
 
     if (lim > 0 && filtered.length > lim) filtered = filtered.slice(0, lim);
 
-    // guarda IDs renderizados (para rotación con filtros UI)
     lastRenderedIds = filtered.map(c => String(c.id));
 
     const totalMain = (getWindowList() || []).length;
@@ -2132,7 +2328,6 @@
       : (v === "allNoAlt") ? "ALL_NO_ALT"
       : "LIST";
 
-    // si no hay nada todavía, mensaje útil
     const emptyHint = (!filtered.length && !hasAnyCams())
       ? " · <b>Esperando cams…</b> (si tarda: pulsa REFRESH o revisa cams.js)"
       : "";
@@ -2151,164 +2346,6 @@
       tgt +
       emptyHint;
 
-    listEl.innerHTML = "";
-    const frag = document.createDocumentFragment();
-
-    for (const c of filtered){
-      const id = String(c.id);
-      const el = document.createElement("div");
-      el.className = "cam";
-      el.dataset.id = id;
-
-      const mini = document.createElement("div");
-      mini.className = "mini";
-
-      const badge = document.createElement("div");
-      badge.className = "badge";
-      badge.textContent = camKindBadge(c.kind);
-      mini.appendChild(badge);
-
-      let thumb = (c && c.thumb) ? String(c.thumb) : "";
-      if (!thumb && norm(c.kind) === "youtube") {
-        thumb = ytThumbFromUrl(c.url || c.originUrl || "");
-      }
-
-      if (thumb) {
-        const img = document.createElement("img");
-        img.loading = "lazy";
-        img.referrerPolicy = "no-referrer";
-        img.alt = "thumb";
-        img.src = thumb;
-        mini.appendChild(img);
-      } else {
-        const fallback = document.createElement("div");
-        fallback.style.fontSize = "12px";
-        fallback.style.opacity = ".9";
-        fallback.textContent = camKindBadge(c.kind);
-        mini.appendChild(fallback);
-      }
-
-      const body = document.createElement("div");
-      body.className = "body";
-
-      const t1 = document.createElement("div");
-      t1.className = "t1";
-      t1.textContent = c.title || `Cam ${id}`;
-
-      const t2 = document.createElement("div");
-      t2.className = "t2";
-      t2.textContent = `${c.place ? c.place + " · " : ""}${c.source || ""}`.trim() || "—";
-
-      const tags = document.createElement("div");
-      tags.className = "tags";
-
-      const tagKind = document.createElement("div");
-      tagKind.className = "tag kind";
-      tagKind.textContent = (c.kind || "cam");
-      tags.appendChild(tagKind);
-
-      const tagId = document.createElement("div");
-      tagId.className = "tag";
-      tagId.textContent = `id:${id}`;
-      tags.appendChild(tagId);
-
-      if (favs.has(id)){
-        const f = document.createElement("div");
-        f.className = "tag fav";
-        f.textContent = "★";
-        tags.appendChild(f);
-      }
-
-      if (c.source){
-        const s = document.createElement("div");
-        s.className = "tag src";
-        s.textContent = c.source;
-        tags.appendChild(s);
-      }
-      if (c.place){
-        const p = document.createElement("div");
-        p.className = "tag place";
-        p.textContent = c.place;
-        tags.appendChild(p);
-      }
-
-      const isNews = isNewsCam(c) || (String(viewEl.value||"").includes("news"));
-      if (isNews) {
-        const n = document.createElement("div");
-        n.className = "tag news";
-        n.textContent = "NEWS";
-        tags.appendChild(n);
-      }
-      if (c.isAlt) {
-        const a = document.createElement("div");
-        a.className = "tag alt";
-        a.textContent = `ALT${c.altOf ? ":"+c.altOf : ""}`;
-        tags.appendChild(a);
-      }
-
-      // target badge (solo si estamos en catálogo y destino slot)
-      if (isCatalogLikeView(viewEl.value) && effectiveTargetMode() === "slot"){
-        const tb = document.createElement("div");
-        tb.className = "tag";
-        tb.style.borderColor = "rgba(55,214,255,.35)";
-        tb.style.background = "rgba(55,214,255,.12)";
-        tb.textContent = `→ slot${hudSlot}:${SLOT_POS[hudSlot-1]}`;
-        tags.appendChild(tb);
-      }
-
-      body.appendChild(t1);
-      body.appendChild(t2);
-      body.appendChild(tags);
-
-      const actions = document.createElement("div");
-      actions.className = "actions";
-
-      const bGo = document.createElement("button");
-      bGo.className = "smallBtn primary";
-      bGo.textContent = "IR";
-      bGo.addEventListener("click", (ev)=>{
-        ev.preventDefault();
-        gotoCamWithTarget(id);
-      });
-
-      const bStar = document.createElement("button");
-      bStar.className = "smallBtn star" + (favs.has(id) ? " on" : "");
-      bStar.textContent = favs.has(id) ? "★" : "☆";
-      bStar.title = "Favorito";
-      bStar.addEventListener("click", (ev)=>{
-        ev.preventDefault();
-        if (favs.has(id)) favs.delete(id);
-        else favs.add(id);
-        saveFavs(favs);
-        renderList();
-        renderHud();
-        updateRotationUi();
-      });
-
-      const bOpen = document.createElement("button");
-      bOpen.className = "smallBtn";
-      bOpen.textContent = "ORIG";
-      bOpen.title = "Abrir originUrl";
-      bOpen.addEventListener("click", (ev)=>{
-        ev.preventDefault();
-        const url = c.originUrl || c.url || "";
-        if (url) window.open(url, "_blank", "noopener");
-      });
-
-      actions.appendChild(bGo);
-      actions.appendChild(bStar);
-      actions.appendChild(bOpen);
-
-      el.appendChild(mini);
-      el.appendChild(body);
-      el.appendChild(actions);
-
-      frag.appendChild(el);
-    }
-
-    listEl.appendChild(frag);
-    markActiveCam();
-
     saveOpts({
       view: viewEl.value,
       kind: kindEl.value,
@@ -2318,13 +2355,46 @@
       favOnly: !!favOnly
     });
 
-    updateHudVisibility();
-    renderHud();
-    updateRotationUi();
+    // render incremental
+    listEl.innerHTML = "";
+    let i = 0;
+
+    const appendChunk = (idle)=>{
+      if (token !== _renderToken) return; // cancelado
+      const frag = document.createDocumentFragment();
+      let added = 0;
+
+      const start = performance.now();
+      while (i < filtered.length && added < PERF.RENDER_CHUNK){
+        if (idle && !idle.didTimeout && idle.timeRemaining && idle.timeRemaining() < 8) break;
+        if (!idle && (performance.now() - start) > PERF.RENDER_BUDGET_MS) break;
+
+        frag.appendChild(buildCamCard(filtered[i], activeId));
+        i++; added++;
+      }
+
+      listEl.appendChild(frag);
+
+      if (token !== _renderToken) return;
+      if (i < filtered.length){
+        scheduleIdle(appendChunk);
+      } else {
+        _rendering = false;
+        markActiveCamOptimized(true);
+        updateHudVisibility();
+        renderHud();
+        updateRotationUiThrottled();
+      }
+    };
+
+    scheduleIdle(appendChunk);
   }
 
-  function markActiveCam(){
+  function markActiveCamOptimized(force=false){
     const activeId = getActiveId();
+    if (!force && activeId === lastActiveIdApplied) return;
+    lastActiveIdApplied = activeId;
+
     const items = listEl.querySelectorAll(".cam");
     for (const el of items){
       el.classList.toggle("active", !!(activeId && el.dataset.id === activeId));
@@ -2358,7 +2428,7 @@
     toast("CAMS_CLEAR_CACHE → BC");
   }
 
-  function applyCamsOptions(){
+  function applyCamsOptions(opts={ refresh:true }){
     const api = camsApi();
     const target = clamp(parseInt(camsTargetEl.value, 10), 50, 5000) | 0;
     const autoDisc = !!camsDiscoveryEl.checked;
@@ -2376,11 +2446,11 @@
     postCamsBC({ type:"CAMS_SET_AUTODISCOVERY", value: autoDisc, ts: now(), key: KEY || "" });
     postCamsBC({ type:"CAMS_SET_VALIDATE", value: validate, ts: now(), key: KEY || "" });
 
-    camsRefresh();
+    if (opts.refresh) camsRefresh();
     toast(`Aplicado: target=${target} disc=${autoDisc?1:0} val=${validate?1:0}`);
   }
 
-  function applyNewsOptions(){
+  function applyNewsOptions(opts={ refresh:true }){
     const api = camsApi();
     const en = !!newsEnabledEl.checked;
     const mix = !!newsMixEl.checked;
@@ -2401,7 +2471,7 @@
     postCamsBC({ type:"CAMS_SET_NEWS_CATALOG", value: inCat, ts: now(), key: KEY || "" });
     postCamsBC({ type:"CAMS_SET_NEWS_TARGET", value: nTarget, ts: now(), key: KEY || "" });
 
-    camsRefresh();
+    if (opts.refresh) camsRefresh();
     toast(`News: en=${en?1:0} mix=${mix?1:0} cat=${inCat?1:0} target=${nTarget}`);
   }
 
@@ -2419,7 +2489,6 @@
       } catch(_){}
     }
 
-    // fallback: intenta filtrar “featured” dentro del catálogo
     const cat = getListByView().filter(c => c && c.id != null);
     const featured = cat.filter(c => camText(c).includes("featured") || (Array.isArray(c.tags) && c.tags.includes("featured")));
     const pool = featured.length ? featured : cat;
@@ -2453,22 +2522,25 @@
     }
   }
 
-  // ───────────────────────── ROTACIÓN PRO ─────────────────────────
+  // ───────────────────────── ROTACIÓN PRO (throttled UI) ─────────────────────────
   let rotTimer = null;
   let rotIndex = 0;
-  let rotPool = [];         // ids actuales
-  let rotUsed = new Set();  // para rndNoRep
+  let rotPool = [];
+  let rotUsed = new Set();
   let lastRotAt = 0;
 
   function camTagsBlob(c){
-    const parts = [];
     if (!c) return "";
+    if (c.___tagsBlob) return c.___tagsBlob;
+    const parts = [];
     if (Array.isArray(c.tags)) parts.push(c.tags.join(" "));
     if (c.tags && !Array.isArray(c.tags)) parts.push(String(c.tags));
     if (c.tag) parts.push(String(c.tag));
     if (c.category) parts.push(String(c.category));
     if (c.categories) parts.push(String(c.categories));
-    return stripDiacritics(parts.join(" ")).toLowerCase();
+    const blob = stripDiacritics(parts.join(" ")).toLowerCase();
+    try { Object.defineProperty(c, "___tagsBlob", { value: blob, enumerable:false }); } catch(_){ c.___tagsBlob = blob; }
+    return blob;
   }
 
   function kindOkForRotation(c, rotKind){
@@ -2482,8 +2554,7 @@
   function tagOkForRotation(c, rotTag, strict){
     const t = stripDiacritics(norm(rotTag));
     if (!t) return strict ? false : true;
-    const blob = camTagsBlob(c);
-    return blob.includes(t);
+    return camTagsBlob(c).includes(t);
   }
 
   function buildRotationCandidates(){
@@ -2536,8 +2607,7 @@
     }
 
     const useUi = (String(rotUseUiFiltersEl.value || "1") === "1");
-    const meta = `cands=${rotPool.length} · useUI=${useUi ? 1 : 0}`;
-    rotDiagMini.textContent = meta;
+    rotDiagMini.textContent = `cands=${rotPool.length} · useUI=${useUi ? 1 : 0}`;
 
     const rk = String(rotKindEl.value || "") || "(any)";
     const rt = String(rotTagEl.value || "") || "(none)";
@@ -2568,16 +2638,13 @@
     btnRotToggle.classList.toggle("danger", enabled && running);
     btnRotToggle.classList.toggle("primary", !(enabled && running));
 
-    if (enabled && rotPool.length === 0){
-      const t = now();
-      if (t - lastRotAt > 2500) toast("Rotación: 0 candidatos (revisa tipo/tag/filtros)");
-    }
-    setTopH();
+    scheduleTopH(false);
   }
+  const updateRotationUiThrottled = throttle(updateRotationUi, PERF.ROT_UI_MS);
 
   function stopRotation(){
     if (rotTimer){ clearInterval(rotTimer); rotTimer = null; }
-    updateRotationUi();
+    updateRotationUiThrottled();
   }
 
   function startRotation(){
@@ -2586,12 +2653,12 @@
 
     const everySec = clamp(parseInt(rotEveryEl.value||"30",10), 3, 3600) | 0;
     saveRotationOpts();
-    updateRotationUi();
+    updateRotationUiThrottled();
 
     if (rotPool.length === 0){
       rotEnabledEl.checked = false;
       saveRotationOpts();
-      updateRotationUi();
+      updateRotationUiThrottled();
       toast("Rotación desactivada (0 candidatos)");
       return;
     }
@@ -2601,7 +2668,7 @@
       rotateOnce("tick");
     }, everySec * 1000);
 
-    updateRotationUi();
+    updateRotationUiThrottled();
     toast(`Rotación ON (${everySec}s)`);
   }
 
@@ -2616,8 +2683,7 @@
     }
 
     if (mode === "rnd"){
-      const id = rotPool[(Math.random() * rotPool.length) | 0];
-      return id;
+      return rotPool[(Math.random() * rotPool.length) | 0];
     }
 
     if (mode === "rndNoRep"){
@@ -2639,7 +2705,7 @@
       stopRotation();
       rotEnabledEl.checked = false;
       saveRotationOpts();
-      updateRotationUi();
+      updateRotationUiThrottled();
       toast("Rotación OFF (0 candidatos)");
       return;
     }
@@ -2649,14 +2715,14 @@
 
     lastRotAt = now();
     sendCmd("GOTO", { id, camId:id, targetId:id, gotoId:id, setCamId:id, reason: "ROTATE_"+reason });
-    updateRotationUi();
+    updateRotationUiThrottled();
   }
 
   function resetRotationCycle(){
     rotIndex = 0;
     rotUsed.clear();
     toast("Rotación: ciclo reseteado");
-    updateRotationUi();
+    updateRotationUiThrottled();
   }
 
   function saveRotationOpts(){
@@ -2702,7 +2768,6 @@
   });
 
   btnReload.addEventListener("click", ()=>{
-    // fuerza “encontrar cams” y re-render
     ensureListsLoaded(true);
     renderList();
     toast("Lista recargada");
@@ -2735,9 +2800,12 @@
     saveFavs(favs);
     renderList();
     renderHud();
+    updateRotationUiThrottled();
   });
 
-  qEl.addEventListener("input", ()=>renderList());
+  // input search: debounce para no re-render en cada tecla
+  qEl.addEventListener("input", debounce(()=>renderList(), 140));
+
   kindEl.addEventListener("change", ()=>{
     syncKindSeg();
     saveOpts({ kind: kindEl.value });
@@ -2748,10 +2816,12 @@
     renderList();
     updateHudVisibility();
     renderHud();
+    updateRotationUiThrottled();
   });
   hideAltEl.addEventListener("change", ()=>{
     saveOpts({ hideAlt: !!hideAltEl.checked });
     renderList();
+    updateRotationUiThrottled();
   });
   sortEl.addEventListener("change", ()=>{
     saveOpts({ sort: sortEl.value });
@@ -2762,11 +2832,11 @@
     renderList();
   });
 
-  btnApplyCams.addEventListener("click", ()=>applyCamsOptions());
+  btnApplyCams.addEventListener("click", ()=>applyCamsOptions({ refresh:true }));
   btnClearCache.addEventListener("click", ()=>camsClearCache());
   btnPickFeatured.addEventListener("click", ()=>pickFeatured4());
 
-  btnApplyNews.addEventListener("click", ()=>applyNewsOptions());
+  btnApplyNews.addEventListener("click", ()=>applyNewsOptions({ refresh:true }));
   btnViewNews.addEventListener("click", ()=>{
     viewEl.value = "news";
     saveOpts({ view: "news" });
@@ -2775,8 +2845,10 @@
   });
 
   btnSendCamsCfg.addEventListener("click", ()=>{
-    applyCamsOptions();
-    applyNewsOptions();
+    // evita doble refresh + doble toast
+    applyCamsOptions({ refresh:false });
+    applyNewsOptions({ refresh:false });
+    camsRefresh();
     toast("Config enviada (BC) + refresh");
   });
 
@@ -2813,14 +2885,17 @@
     ensureListsLoaded(true);
   });
 
-  // Copy buttons
-  btnCopyState.addEventListener("click", ()=>copyText(diagState.value));
-  btnCopyCmd.addEventListener("click", ()=>copyText(diagCmd.value));
+  // Copy buttons (asegura RAW actualizado antes)
+  btnCopyState.addEventListener("click", ()=>{
+    updateDiagRaw(true);
+    copyText(diagState.value);
+  });
+  btnCopyCmd.addEventListener("click", ()=>copyText(diagCmd.value || lastCmdRaw || ""));
 
   // Rotation listeners
   function onRotationChange(){
     saveRotationOpts();
-    updateRotationUi();
+    updateRotationUiThrottled();
     if (rotTimer){
       startRotation();
     }
@@ -2837,7 +2912,7 @@
   rotKindEl.addEventListener("change", onRotationChange);
   rotTagEl.addEventListener("input", ()=>{
     saveRotationOpts();
-    updateRotationUi();
+    updateRotationUiThrottled();
   });
   rotFavsOnlyEl.addEventListener("change", onRotationChange);
   rotTagStrictEl.addEventListener("change", onRotationChange);
@@ -2865,7 +2940,7 @@
 
   btnRotReset.addEventListener("click", ()=>resetRotationCycle());
 
-  // ───────────────────────── HUD events (NUEVO) ─────────────────────────
+  // HUD events
   if (segHudMode){
     segHudMode.addEventListener("click", (ev)=>{
       const b = ev.target && ev.target.closest("button[data-mode]");
@@ -2874,7 +2949,7 @@
       saveOpts({ hudMode: hudMode });
       syncHudModeSeg();
       updateHudSub();
-      renderList(); // para actualizar badge target
+      renderList(); // actualiza badges y lista con target
       renderHud();
       toast(`HUD mode → ${hudMode}`);
     });
@@ -2919,8 +2994,8 @@
     toast("HUD: limpiado");
   });
 
-  // ───────────────────────── Diag / watchdog ─────────────────────────
-  function updateDiag(){
+  // ───────────────────────── Diag (ligero + RAW bajo demanda) ─────────────────────────
+  function updateDiagSmall(){
     const age = lastSeenAt ? (now() - lastSeenAt) : null;
     const ageTxt = (age==null) ? "—" : `${Math.round(age)}ms`;
 
@@ -2950,42 +3025,29 @@
       `<b>BUS</b>: ${busInfo} · <b>cams.js</b>: <span class="mono">${camsVer}</span><br>`+
       `<b>Listas</b>: CAM_LIST=${totalMain}, CAT=${totalCat}, NEWS=${totalNews}<br>`+
       `<b>HUD</b>: mode=<span class="mono">${hudMode}</span> · target=<span class="mono">${tgtTxt}</span><br>`+
-      `<b>Tip</b>: si en OBS no sincroniza, suele ser por aislamiento de storage/BC entre Dock y BrowserSource. Abre el player con la misma <span class="mono">key</span> y prueba en ventana normal para confirmar.`;
+      `<b>Tip</b>: si en OBS no sincroniza, suele ser por aislamiento de storage/BC entre Dock y BrowserSource.`;
+  }
+  const updateDiagSmallThrottled = throttle(updateDiagSmall, PERF.DIAG_SMALL_MS);
+
+  let _lastDiagRawAt = 0;
+  function updateDiagRaw(force=false){
+    const t = now();
+    if (!force && (t - _lastDiagRawAt) < PERF.DIAG_RAW_MS) return;
+    _lastDiagRawAt = t;
 
     const s = lastState || readState();
+    // SOLO aquí hacemos stringify bonito (pesado)
     diagState.value = s ? JSON.stringify(s, null, 2) : "";
     if (!diagCmd.value) diagCmd.value = lastCmdRaw || "";
-
-    if (lastCamsDetail) applyCamsUiFromDetail(lastCamsDetail);
-    else syncUiFromRLCCams();
   }
 
-  function tick(){
-    const s = readState();
-    if (s){
-      lastState = s;
-      lastSeenAt = now();
-      renderTopFromState(s);
-      // HUD
-      updateHudVisibility();
-      syncHudFromState(s);
-      renderHud();
-    }
-
-    const age = now() - (lastSeenAt || 0);
-    if (!lastSeenAt){
-      setConn(null);
-      statusTxt.textContent = "SIN STATE";
-    } else if (age > 8000){
-      setConn(false);
-      statusTxt.textContent = "STATE VIEJO";
-    } else {
-      setConn(true);
-    }
-
-    markActiveCam();
-    updateDiag();
-    updateRotationUi();
+  if (diagDetails){
+    diagDetails.addEventListener("toggle", ()=>{
+      if (diagDetails.open){
+        updateDiagSmall();
+        updateDiagRaw(true);
+      }
+    });
   }
 
   // ───────────────────────── Boot ─────────────────────────
@@ -3005,7 +3067,6 @@
     statusTxt.textContent = "SIN STATE";
   }
 
-  // primer render + “encuentra cams” suave
   try {
     renderList();
     syncUiFromRLCCams();
@@ -3014,10 +3075,10 @@
     renderHud();
   } catch(_){}
 
-  updateDiag();
+  updateDiagSmallThrottled();
   syncKindSeg();
   syncHudModeSeg();
-  setTopH();
+  scheduleTopH(true);
 
   // Ping suave al bus
   try {
@@ -3033,11 +3094,42 @@
       rotEnabledEl.checked = true;
       startRotation();
     } else {
-      updateRotationUi();
+      updateRotationUiThrottled();
     }
   }catch(_){}
 
-  setInterval(tick, 750);
+  // ───────────────────────── Tick (ligero) ─────────────────────────
+  const tick = ()=>{
+    // Fallback: si no llegan mensajes por BC en OBS, lee storage de vez en cuando
+    const s = readState();
+    if (s){
+      // evita re-hacer todo si es el mismo objeto serializado (best-effort)
+      lastState = s;
+      lastSeenAt = now();
+      renderTopFromState(s);
+      syncHudFromState(s);
+      renderHud();
+    }
+
+    const age = now() - (lastSeenAt || 0);
+    if (!lastSeenAt){
+      setConn(null);
+      statusTxt.textContent = "SIN STATE";
+    } else if (age > 9000){
+      setConn(false);
+      statusTxt.textContent = "STATE VIEJO";
+    } else {
+      setConn(true);
+    }
+
+    markActiveCamOptimized(false);
+    updateDiagSmallThrottled();
+
+    // rot UI solo si está activa/armada o si estamos renderizando poco
+    if (rotEnabledEl.checked || rotTimer) updateRotationUiThrottled();
+  };
+
+  setInterval(tick, PERF.TICK_MS);
 })();
 </script>
 </body>
