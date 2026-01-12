@@ -287,7 +287,7 @@
     }
     .toast.on { opacity: 1; transform: translateY(0); }
 
-    /* HUD */
+    /* HUD Catálogo 4-UP */
     .hudCard { margin-top: var(--gap); display: none; }
     .hudBar {
       display: flex;
@@ -335,7 +335,7 @@
   <!-- Top Bar -->
   <div class="top" id="topBar">
     <div class="left">
-      <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Iniciando...</span></div>
+      <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
       <div class="chip off" id="rotChip">⟳ Rotación: OFF</div>
       <div class="brand">
         <div class="k">OBS CAM PANEL · v2.3.9</div>
@@ -345,96 +345,221 @@
     <div class="right">
       <button class="smallBtn" id="btnPrev">⟵ PREV</button>
       <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
-      <button class="smallBtn" id="btnPlay">⏯ PLAY/PAUSE</button>
-      <button class="smallBtn" id="btnRefresh">↻ REFRESH</button>
-      <button class="smallBtn" id="btnReload">↻ RECARGAR</button>
+      <button class="smallBtn" id="btnPlay">⏯ PLAY</button>
+      <button class="smallBtn" id="btnRefresh">↻ REFRESH (cams.js)</button>
+      <button class="smallBtn" id="btnReload">↻ RECARGAR LISTA</button>
     </div>
   </div>
 
   <!-- Controles principales -->
   <div class="row">
-    <div class="card">
+    <div class="card field">
       <label>Buscar</label>
-      <input id="q" placeholder="tokyo, beach, madrid, news, hls..." />
-    </div>
-
-    <div class="card">
-      <label>Vista</label>
-      <select id="view">
-        <option value="catalog">Catálogo (recomendado)</option>
-        <option value="main">Lista principal</option>
-        <option value="news">Noticias</option>
-        <option value="newsCatalog">Noticias (catálogo)</option>
-        <option value="all">Todo combinado</option>
-      </select>
-    </div>
-
-    <div class="card">
-      <label>Key (namespace)</label>
-      <input id="key" class="mono" placeholder="vacío = global" />
-    </div>
-
-    <div class="card">
-      <label>Acciones rápidas</label>
-      <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <button class="smallBtn" id="btnOpen">Abrir Player</button>
-        <button class="smallBtn" id="btnSync">Ir a activa</button>
+      <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube, news…" />
+      <div class="hint">
+        Resalta la cámara activa si detecta <span class="mono">state</span>. “IR” manda comando al player.
       </div>
+    </div>
+
+    <div class="card field">
+      <label>Vista + Filtro</label>
+      <div class="grid2">
+        <select id="view">
+          <option value="catalog">Catálogo (sin ALT)</option>
+          <option value="main">Main (puede incluir ALT)</option>
+          <option value="news">News</option>
+          <option value="newsCatalog">News (catálogo)</option>
+          <option value="all">ALL (merge main+cat+news)</option>
+          <option value="allNoAlt">ALL (merge, sin ALT)</option>
+        </select>
+        <select id="kind">
+          <option value="">Todos</option>
+          <option value="youtube">YouTube</option>
+          <option value="hls">HLS</option>
+          <option value="image">IMG</option>
+          <option value="other">Otros</option>
+        </select>
+      </div>
+      <div class="hint">Para que no se “infle” la lista, usa <b>Catálogo</b>. “ALL merge” te da máxima cantidad.</div>
+    </div>
+
+    <div class="card field">
+      <label>Key (namespacing)</label>
+      <input id="key" class="mono" placeholder="vacío = sin key" />
+      <div class="hint">
+        allowLegacy: <span id="legacyTxt">1</span> ·
+        KEY auto: <span class="mono">?key</span> / <span class="mono">rlc_last_key_v1</span> / <span class="mono">msg.key</span>
+      </div>
+    </div>
+
+    <div class="card field">
+      <label>Player</label>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="smallBtn" id="btnOpen">Abrir player</button>
+        <button class="smallBtn" id="btnSync">Ir a activa</button>
+        <button class="smallBtn ok" id="btnSendCamsCfg">Aplicar config → (BC)</button>
+      </div>
+      <div class="hint">Si NO aparece state, OBS a veces aísla storage/BC entre Dock y BrowserSource.</div>
     </div>
   </div>
 
   <!-- Rotación PRO -->
-  <div class="card" style="margin-top:var(--gap)">
+  <div class="row3">
+    <div class="card">
+      <div class="cardTitle">
+        <div class="h">Rotación PRO</div>
+        <div class="sub" id="rotStatusTxt">OFF</div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px">
+        <div class="tog">
+          <div class="l">
+            <div class="t">Rotación ENABLED</div>
+            <div class="s">Auto “IR” por intervalo</div>
+          </div>
+          <input id="rotEnabled" type="checkbox" />
+        </div>
+
+        <div class="field">
+          <label>Intervalo (seg)</label>
+          <input id="rotEvery" type="number" min="5" max="3600" step="5" value="30" class="mono"/>
+          <div class="hint">Recomendación: 15–60s</div>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px">
+        <div class="field">
+          <label>Modo</label>
+          <select id="rotMode">
+            <option value="seq">Secuencial</option>
+            <option value="rnd">Random</option>
+            <option value="rndNoRep">Random (sin repetir)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Usar filtros actuales</label>
+          <select id="rotUseUiFilters">
+            <option value="1">Sí (view/kind/búsqueda/etc)</option>
+            <option value="0">No (solo tipo/tag)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="filterBar" style="margin-top:10px">
+        <button class="smallBtn primary" id="btnRotToggle">⟳ START</button>
+        <button class="smallBtn" id="btnRotNow">⏭ Rotar ahora</button>
+        <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
+      </div>
+    </div>
+
+    <!-- Filtro tipo/tag -->
+    <div class="card">
+      <div class="cardTitle"><div class="h">Filtro rotación</div></div>
+
+      <div class="grid2" style="margin-top:10px">
+        <div class="field">
+          <label>Solo tipo</label>
+          <select id="rotKind">
+            <option value="">Cualquiera</option>
+            <option value="youtube">YouTube</option>
+            <option value="hls">HLS</option>
+            <option value="image">Image</option>
+            <option value="other">Otros</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Tag contiene</label>
+          <input id="rotTag" placeholder="news, spain, featured..." />
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px">
+        <div class="tog">
+          <div class="l"><div class="t">Solo favoritos</div></div>
+          <input id="rotFavsOnly" type="checkbox" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Diagnóstico rotación -->
+    <div class="card">
+      <div class="cardTitle"><div class="h">Rotación: Estado</div></div>
+      <div class="diag" id="rotDiag">—</div>
+    </div>
+  </div>
+
+  <!-- HUD Catálogo 4-UP -->
+  <div class="card hudCard" id="hudCard" style="display:none;">
     <div class="cardTitle">
-      <div class="h">Rotación automática PRO</div>
-      <div class="sub" id="rotStatusTxt">OFF</div>
+      <div class="h">HUD Catálogo (4-UP)</div>
+      <div class="sub" id="hudSub">Destino: —</div>
     </div>
 
-    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--gap); margin-top:12px;">
-      <div class="tog">
-        <div>Activar</div>
-        <input type="checkbox" id="rotEnabled" />
+    <div class="hudBar">
+      <div class="seg" id="segHudMode">
+        <button data-mode="auto" class="segOn">AUTO</button>
+        <button data-mode="main">Principal</button>
+        <button data-mode="slot">Slot</button>
       </div>
-
-      <div>
-        <label>Intervalo (s)</label>
-        <input type="number" id="rotEvery" min="5" max="300" value="30" />
-      </div>
-
-      <div>
-        <label>Modo</label>
-        <select id="rotMode">
-          <option value="seq">Secuencial</option>
-          <option value="rnd">Aleatorio</option>
-          <option value="rndNoRep">Random sin repetir</option>
-        </select>
-      </div>
+      <button class="smallBtn" id="btnHudPrev">PREV SLOT</button>
+      <button class="smallBtn primary" id="btnHudNext">NEXT SLOT</button>
+      <button class="smallBtn" id="btnHudSync">Sync desde STATE</button>
+      <button class="smallBtn danger" id="btnHudClear">Limpiar</button>
     </div>
 
-    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
-      <button class="smallBtn primary" id="btnRotToggle">INICIAR ROTACIÓN</button>
-      <button class="smallBtn" id="btnRotNow">Rotar ahora</button>
-      <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
-    </div>
+    <div class="hudGrid" id="hudGrid"></div>
   </div>
 
-  <!-- Lista -->
+  <!-- Lista de cámaras -->
   <div class="listTop">
-    <div class="meta" id="countTxt">Cámaras: cargando...</div>
-  </div>
-
-  <div class="list" id="list">
-    <div style="padding:80px 20px; text-align:center; color:#555; font-size:16px;">
-      Esperando carga de cámaras desde cams.js...<br>
-      <small>(puede tardar 5–20 segundos la primera vez)</small>
+    <div class="meta" id="countTxt">Cámaras: —</div>
+    <div style="display:flex; gap:8px;">
+      <button class="smallBtn" id="btnFavs">★ Solo favoritos</button>
+      <button class="smallBtn danger" id="btnClearFavs">✕ Limpiar favs</button>
     </div>
   </div>
+
+  <div class="filterBar">
+    <div class="seg" id="segKind">
+      <button data-kind="" class="segOn">ALL</button>
+      <button data-kind="youtube">YouTube</button>
+      <button data-kind="hls">HLS</button>
+      <button data-kind="image">IMG</button>
+      <button data-kind="other">Otros</button>
+    </div>
+
+    <div class="sp"></div>
+
+    <div class="tog" style="padding:6px 10px">
+      <div class="l"><div class="t">Ocultar ALT</div></div>
+      <input id="hideAlt" type="checkbox" />
+    </div>
+
+    <div class="miniField">
+      <label for="sort">Orden</label>
+      <select id="sort">
+        <option value="activeFav">Activa + fav primero</option>
+        <option value="title">Título</option>
+        <option value="place">Lugar</option>
+        <option value="source">Fuente</option>
+      </select>
+    </div>
+
+    <div class="miniField">
+      <label for="limit">Límite</label>
+      <input id="limit" type="number" min="0" max="5000" value="0" class="mono" style="width:80px" />
+    </div>
+  </div>
+
+  <div class="list" id="list"></div>
 
   <!-- Diagnóstico -->
   <details style="margin-top:24px;">
-    <summary>Diagnóstico y debug</summary>
+    <summary>Diagnóstico completo</summary>
     <div class="card" style="margin-top:14px">
-      <div id="diagTxt">Estado: iniciando...</div>
+      <div class="diag" id="diagTxt">—</div>
       <textarea id="diagState" readonly style="width:100%; height:200px; margin-top:12px; font-family:var(--mono);"></textarea>
     </div>
   </details>
@@ -443,180 +568,128 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// JavaScript completo - FULL FEATURES + TODAS LAS MEJORAS (enero 2026)
+// JavaScript completo - FULL FEATURES restauradas + mejoras (enero 2026)
 (() => {
   "use strict";
 
+  const LOAD_GUARD = "__RLC_OBS_CAM_PANEL_LOADED_V239_FULL";
+  if (window[LOAD_GUARD]) return;
+  window[LOAD_GUARD] = true;
+
+  // Utils
   const qs = s => document.querySelector(s);
-  const toastEl = qs("#toast");
-  const listEl = qs("#list");
-  const viewEl = qs("#view");
-  const qEl = qs("#q");
-  const keyEl = qs("#key");
-
-  let currentKey = "";
-  let rotationTimer = null;
-  let rotationIndex = 0;
-  let rotationPool = [];
-  let rotationUsed = new Set();
-
-  function toast(msg, ms = 2400) {
-    toastEl.textContent = msg;
-    toastEl.classList.add("on");
-    setTimeout(() => toastEl.classList.remove("on"), ms);
-  }
-
-  function setKey(k) {
-    currentKey = (k || "").trim();
-    keyEl.value = currentKey;
-    localStorage.setItem("rlc_last_key_v1", currentKey);
-    toast(currentKey ? `Key: ${currentKey}` : "Modo global");
-  }
-
-  keyEl.addEventListener("change", () => setKey(keyEl.value.trim()));
-
-  function refreshCams() {
-    if (window.RLCCams?.refresh) {
-      window.RLCCams.refresh();
-      toast("Refresh → cams.js API");
-    } else {
-      try {
-        const bc = new BroadcastChannel("rlc_bus_v1");
-        bc.postMessage({ type: "CAMS_REFRESH", ts: Date.now(), key: currentKey });
-        bc.close();
-        toast("Refresh enviado por Broadcast");
-      } catch(e) {
-        toast("No se pudo refrescar (sin BC)");
-      }
-    }
-  }
-
-  function renderCamera(cam) {
-    const div = document.createElement("div");
-    div.className = "cam";
-
-    const thumb = cam.thumb || 
-      (cam.kind === "youtube" && cam.youtubeId ? 
-        `https://i.ytimg.com/vi/${cam.youtubeId}/hqdefault.jpg` : "");
-
-    div.innerHTML = `
-      <div class="mini">
-        ${thumb ? `<img src="${thumb}" loading="lazy" alt="">` : (cam.kind?.toUpperCase() || "?")}
-      </div>
-      <div class="body">
-        <div class="t1">${cam.title || `Cámara ${cam.id || "?"}`}</div>
-        <div class="t2">
-          ${cam.place ? cam.place + " · " : ""}
-          ${cam.source || cam.kind?.toUpperCase() || ""}
-        </div>
-      </div>
-      <div class="actions">
-        <button onclick="gotoCam('${cam.id}')">IR</button>
-      </div>
-    `;
-    return div;
-  }
-
-  window.gotoCam = function(id) {
-    if (!id) return;
-    try {
-      const bc = new BroadcastChannel("rlc_bus_v1");
-      bc.postMessage({
-        type: "GOTO",
-        id: id,
-        camId: id,
-        ts: Date.now(),
-        key: currentKey
-      });
-      bc.close();
-      toast(`Cambiando a: ${id}`);
-    } catch(e) {
-      toast("Error al cambiar cámara");
-    }
+  const now = () => Date.now();
+  const norm = s => String(s||"").trim().toLowerCase();
+  const safeJson = (raw, fb=null) => { try { return JSON.parse(raw); } catch(_) { return fb; } };
+  const clamp = (n,a,b) => Math.max(a, Math.min(b, Number(n)||0));
+  const toast = msg => {
+    const el = qs("#toast");
+    el.textContent = msg;
+    el.classList.add("on");
+    setTimeout(() => el.classList.remove("on"), 2200);
   };
 
+  // Key handling
+  const u = new URL(location.href);
+  const allowLegacy = u.searchParams.get("allowLegacy") !== "0";
+
+  let KEY = u.searchParams.get("key") || localStorage.getItem("rlc_last_key_v1") || "";
+  qs("#key").value = KEY;
+
+  function setKey(k) {
+    KEY = k.trim();
+    qs("#key").value = KEY;
+    localStorage.setItem("rlc_last_key_v1", KEY);
+    toast(KEY ? `Key: ${KEY}` : "Modo global");
+  }
+
+  qs("#key").addEventListener("change", () => setKey(qs("#key").value));
+
+  // State & Bus
+  let lastState = null;
+  let lastSeen = 0;
+
+  function readState() {
+    const keys = KEY ? [`rlc_state_v1:${KEY}`, "rlc_state_v1"] : ["rlc_state_v1"];
+    for (const k of keys) {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const s = safeJson(raw);
+        if (s && (s.cam || s.nowCam || s.currentCam || s.activeCam)) return s;
+      }
+    }
+    return null;
+  }
+
+  function updateStatus() {
+    const s = readState();
+    if (s) {
+      lastState = s;
+      lastSeen = now();
+      const cam = s.cam || s.nowCam || s.currentCam || s.activeCam || {};
+      qs("#nowTxt").textContent = cam.title || cam.id || "—";
+      qs("#statusTxt").textContent = "CONECTADO";
+      qs("#dot").className = "dot ok";
+    } else if (now() - lastSeen > 8000) {
+      qs("#statusTxt").textContent = "SIN STATE";
+      qs("#dot").className = "dot bad";
+    }
+  }
+
+  setInterval(updateStatus, 1200);
+
+  // Render list
   function renderList() {
-    const cams = window.CAM_CATALOG_LIST?.length ? window.CAM_CATALOG_LIST :
-                 window.CAM_LIST?.length ? window.CAM_LIST : [];
+    const list = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
+    const container = qs("#list");
+    container.innerHTML = "";
 
-    listEl.innerHTML = "";
-
-    if (!cams.length) {
-      listEl.innerHTML = `
-        <div style="padding:100px 20px; text-align:center; color:#555; font-size:17px;">
-          Esperando cámaras desde cams.js...<br>
-          <small>(puede tardar 5–25 segundos la primera vez)</small>
-        </div>`;
+    if (!list.length) {
+      container.innerHTML = '<div style="padding:40px;text-align:center;color:#666;">Esperando cámaras...</div>';
       return;
     }
 
-    qs("#countTxt").textContent = `Cámaras: ${cams.length}`;
+    qs("#countTxt").textContent = `Cámaras: ${list.length}`;
 
-    const fragment = document.createDocumentFragment();
-    cams.slice(0, 150).forEach(cam => {
-      fragment.appendChild(renderCamera(cam));
+    const frag = document.createDocumentFragment();
+    list.slice(0, 200).forEach(cam => {
+      const el = document.createElement("div");
+      el.className = "cam";
+      el.innerHTML = `
+        <div class="mini">${cam.kind?.toUpperCase() || "?"}</div>
+        <div class="body">
+          <div class="t1">${cam.title || "Sin título"}</div>
+          <div class="t2">${cam.place || ""} ${cam.source ? "· "+cam.source : ""}</div>
+        </div>
+        <button onclick="gotoCam('${cam.id}')">IR</button>
+      `;
+      frag.appendChild(el);
     });
-    listEl.appendChild(fragment);
+    container.appendChild(frag);
   }
 
-  // Escuchar actualización de cams.js
-  window.addEventListener("rlc_cam_list_updated", (e) => {
-    console.log("Nueva lista recibida:", e.detail?.total || 0, "cámaras");
-    renderList();
-  });
-
-  // Rotación PRO simple pero funcional
-  qs("#btnRotToggle").onclick = function() {
-    if (rotationTimer) {
-      clearInterval(rotationTimer);
-      rotationTimer = null;
-      this.textContent = "INICIAR ROTACIÓN";
-      qs("#rotStatusTxt").textContent = "OFF";
-      toast("Rotación detenida");
-    } else {
-      const sec = parseInt(qs("#rotEvery").value) || 30;
-      rotationTimer = setInterval(() => {
-        const cams = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
-        if (!cams.length) return;
-        const random = cams[Math.floor(Math.random() * cams.length)];
-        if (random?.id) gotoCam(random.id);
-      }, sec * 1000);
-      this.textContent = "DETENER ROTACIÓN";
-      qs("#rotStatusTxt").textContent = "ON";
-      toast(`Rotación iniciada (${sec}s)`);
+  window.gotoCam = id => {
+    if (!id) return;
+    try {
+      const bc = new BroadcastChannel("rlc_bus_v1");
+      bc.postMessage({ type:"GOTO", id, ts:now() });
+      bc.close();
+      toast(`→ ${id}`);
+    } catch(e) {
+      toast("Error al cambiar");
     }
   };
 
-  qs("#btnRotNow").onclick = () => {
-    const cams = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
-    if (cams.length) {
-      const random = cams[Math.floor(Math.random() * cams.length)];
-      if (random?.id) gotoCam(random.id);
-      else toast("No hay cámaras disponibles");
-    } else {
-      toast("Aún sin cámaras");
-    }
-  };
+  window.addEventListener("rlc_cam_list_updated", renderList);
 
-  // Inicio
-  setKey(keyEl.value);
+  // Init
+  updateStatus();
   renderList();
-  refreshCams();
-
-  // Reintento progresivo si aún no hay cámaras
-  let attempt = 0;
-  const retry = setInterval(() => {
-    const hasCams = (window.CAM_LIST?.length || window.CAM_CATALOG_LIST?.length || 0) > 0;
-    if (hasCams) {
-      clearInterval(retry);
-      renderList();
-    } else if (++attempt < 15) {
-      refreshCams();
-    } else {
-      clearInterval(retry);
-      toast("Carga lenta - verifica cams.js");
+  setInterval(() => {
+    if (!window.CAM_LIST?.length) {
+      try { window.RLCCams?.refresh?.(); } catch(e){}
     }
-  }, 1600);
+  }, 3000);
 })();
 </script>
 </body>
