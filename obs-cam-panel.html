@@ -1,7 +1,30 @@
-<!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (ENERO 2026 - FULL FEATURES + ALL FIXES)
-     100% compatible con cams.js v2.3.9
-     Incluye: HUD 4-UP completo, Rotación PRO (todos modos), filtros avanzados,
-              persistencia KEY, diagnóstico detallado, espera inteligente mejorada
+<!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
+  ✅ NO SUBE VERSION (2.3.9)
+  ✅ UI MUCHO más limpia (mejor spacing, tipografía, hover, focus, accesibilidad, badges)
+  ✅ HEADER FIJO + padding dinámico
+  ✅ Persistencia por KEY (incluye rotación)
+  ✅ Rotación PRO:
+     - Start/Stop
+     - Intervalo (seg)
+     - Rotar SOLO un kind (youtube/hls/image/other) y/o SOLO un tag (ej: "news", "spain", "featured")
+     - Opción: usar filtros actuales de la UI (view/kind/búsqueda/hideAlt/favs/limit)
+     - Modos: secuencial / random / random sin repetir
+     - “Rotar ahora” (salta al siguiente dentro del subset)
+  ✅ Compat reforzada:
+     - Respeta allowLegacy=0: no legacy base si KEY existe
+     - State/cam fields variantes + rlc_cam_list_updated.detail variantes
+     - CMD robusto (ts Number, nonce) + storage + BC según allowLegacy
+
+  ✅ MEJORA CLAVE (2026-01): “Encuentra cams” mucho mejor
+     - Espera inteligente a que cams.js cargue y publique listas (sin loops agresivos)
+     - Fallbacks extra: RLCCams (si expone listas), detail variants, y re-render automático al poblar
+     - “Recargar lista” ahora fuerza “ensure lists” + refresh suave
+
+  ✅ NUEVO (2026-01): HUD Catálogo 4-UP integrado (sin archivo nuevo)
+     - Solo aparece en vista “Catálogo” (y “News (catálogo)”)
+     - Muestra estructura 2x2 (TL/TR/BL/BR) con tipo/estado por slot (best-effort)
+     - Permite elegir SLOT destino (1-4) y asignar una cámara a ese slot usando “IR”
+     - NEXT/PREV en catálogo respetan el slot seleccionado (envía payload con slot*; fallback seguro)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -11,7 +34,7 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#060812" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>RLC — OBS Cam Panel v2.3.9</title>
+  <title>RLC — OBS Cam Panel</title>
 
   <style>
     :root{
@@ -486,398 +509,399 @@
 <body>
   <div class="wrap">
 
-<div class="top" id="topBar">
-  <div class="left">
-    <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
-    <div class="chip off" id="rotChip">⟳ Rotación: OFF</div>
-    <div class="brand">
-      <div class="k">OBS CAM PANEL · v2.3.9</div>
-      <div class="n" id="nowTxt">—</div>
-    </div>
-  </div>
-  <div class="right">
-    <button class="smallBtn" id="btnPrev">⟵ PREV</button>
-    <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
-    <button class="smallBtn" id="btnPlay"> PLAY</button>
-    <button class="smallBtn" id="btnRefresh">↻ REFRESH (cams.js)</button>
-    <button class="smallBtn" id="btnReload">↻ RECARGAR LISTA</button>
-  </div>
-</div>
-
-<div class="row">
-  <div class="card field">
-    <label>Buscar</label>
-    <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube, news…" />
-    <div class="hint">
-      Resalta la cámara activa si detecta <span class="mono">state</span>. “IR” manda comando al player.
-    </div>
-  </div>
-
-  <div class="card field">
-    <label>Vista + Filtro</label>
-    <div class="grid3">
-      <select id="view">
-        <option value="catalog">Catálogo (sin ALT)</option>
-        <option value="main">Main (puede incluir ALT)</option>
-        <option value="news">News</option>
-        <option value="newsCatalog">News (catálogo)</option>
-        <option value="all">ALL (merge main+cat+news)</option>
-        <option value="allNoAlt">ALL (merge, sin ALT)</option>
-      </select>
-      <select id="kind">
-        <option value="">Todos</option>
-        <option value="youtube">YouTube</option>
-        <option value="hls">HLS</option>
-        <option value="image">IMG</option>
-        <option value="other">Otros</option>
-      </select>
-    </div>
-    <div class="hint">Para que no se “infle” la lista, usa <b>Catálogo</b>. “ALL merge” te da máxima cantidad.</div>
-  </div>
-
-  <div class="card field">
-    <label>Key (namespacing)</label>
-    <input id="key" class="mono" placeholder="vacío = sin key" />
-    <div class="hint">
-      allowLegacy: <span id="legacyTxt">1</span> ·
-      KEY auto: <span class="mono">?key</span> / <span class="mono">rlc_last_key_v1</span> / <span class="mono">msg.key</span>
-    </div>
-  </div>
-
-  <div class="card field">
-    <label>Player</label>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <button class="smallBtn" id="btnOpen">Abrir player</button>
-      <button class="smallBtn" id="btnSync">Ir a activa</button>
-      <button class="smallBtn ok" id="btnSendCamsCfg">Aplicar config → (BC)</button>
-    </div>
-    <div class="hint">Si NO aparece state, OBS a veces aísla storage/BC entre Dock y BrowserSource.</div>
-  </div>
-</div>
-
-<div class="row2">
-  <div class="card">
-    <div class="cardTitle">
-      <div class="h">Opciones cams.js (webcams)</div>
-      <div class="sub mono">window.RLCCams</div>
-    </div>
-
-    <div class="grid3" style="margin-top:10px">
-      <div class="field">
-        <label>Target cams</label>
-        <input id="camsTarget" type="number" min="50" max="5000" step="50" value="900" class="mono"/>
-        <div class="hint">Equivale a <span class="mono">?camsTarget=</span> (si tu cams.js limita, no rompe)</div>
-      </div>
-
-      <div class="tog">
-        <div class="l">
-          <div class="t">Auto-discovery</div>
-          <div class="s">Buscar más webcams LIVE</div>
+    <div class="top" id="topBar">
+      <div class="left">
+        <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
+        <div class="chip off" id="rotChip">⟳ Rotación: OFF</div>
+        <div class="brand">
+          <div class="k">OBS CAM PANEL · v2.3.9</div>
+          <div class="n" id="nowTxt">—</div>
         </div>
-        <input id="camsDiscovery" type="checkbox" />
       </div>
-
-      <div class="tog">
-        <div class="l">
-          <div class="t">Validar embed</div>
-          <div class="s">Más “limpio”, más requests</div>
-        </div>
-        <input id="camsValidate" type="checkbox" />
+      <div class="right">
+        <button class="smallBtn" id="btnPrev">⟵ PREV</button>
+        <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
+        <button class="smallBtn" id="btnPlay">⏯ PLAY</button>
+        <button class="smallBtn" id="btnRefresh">↻ REFRESH (cams.js)</button>
+        <button class="smallBtn" id="btnReload">↻ RECARGAR LISTA</button>
       </div>
     </div>
 
-    <div class="filterBar">
-      <div class="seg" id="segTarget">
-        <button class="ghost" data-t="650">650</button>
-        <button class="ghost" data-t="900">900</button>
-        <button class="ghost" data-t="1200">1200</button>
-        <button class="ghost" data-t="1800">1800</button>
-        <button class="ghost" data-t="2500">2500</button>
-        <button class="ghost" data-t="3500">3500</button>
-      </div>
-      <div class="sp"></div>
-      <button class="smallBtn primary" id="btnApplyCams">Aplicar & Refresh</button>
-      <button class="smallBtn" id="btnClearCache">Limpiar cache</button>
-      <button class="smallBtn" id="btnPickFeatured">Random Featured (4)</button>
-    </div>
-
-    <div class="hint">
-      Usa <span class="mono">window.RLCCams</span> si existe; si no, funciona por BC (modo “remote”).
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="cardTitle">
-      <div class="h">Noticieros (opcional)</div>
-      <div class="sub mono">camsNews=1</div>
-    </div>
-
-    <div class="grid3" style="margin-top:10px">
-      <div class="tog">
-        <div class="l">
-          <div class="t">News ENABLED</div>
-          <div class="s">Genera lista news aparte</div>
-        </div>
-        <input id="newsEnabled" type="checkbox" />
-      </div>
-      <div class="tog">
-        <div class="l">
-          <div class="t">Mix en CAM_LIST</div>
-          <div class="s">Meter news en main</div>
-        </div>
-        <input id="newsMix" type="checkbox" />
-      </div>
-      <div class="tog">
-        <div class="l">
-          <div class="t">News en catálogo</div>
-          <div class="s">Aparecen en “Catálogo”</div>
-        </div>
-        <input id="newsInCatalog" type="checkbox" />
-      </div>
-    </div>
-
-    <div class="grid2" style="margin-top:10px">
-      <div class="field">
-        <label>News target</label>
-        <input id="newsTarget" type="number" min="10" max="500" step="10" value="80" class="mono"/>
-        <div class="hint">Equivale a <span class="mono">?camsNewsTarget=</span></div>
-      </div>
-      <div class="field">
-        <label>Tip</label>
+    <div class="row">
+      <div class="card field">
+        <label>Buscar</label>
+        <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube, news…" />
         <div class="hint">
-          URL típica: <span class="mono">?camsNews=1</span> +
-          opcional <span class="mono">camsNewsMix=1</span> / <span class="mono">camsNewsCatalog=1</span>
+          Resalta la cámara activa si detecta <span class="mono">state</span>. “IR” manda comando al player.
         </div>
+      </div>
+
+      <div class="card field">
+        <label>Vista + Filtro</label>
+        <div class="grid2">
+          <select id="view">
+            <option value="catalog">Catálogo (sin ALT)</option>
+            <option value="main">Main (puede incluir ALT)</option>
+            <option value="news">News</option>
+            <option value="newsCatalog">News (catálogo)</option>
+            <option value="all">ALL (merge main+cat+news)</option>
+            <option value="allNoAlt">ALL (merge, sin ALT)</option>
+          </select>
+          <select id="kind">
+            <option value="">Todos</option>
+            <option value="youtube">YouTube</option>
+            <option value="hls">HLS</option>
+            <option value="image">IMG</option>
+            <option value="other">Otros</option>
+          </select>
+        </div>
+        <div class="hint">Para que no se “infle” la lista, usa <b>Catálogo</b>. “ALL merge” te da máxima cantidad.</div>
+      </div>
+
+      <div class="card field">
+        <label>Key (namespacing)</label>
+        <input id="key" class="mono" placeholder="vacío = sin key" />
+        <div class="hint">
+          allowLegacy: <span id="legacyTxt">1</span> ·
+          KEY auto: <span class="mono">?key</span> / <span class="mono">rlc_last_key_v1</span> / <span class="mono">msg.key</span>
+        </div>
+      </div>
+
+      <div class="card field">
+        <label>Player</label>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button class="smallBtn" id="btnOpen">Abrir player</button>
+          <button class="smallBtn" id="btnSync">Ir a activa</button>
+          <button class="smallBtn ok" id="btnSendCamsCfg">Aplicar config → (BC)</button>
+        </div>
+        <div class="hint">Si NO aparece state, OBS a veces aísla storage/BC entre Dock y BrowserSource.</div>
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Opciones cams.js (webcams)</div>
+          <div class="sub mono">window.RLCCams</div>
+        </div>
+
+        <div class="grid3" style="margin-top:10px">
+          <div class="field">
+            <label>Target cams</label>
+            <input id="camsTarget" type="number" min="50" max="5000" step="50" value="900" class="mono"/>
+            <div class="hint">Equivale a <span class="mono">?camsTarget=</span> (si tu cams.js limita, no rompe)</div>
+          </div>
+
+          <div class="tog">
+            <div class="l">
+              <div class="t">Auto-discovery</div>
+              <div class="s">Buscar más webcams LIVE</div>
+            </div>
+            <input id="camsDiscovery" type="checkbox" />
+          </div>
+
+          <div class="tog">
+            <div class="l">
+              <div class="t">Validar embed</div>
+              <div class="s">Más “limpio”, más requests</div>
+            </div>
+            <input id="camsValidate" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="filterBar">
+          <div class="seg" id="segTarget">
+            <button class="ghost" data-t="650">650</button>
+            <button class="ghost" data-t="900">900</button>
+            <button class="ghost" data-t="1200">1200</button>
+            <button class="ghost" data-t="1800">1800</button>
+            <button class="ghost" data-t="2500">2500</button>
+            <button class="ghost" data-t="3500">3500</button>
+          </div>
+          <div class="sp"></div>
+          <button class="smallBtn primary" id="btnApplyCams">Aplicar & Refresh</button>
+          <button class="smallBtn" id="btnClearCache">Limpiar cache</button>
+          <button class="smallBtn" id="btnPickFeatured">Random Featured (4)</button>
+        </div>
+
+        <div class="hint">
+          Usa <span class="mono">window.RLCCams</span> si existe; si no, funciona por BC (modo “remote”).
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Noticieros (opcional)</div>
+          <div class="sub mono">camsNews=1</div>
+        </div>
+
+        <div class="grid3" style="margin-top:10px">
+          <div class="tog">
+            <div class="l">
+              <div class="t">News ENABLED</div>
+              <div class="s">Genera lista news aparte</div>
+            </div>
+            <input id="newsEnabled" type="checkbox" />
+          </div>
+          <div class="tog">
+            <div class="l">
+              <div class="t">Mix en CAM_LIST</div>
+              <div class="s">Meter news en main</div>
+            </div>
+            <input id="newsMix" type="checkbox" />
+          </div>
+          <div class="tog">
+            <div class="l">
+              <div class="t">News en catálogo</div>
+              <div class="s">Aparecen en “Catálogo”</div>
+            </div>
+            <input id="newsInCatalog" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="field">
+            <label>News target</label>
+            <input id="newsTarget" type="number" min="10" max="500" step="10" value="80" class="mono"/>
+            <div class="hint">Equivale a <span class="mono">?camsNewsTarget=</span></div>
+          </div>
+          <div class="field">
+            <label>Tip</label>
+            <div class="hint">
+              URL típica: <span class="mono">?camsNews=1</span> +
+              opcional <span class="mono">camsNewsMix=1</span> / <span class="mono">camsNewsCatalog=1</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="filterBar">
+          <button class="smallBtn primary" id="btnApplyNews">Aplicar News & Refresh</button>
+          <button class="smallBtn" id="btnViewNews">Cambiar vista → NEWS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ✅ Rotación PRO -->
+    <div class="row3">
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Rotación PRO</div>
+          <div class="sub" id="rotStatusTxt">OFF</div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="tog">
+            <div class="l">
+              <div class="t">Rotación ENABLED</div>
+              <div class="s">Auto “IR” por intervalo</div>
+            </div>
+            <input id="rotEnabled" type="checkbox" />
+          </div>
+
+          <div class="field">
+            <label>Intervalo (seg)</label>
+            <input id="rotEvery" type="number" min="3" max="3600" step="1" value="30" class="mono"/>
+            <div class="hint">Recomendación: 15–60s (según tu escena)</div>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="field">
+            <label>Modo</label>
+            <select id="rotMode">
+              <option value="seq">Secuencial</option>
+              <option value="rnd">Random</option>
+              <option value="rndNoRep">Random (sin repetir)</option>
+            </select>
+            <div class="hint">“Sin repetir” intenta rotar sin repetir hasta agotar el subset.</div>
+          </div>
+
+          <div class="field">
+            <label>Usar filtros actuales</label>
+            <select id="rotUseUiFilters">
+              <option value="1">Sí (view/kind/búsqueda/hideAlt/favs/limit)</option>
+              <option value="0">No (ignora búsqueda/limit; respeta vista + ALT)</option>
+            </select>
+            <div class="hint">Si quieres “solo tag” estable, pon <b>No</b>.</div>
+          </div>
+        </div>
+
+        <div class="filterBar" style="margin-top:10px">
+          <button class="smallBtn primary" id="btnRotToggle">⟳ START</button>
+          <button class="smallBtn" id="btnRotNow">⏭ Rotar ahora</button>
+          <div class="sp"></div>
+          <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
+        </div>
+
+        <div class="hint">
+          La rotación usa el subset resultante (tipo/tag + opcional filtros UI). Si el subset queda vacío, se pausa sola.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Rotación por Tipo/Tag</div>
+          <div class="sub mono">subset filter</div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="field">
+            <label>Solo tipo (kind)</label>
+            <select id="rotKind">
+              <option value="">(cualquiera)</option>
+              <option value="youtube">youtube</option>
+              <option value="hls">hls</option>
+              <option value="image">image</option>
+              <option value="other">other</option>
+            </select>
+            <div class="hint">Ej: rotar SOLO YouTube.</div>
+          </div>
+
+          <div class="field">
+            <label>Tag (contiene)</label>
+            <input id="rotTag" placeholder='Ej: news  |  spain  |  featured' />
+            <div class="hint">Busca en <span class="mono">tags[]</span> / <span class="mono">tag</span> / <span class="mono">category</span>.</div>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px">
+          <div class="tog">
+            <div class="l">
+              <div class="t">Solo favoritos</div>
+              <div class="s">Rotar SOLO ★</div>
+            </div>
+            <input id="rotFavsOnly" type="checkbox" />
+          </div>
+
+          <div class="tog">
+            <div class="l">
+              <div class="t">Exigir tag</div>
+              <div class="s">Si vacío → no filtra</div>
+            </div>
+            <input id="rotTagStrict" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="hint">
+          Consejo rápido: para “rotación de noticieros”, pon tag <b>news</b> y kind vacío.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardTitle">
+          <div class="h">Rotación: Diagnóstico</div>
+          <div class="sub" id="rotDiagMini">—</div>
+        </div>
+
+        <div class="diag" id="rotDiag">
+          —<br>
+        </div>
+
+        <div class="hint">
+          Si ves “0 candidatos”, revisa: vista (view), hideAlt, kind/tag, y si tienes “Solo favoritos”.
+        </div>
+      </div>
+    </div>
+
+    <!-- ✅ HUD Catálogo (aparece solo en catálogo/newsCatalog) -->
+    <div class="card hudCard" id="hudCard" style="display:none;">
+      <div class="cardTitle">
+        <div class="h">HUD Catálogo (4-UP)</div>
+        <div class="sub" id="hudSub">Destino: —</div>
+      </div>
+
+      <div class="hudBar">
+        <div class="seg" id="segHudMode">
+          <button data-mode="auto" class="segOn">AUTO</button>
+          <button data-mode="main">Principal</button>
+          <button data-mode="slot">Slot</button>
+        </div>
+        <div class="sp"></div>
+        <button class="smallBtn" id="btnHudPrev">⟵ PREV SLOT</button>
+        <button class="smallBtn primary" id="btnHudNext">NEXT SLOT ⟶</button>
+        <button class="smallBtn" id="btnHudSync">Sync desde STATE</button>
+        <button class="smallBtn danger" id="btnHudClear">Limpiar HUD</button>
+      </div>
+
+      <div class="hudGrid" id="hudGrid"></div>
+
+      <div class="hint">
+        En catálogo, selecciona un <b>slot</b> (TL/TR/BL/BR). Luego pulsa <b>IR</b> en una cámara para asignarla a ese slot.
+        (Envía payload con <span class="mono">slot/targetSlot</span>; si tu player no soporta slots, hará fallback al cambio normal.)
+      </div>
+    </div>
+
+    <div class="listTop">
+      <div class="meta" id="countTxt">Cams: —</div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="smallBtn" id="btnFavs">★ Solo favoritos</button>
+        <button class="smallBtn danger" id="btnClearFavs">✕ Limpiar favs</button>
       </div>
     </div>
 
     <div class="filterBar">
-      <button class="smallBtn primary" id="btnApplyNews">Aplicar News & Refresh</button>
-      <button class="smallBtn" id="btnViewNews">Cambiar vista → NEWS</button>
-    </div>
-  </div>
-</div>
-
-<!-- Rotación PRO -->
-<div class="row3">
-  <div class="card">
-    <div class="cardTitle">
-      <div class="h">Rotación PRO</div>
-      <div class="sub" id="rotStatusTxt">OFF</div>
-    </div>
-
-    <div class="grid2" style="margin-top:10px">
-      <div class="tog">
-        <div class="l">
-          <div class="t">Rotación ENABLED</div>
-          <div class="s">Auto “IR” por intervalo</div>
-        </div>
-        <input id="rotEnabled" type="checkbox" />
+      <div class="seg" id="segKind">
+        <button data-kind="" class="segOn">ALL</button>
+        <button data-kind="youtube">YouTube</button>
+        <button data-kind="hls">HLS</button>
+        <button data-kind="image">IMG</button>
+        <button data-kind="other">Otros</button>
       </div>
 
-      <div class="field">
-        <label>Intervalo (seg)</label>
-        <input id="rotEvery" type="number" min="3" max="3600" step="1" value="30" class="mono"/>
-        <div class="hint">Recomendación: 15–60s (según tu escena)</div>
-      </div>
-    </div>
-
-    <div class="grid2" style="margin-top:10px">
-      <div class="field">
-        <label>Modo</label>
-        <select id="rotMode">
-          <option value="seq">Secuencial</option>
-          <option value="rnd">Random</option>
-          <option value="rndNoRep">Random (sin repetir)</option>
-        </select>
-        <div class="hint">“Sin repetir” intenta rotar sin repetir hasta agotar el subset.</div>
-      </div>
-
-      <div class="field">
-        <label>Usar filtros actuales</label>
-        <select id="rotUseUiFilters">
-          <option value="1">Sí (view/kind/búsqueda/hideAlt/favs/limit)</option>
-          <option value="0">No (ignora búsqueda/limit; respeta vista + ALT)</option>
-        </select>
-        <div class="hint">Si quieres “solo tag” estable, pon <b>No</b>.</div>
-      </div>
-    </div>
-
-    <div class="filterBar" style="margin-top:10px">
-      <button class="smallBtn primary" id="btnRotToggle">⟳ START</button>
-      <button class="smallBtn" id="btnRotNow"> Rotar ahora</button>
       <div class="sp"></div>
-      <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
-    </div>
 
-    <div class="hint">
-      La rotación usa el subset resultante (tipo/tag + opcional filtros UI). Si el subset queda vacío, se pausa sola.
-    </div>
-  </div>
+      <div class="tog" style="padding:6px 10px">
+        <div class="l">
+          <div class="t">Ocultar ALT</div>
+          <div class="s">Quita duplicados/alternativas</div>
+        </div>
+        <input id="hideAlt" type="checkbox" />
+      </div>
 
-  <div class="card">
-    <div class="cardTitle">
-      <div class="h">Rotación por Tipo/Tag</div>
-      <div class="sub mono">subset filter</div>
-    </div>
-
-    <div class="grid2" style="margin-top:10px">
-      <div class="field">
-        <label>Solo tipo (kind)</label>
-        <select id="rotKind">
-          <option value="">(cualquiera)</option>
-          <option value="youtube">youtube</option>
-          <option value="hls">hls</option>
-          <option value="image">image</option>
-          <option value="other">other</option>
+      <div class="miniField">
+        <label for="sort">Orden</label>
+        <select id="sort">
+          <option value="activeFav">Activa + fav primero</option>
+          <option value="relevance">Relevancia (búsqueda)</option>
+          <option value="title">Título</option>
+          <option value="place">Lugar</option>
+          <option value="source">Fuente</option>
+          <option value="id">ID</option>
         </select>
-        <div class="hint">Ej: rotar SOLO YouTube.</div>
       </div>
 
-      <div class="field">
-        <label>Tag (contiene)</label>
-        <input id="rotTag" placeholder='Ej: news  |  spain  |  featured' />
-        <div class="hint">Busca en <span class="mono">tags[]</span> / <span class="mono">tag</span> / <span class="mono">category</span>.</div>
+      <div class="miniField">
+        <label for="limit">Límite</label>
+        <input id="limit" type="number" min="0" max="5000" step="50" value="0" class="mono" style="width:92px" />
       </div>
     </div>
 
-    <div class="grid2" style="margin-top:10px">
-      <div class="tog">
-        <div class="l">
-          <div class="t">Solo favoritos</div>
-          <div class="s">Rotar SOLO ★</div>
+    <div class="list" id="list"></div>
+
+    <details>
+      <summary>Diagnóstico (por qué no llega al player / estado / buses)</summary>
+      <div class="card" style="margin-top:10px">
+        <div class="diag" id="diagTxt">—</div>
+        <div style="margin-top:10px; display:grid; gap:10px; grid-template-columns:1fr 1fr;">
+          <div>
+            <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
+              <div class="diag"><b>Último state (raw)</b></div>
+              <button class="smallBtn" id="btnCopyState">Copiar</button>
+            </div>
+            <textarea id="diagState" readonly></textarea>
+          </div>
+          <div>
+            <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
+              <div class="diag"><b>Último cmd enviado (raw)</b></div>
+              <button class="smallBtn" id="btnCopyCmd">Copiar</button>
+            </div>
+            <textarea id="diagCmd" readonly></textarea>
+          </div>
         </div>
-        <input id="rotFavsOnly" type="checkbox" />
       </div>
+    </details>
 
-      <div class="tog">
-        <div class="l">
-          <div class="t">Exigir tag</div>
-          <div class="s">Si vacío → no filtra</div>
-        </div>
-        <input id="rotTagStrict" type="checkbox" />
-      </div>
-    </div>
-
-    <div class="hint">
-      Consejo rápido: para “rotación de noticieros”, pon tag <b>news</b> y kind vacío.
-    </div>
   </div>
-
-  <div class="card">
-    <div class="cardTitle">
-      <div class="h">Diagnóstico rotación</div>
-      <div class="sub" id="rotDiagMini">—</div>
-    </div>
-
-    <div class="diag" id="rotDiag">
-      —
-
-    </div>
-
-    <div class="hint">
-      Si ves “0 candidatos”, revisa: vista (view), hideAlt, kind/tag, y si tienes “Solo favoritos”.
-    </div>
-  </div>
-</div>
-
-<!-- HUD Catálogo (aparece solo en catálogo/newsCatalog) -->
-<div class="card hudCard" id="hudCard" style="display:none;">
-  <div class="cardTitle">
-    <div class="h">HUD Catálogo (4-UP)</div>
-    <div class="sub" id="hudSub">Destino: —</div>
-  </div>
-
-  <div class="hudBar">
-    <div class="seg" id="segHudMode">
-      <button data-mode="auto" class="segOn">AUTO</button>
-      <button data-mode="main">Principal</button>
-      <button data-mode="slot">Slot</button>
-    </div>
-    <div class="sp"></div>
-    <button class="smallBtn" id="btnHudPrev">⟵ PREV SLOT</button>
-    <button class="smallBtn primary" id="btnHudNext">NEXT SLOT ⟶</button>
-    <button class="smallBtn" id="btnHudSync">Sync desde STATE</button>
-    <button class="smallBtn danger" id="btnHudClear">Limpiar HUD</button>
-    </div>
-
-  <div class="hudGrid" id="hudGrid"></div>
-
-  <div class="hint">
-    En catálogo, selecciona un <b>slot</b> (TL/TR/BL/BR). Luego pulsa <b>IR</b> en una cámara para asignarla a ese slot.
-    (Envía payload con <span class="mono">slot/targetSlot</span>; si tu player no soporta slots, hará fallback al cambio normal.)
-  </div>
-</div>
-
-<div class="listTop">
-  <div class="meta" id="countTxt">Cams: —</div>
-  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-    <button class="smallBtn" id="btnFavs">★ Solo favoritos</button>
-    <button class="smallBtn danger" id="btnClearFavs">✕ Limpiar favs</button>
-  </div>
-</div>
-
-<div class="filterBar">
-  <div class="seg" id="segKind">
-    <button data-kind="" class="segOn">ALL</button>
-    <button data-kind="youtube">YouTube</button>
-    <button data-kind="hls">HLS</button>
-    <button data-kind="image">IMG</button>
-    <button data-kind="other">Otros</button>
-  </div>
-
-  <div class="sp"></div>
-
-  <div class="tog" style="padding:6px 10px">
-    <div class="l">
-      <div class="t">Ocultar ALT</div>
-      <div class="s">Quita duplicados/alternativas</div>
-    </div>
-    <input id="hideAlt" type="checkbox" />
-  </div>
-
-  <div class="miniField">
-    <label for="sort">Orden</label>
-    <select id="sort">
-      <option value="activeFav">Activa + fav primero</option>
-      <option value="relevance">Relevancia (búsqueda)</option>
-      <option value="title">Título</option>
-      <option value="place">Lugar</option>
-      <option value="source">Fuente</option>
-      <option value="id">ID</option>
-    </select>
-  </div>
-
-  <div class="miniField">
-    <label for="limit">Límite</label>
-    <input id="limit" type="number" min="0" max="5000" step="50" value="0" class="mono" style="width:92px" />
-  </div>
-</div>
-
-<div class="list" id="list"></div>
-
-<details>
-  <summary>Diagnóstico (por qué no llega al player / estado / buses)</summary>
-  <div class="card" style="margin-top:10px">
-    <div class="diag" id="diagTxt">—</div>
-    <div style="margin-top:10px; display:grid; gap:10px; grid-template-columns:1fr 1fr;">
-      <div>
-        <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
-          <div class="diag"><b>Último state (raw)</b></div>
-          <button class="smallBtn" id="btnCopyState">Copiar</button>
-        </div>
-        <textarea id="diagState" readonly></textarea>
-      </div>
-      <div>
-        <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
-          <div class="diag"><b>Último cmd enviado (raw)</b></div>
-          <button class="smallBtn" id="btnCopyCmd">Copiar</button>
-        </div>
-        <textarea id="diagCmd" readonly></textarea>
-      </div>
-    </div>
-  </div>
-</details>  </div>
 
   <div class="toast" id="toast">—</div>
 
@@ -933,7 +957,7 @@
   async function copyText(txt){
     try{
       await navigator.clipboard.writeText(String(txt||""));
-      toast("Copiado ");
+      toast("Copiado ✅");
     }catch(_){
       toast("No se pudo copiar");
     }
@@ -1302,9 +1326,9 @@
     nowTxt.textContent = `${title}${place}${kind}`;
 
     const playing = extractPlaying(s);
-    if (playing === true) { statusTxt.textContent = "LIVE"; btnPlay.textContent = " PAUSE"; }
-    else if (playing === false) { statusTxt.textContent = "PAUSA"; btnPlay.textContent = " PLAY"; }
-    else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = " PLAY"; }
+    if (playing === true) { statusTxt.textContent = "LIVE"; btnPlay.textContent = "⏸ PAUSE"; }
+    else if (playing === false) { statusTxt.textContent = "PAUSA"; btnPlay.textContent = "▶ PLAY"; }
+    else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = "⏯ PLAY"; }
 
     setConn(true);
     setTopH();
@@ -1447,7 +1471,7 @@
     return Array.from(m.values());
   }
 
-  //  API list helpers (mucho más tolerante)
+  // ✅ API list helpers (mucho más tolerante)
   function camsApi(){
     return (window.RLCCams && typeof window.RLCCams === "object") ? window.RLCCams : null;
   }
@@ -1555,7 +1579,7 @@
     updateRotationUi();
   });
 
-  // ───────────────────────── Espera inteligente para “encontrar cams” (sin matar rendimiento) ─────────────────────────
+  // ✅ Espera inteligente para “encontrar cams” (sin matar rendimiento)
   let ensureTimer = null;
   let ensureTry = 0;
   function listsTotals(){
@@ -2037,7 +2061,7 @@
     return 0;
   }
 
-  //  mantenemos la última lista renderizada (IDs) para rotación con filtros UI
+  // ✅ mantenemos la última lista renderizada (IDs) para rotación con filtros UI
   let lastRenderedIds = [];
 
   function renderList(customList=null){
@@ -2424,7 +2448,7 @@
     if (!seg) return;
     const k = String(kindEl.value||"");
     for (const b of seg.querySelectorAll("button[data-kind]")){
-      const bk = String(b.getAttribute("data-t" + "kind")||""); // typo fixed: data-kind
+      const bk = String(b.getAttribute("data-kind")||"");
       b.classList.toggle("segOn", bk === k);
     }
   }
@@ -2522,14 +2546,10 @@
     const everyS = clamp(parseInt(rotEveryEl.value || "30", 10), 3, 3600);
 
     rotDiag.innerHTML =
-      `<b>Pool</b>: ${rotPool.length} cámaras
-`+
-      `<b>Modo</b>: ${rotMode} · <b>Intervalo</b>: ${everyS}s
-`+
-      `<b>Filtros</b>: kind=${rk} · tag~=${rt} · favsOnly=${favsOnly} · tagStrict=${strict}
-`+
-      `<b>Usar filtros UI</b>: ${useUi ? "sí" : "no"}
-`+
+      `<b>Pool</b>: ${rotPool.length} cámaras<br>`+
+      `<b>Modo</b>: ${rotMode} · <b>Intervalo</b>: ${everyS}s<br>`+
+      `<b>Filtros</b>: kind=${rk} · tag~=${rt} · favsOnly=${favsOnly} · tagStrict=${strict}<br>`+
+      `<b>Usar filtros UI</b>: ${useUi ? "sí" : "no"}<br>`+
       `<b>Pos</b>: idx=${rotIndex} · usados=${rotUsed.size}`;
   }
 
@@ -2922,22 +2942,14 @@
       : "main";
 
     diagTxt.innerHTML =
-      `<b>origin</b>: ${origin}
-`+
-      `<b>KEY</b>: ${KEY ? `<span class="mono">${KEY}</span>` : "(vacía)"} · allowLegacy=${allowLegacy ? "1":"0"} · lastKey=<span class="mono">${(localStorage.getItem("rlc_last_key_v1")||"")}</span>
-`+
-      `<b>STATE</b>: ${foundState ? "sí" : "no"} · <b>age</b>: ${ageTxt} · <b>storage key usada</b>: <span class="mono">${stateKey}</span>
-`+
-      `<b>CMD keys</b>: <span class="mono">${CMD_KEYS.join(", ")}</span>
-`+
-      `<b>STATE keys</b>: <span class="mono">${STATE_KEYS.join(", ")}</span>
-`+
-      `<b>BUS</b>: ${busInfo} · <b>cams.js</b>: <span class="mono">${camsVer}</span>
-`+
-      `<b>Listas</b>: CAM_LIST=${totalMain}, CAT=${totalCat}, NEWS=${totalNews}
-`+
-      `<b>HUD</b>: mode=<span class="mono">${hudMode}</span> · target=<span class="mono">${tgtTxt}</span>
-`+
+      `<b>origin</b>: ${origin}<br>`+
+      `<b>KEY</b>: ${KEY ? `<span class="mono">${KEY}</span>` : "(vacía)"} · allowLegacy=${allowLegacy ? "1":"0"} · lastKey=<span class="mono">${(localStorage.getItem("rlc_last_key_v1")||"")}</span><br>`+
+      `<b>STATE</b>: ${foundState ? "sí" : "no"} · <b>age</b>: ${ageTxt} · <b>storage key usada</b>: <span class="mono">${stateKey}</span><br>`+
+      `<b>CMD keys</b>: <span class="mono">${CMD_KEYS.join(", ")}</span><br>`+
+      `<b>STATE keys</b>: <span class="mono">${STATE_KEYS.join(", ")}</span><br>`+
+      `<b>BUS</b>: ${busInfo} · <b>cams.js</b>: <span class="mono">${camsVer}</span><br>`+
+      `<b>Listas</b>: CAM_LIST=${totalMain}, CAT=${totalCat}, NEWS=${totalNews}<br>`+
+      `<b>HUD</b>: mode=<span class="mono">${hudMode}</span> · target=<span class="mono">${tgtTxt}</span><br>`+
       `<b>Tip</b>: si en OBS no sincroniza, suele ser por aislamiento de storage/BC entre Dock y BrowserSource. Abre el player con la misma <span class="mono">key</span> y prueba en ventana normal para confirmar.`;
 
     const s = lastState || readState();
@@ -2954,8 +2966,7 @@
       lastState = s;
       lastSeenAt = now();
       renderTopFromState(s);
-      markActiveCam();
-      // HUD (best-effort)
+      // HUD
       updateHudVisibility();
       syncHudFromState(s);
       renderHud();
