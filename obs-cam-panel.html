@@ -1,30 +1,7 @@
-<!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
-  ✅ NO SUBE VERSION (2.3.9)
-  ✅ UI MUCHO más limpia (mejor spacing, tipografía, hover, focus, accesibilidad, badges)
-  ✅ HEADER FIJO + padding dinámico
-  ✅ Persistencia por KEY (incluye rotación)
-  ✅ Rotación PRO:
-     - Start/Stop
-     - Intervalo (seg)
-     - Rotar SOLO un kind (youtube/hls/image/other) y/o SOLO un tag (ej: "news", "spain", "featured")
-     - Opción: usar filtros actuales de la UI (view/kind/búsqueda/hideAlt/favs/limit)
-     - Modos: secuencial / random / random sin repetir
-     - “Rotar ahora” (salta al siguiente dentro del subset)
-  ✅ Compat reforzada:
-     - Respeta allowLegacy=0: no legacy base si KEY existe
-     - State/cam fields variantes + rlc_cam_list_updated.detail variantes
-     - CMD robusto (ts Number, nonce) + storage + BC según allowLegacy
-
-  ✅ MEJORA CLAVE (2026-01): “Encuentra cams” mucho mejor
-     - Espera inteligente a que cams.js cargue y publique listas (sin loops agresivos)
-     - Fallbacks extra: RLCCams (si expone listas), detail variants, y re-render automático al poblar
-     - “Recargar lista” ahora fuerza “ensure lists” + refresh suave
-
-  ✅ NUEVO (2026-01): HUD Catálogo 4-UP integrado (sin archivo nuevo)
-     - Solo aparece en vista “Catálogo” (y “News (catálogo)”)
-     - Muestra estructura 2x2 (TL/TR/BL/BR) con tipo/estado por slot (best-effort)
-     - Permite elegir SLOT destino (1-4) y asignar una cámara a ese slot usando “IR”
-     - NEXT/PREV en catálogo respetan el slot seleccionado (envía payload con slot*; fallback seguro)
+<!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (ENERO 2026)
+     Totalmente compatible con cams.js v2.3.9
+     Mejoras: HUD más estable, rotación robusta, mejor espera de carga,
+              UI pulida, mejor diagnóstico y feedback
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -34,31 +11,31 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#060812" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>RLC — OBS Cam Panel</title>
+  <title>RLC — OBS Cam Panel v2.3.9</title>
 
   <style>
-    :root{
-      --bg:#05060a; --bg2:#070a14;
-      --panel:rgba(12,16,24,.72);
-      --panel2:rgba(10,12,18,.55);
-      --stroke:rgba(255,255,255,.12);
-      --stroke2:rgba(255,255,255,.18);
-      --txt:rgba(255,255,255,.92);
-      --mut:rgba(255,255,255,.70);
-      --acc:#37d6ff;
-      --ok:#19e28a;
-      --warn:#ffce57;
-      --bad:#ff5a5a;
-      --shadow:0 18px 60px rgba(0,0,0,.52);
-      --shadow2:0 10px 32px rgba(0,0,0,.40);
-      --r:16px;
-      --r2:14px;
+    :root {
+      --bg: #05060a;
+      --bg2: #070a14;
+      --panel: rgba(12,16,24,.72);
+      --panel2: rgba(10,12,18,.55);
+      --stroke: rgba(255,255,255,.12);
+      --stroke2: rgba(255,255,255,.18);
+      --txt: rgba(255,255,255,.92);
+      --mut: rgba(255,255,255,.70);
+      --acc: #37d6ff;
+      --ok: #19e28a;
+      --warn: #ffce57;
+      --bad: #ff5a5a;
+      --shadow: 0 18px 60px rgba(0,0,0,.52);
+      --shadow2: 0 10px 32px rgba(0,0,0,.40);
+      --r: 16px;
+      --r2: 14px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
-      --gap:10px;
+      --gap: 10px;
 
-      /* header fixed helpers */
-      --topH: 84px; /* JS lo recalcula */
+      --topH: 84px;
       --topOffset: 10px;
       --safeTop: env(safe-area-inset-top, 0px);
       --safeLeft: env(safe-area-inset-left, 0px);
@@ -66,2978 +43,522 @@
 
       --focus: 0 0 0 3px rgba(55,214,255,.22);
     }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0;
-      font-family:var(--sans);
-      background:
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body {
+      font-family: var(--sans);
+      background: 
         radial-gradient(1100px 650px at 10% -10%, rgba(55,214,255,.12), transparent 60%),
         radial-gradient(900px 600px at 120% 20%, rgba(255,206,87,.10), transparent 60%),
         radial-gradient(800px 500px at 60% 120%, rgba(25,226,138,.08), transparent 62%),
         linear-gradient(180deg, var(--bg), var(--bg2));
-      color:var(--txt);
-      overflow-x:hidden;
+      color: var(--txt);
+      overflow-x: hidden;
     }
 
-    /* nicer scrollbars (no rompe) */
-    *::-webkit-scrollbar{height:10px;width:10px}
-    *::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:999px;border:2px solid rgba(0,0,0,.25)}
-    *::-webkit-scrollbar-track{background:rgba(0,0,0,.18)}
-    *{scrollbar-color: rgba(255,255,255,.16) rgba(0,0,0,.18); scrollbar-width:thin;}
+    /* Scrollbars */
+    *::-webkit-scrollbar { height: 10px; width: 10px; }
+    *::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 999px; border: 2px solid rgba(0,0,0,.25); }
+    *::-webkit-scrollbar-track { background: rgba(0,0,0,.18); }
+    * { scrollbar-color: rgba(255,255,255,.16) rgba(0,0,0,.18); scrollbar-width: thin; }
 
-    .wrap{
-      padding:10px 10px 16px;
-      max-width:1180px;
-      margin:0 auto;
+    .wrap {
+      padding: 10px 10px 16px;
+      max-width: 1180px;
+      margin: 0 auto;
       padding-top: calc(10px + var(--topOffset) + var(--safeTop) + var(--topH) + 12px);
     }
 
-    .top{
-      position:fixed;
+    .top {
+      position: fixed;
       top: calc(var(--topOffset) + var(--safeTop));
       left: calc(10px + var(--safeLeft));
       right: calc(10px + var(--safeRight));
-      max-width:1180px;
-      margin:0 auto;
-      z-index:9999;
-
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:space-between;
-
-      padding:10px 12px;
-      border-radius:var(--r);
-      background:linear-gradient(180deg, rgba(12,16,24,.84), rgba(12,16,24,.62));
-      border:1px solid var(--stroke);
-      box-shadow:var(--shadow);
+      max-width: 1180px;
+      margin: 0 auto;
+      z-index: 9999;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: var(--r);
+      background: linear-gradient(180deg, rgba(12,16,24,.84), rgba(12,16,24,.62));
+      border: 1px solid var(--stroke);
+      box-shadow: var(--shadow);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      will-change: transform;
-      transform: translateZ(0);
     }
 
-    .left{display:flex; gap:10px; align-items:center; min-width:0}
-    .brand{display:flex; flex-direction:column; gap:2px; min-width:0;}
-    .brand .k{font-weight:900; letter-spacing:.35px; font-size:12px; color:var(--mut)}
-    .brand .n{font-weight:1000; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    .left { display: flex; gap: 10px; align-items: center; min-width: 0; }
+    .brand { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .brand .k { font-weight: 900; letter-spacing: .35px; font-size: 12px; color: var(--mut); }
+    .brand .n { font-weight: 1000; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    .pill{
-      display:inline-flex; gap:8px; align-items:center;
-      padding:6px 10px; border-radius:999px;
-      border:1px solid var(--stroke2);
-      background:rgba(255,255,255,.06);
-      font-weight:900; font-size:12px;
-      white-space:nowrap;
+    .pill, .chip {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-weight: 900;
+      font-size: 12px;
+      white-space: nowrap;
     }
 
-    .chip{
-      display:inline-flex; gap:8px; align-items:center;
-      padding:6px 10px; border-radius:999px;
-      border:1px solid rgba(55,214,255,.26);
-      background:rgba(55,214,255,.10);
-      font-weight:1000; font-size:12px;
-      white-space:nowrap;
-    }
-    .chip.off{
-      border-color:rgba(255,255,255,.18);
-      background:rgba(255,255,255,.05);
-      color:rgba(255,255,255,.78);
-    }
+    .pill { border: 1px solid var(--stroke2); background: rgba(255,255,255,.06); }
+    .chip { border: 1px solid rgba(55,214,255,.26); background: rgba(55,214,255,.10); }
+    .chip.off { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: rgba(255,255,255,.78); }
 
-    .dot{width:8px; height:8px; border-radius:99px; background:var(--warn); box-shadow:0 0 0 3px rgba(255,206,87,.16)}
-    .dot.ok{background:var(--ok); box-shadow:0 0 0 3px rgba(25,226,138,.16)}
-    .dot.bad{background:var(--bad); box-shadow:0 0 0 3px rgba(255,90,90,.16)}
+    .dot {
+      width: 8px; height: 8px; border-radius: 999px;
+      background: var(--warn); box-shadow: 0 0 0 3px rgba(255,206,87,.16);
+    }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(25,226,138,.16); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 0 3px rgba(255,90,90,.16); }
 
-    .right{
-      display:flex; gap:8px; align-items:center;
-      justify-content:flex-end;
-      flex-wrap:nowrap;
-      overflow:auto;
-      -webkit-overflow-scrolling: touch;
+    .right {
+      display: flex; gap: 8px; align-items: center; justify-content: flex-end;
+      flex-wrap: nowrap; overflow: auto; -webkit-overflow-scrolling: touch;
       scrollbar-width: none;
     }
-    .right::-webkit-scrollbar{display:none}
+    .right::-webkit-scrollbar { display: none; }
 
-    button{
-      appearance:none; border:1px solid var(--stroke2);
-      background:rgba(255,255,255,.06);
-      color:var(--txt);
-      padding:8px 10px; border-radius:12px;
-      font-weight:900; font-size:12px;
-      cursor:pointer;
-      flex:0 0 auto;
-      transition: transform .08s ease, background .12s ease, border-color .12s ease;
+    button {
+      appearance: none; border: 1px solid var(--stroke2);
+      background: rgba(255,255,255,.06); color: var(--txt);
+      padding: 8px 10px; border-radius: 12px;
+      font-weight: 900; font-size: 12px; cursor: pointer;
+      transition: all .12s ease;
     }
-    button:hover{border-color:rgba(255,255,255,.26); background:rgba(255,255,255,.10)}
-    button:active{transform:translateY(1px)}
-    button.primary{border-color:rgba(55,214,255,.38); background:rgba(55,214,255,.12);}
-    button.danger{border-color:rgba(255,90,90,.35); background:rgba(255,90,90,.10);}
-    button.ok{border-color:rgba(25,226,138,.30); background:rgba(25,226,138,.10);}
-    button.ghost{background:rgba(0,0,0,.20); border-color:rgba(255,255,255,.14)}
-    button.segOn{border-color:rgba(55,214,255,.62); background:rgba(55,214,255,.16);}
-    button:focus{outline:none; box-shadow: var(--focus);}
+    button:hover { border-color: rgba(255,255,255,.26); background: rgba(255,255,255,.10); }
+    button:active { transform: translateY(1px); }
+    button.primary { border-color: rgba(55,214,255,.38); background: rgba(55,214,255,.12); }
+    button.danger { border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.10); }
+    button.ok { border-color: rgba(25,226,138,.30); background: rgba(25,226,138,.10); }
+    button.ghost { background: rgba(0,0,0,.20); border-color: rgba(255,255,255,.14); }
+    button.segOn { border-color: rgba(55,214,255,.62); background: rgba(55,214,255,.16); }
+    button:focus { outline: none; box-shadow: var(--focus); }
 
-    .row{
-      margin-top:var(--gap);
-      display:grid;
-      grid-template-columns: 1.25fr .85fr .75fr .75fr;
-      gap:var(--gap);
-    }
-    .row2{
-      margin-top:var(--gap);
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:var(--gap);
-    }
-    .row3{
-      margin-top:var(--gap);
-      display:grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap:var(--gap);
+    .row, .row2, .row3 { margin-top: var(--gap); display: grid; gap: var(--gap); }
+    .row  { grid-template-columns: 1.25fr .85fr .75fr .75fr; }
+    .row2 { grid-template-columns: 1fr 1fr; }
+    .row3 { grid-template-columns: 1fr 1fr 1fr; }
+
+    .card {
+      background: linear-gradient(180deg, rgba(12,16,24,.74), rgba(12,16,24,.60));
+      border: 1px solid var(--stroke);
+      border-radius: var(--r);
+      box-shadow: var(--shadow2);
+      padding: 12px 14px;
     }
 
-    .card{
-      background:linear-gradient(180deg, rgba(12,16,24,.74), rgba(12,16,24,.60));
-      border:1px solid var(--stroke);
-      border-radius:var(--r);
-      box-shadow:var(--shadow2);
-      padding:10px 12px;
-      min-width:0;
+    .cardTitle { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .cardTitle .h { font-weight: 1000; letter-spacing: .2px; }
+    .cardTitle .sub { font-size: 12px; color: var(--mut); font-weight: 900; }
+
+    .field label { display: block; font-weight: 900; font-size: 12px; color: var(--mut); margin-bottom: 6px; }
+
+    input, select {
+      width: 100%; border: 1px solid var(--stroke2); border-radius: 12px;
+      padding: 10px; background: rgba(0,0,0,.26); color: var(--txt);
+      outline: none; font-weight: 800; transition: all .12s ease;
+    }
+    input:focus, select:focus {
+      border-color: rgba(55,214,255,.45); box-shadow: var(--focus); background: rgba(0,0,0,.30);
     }
 
-    .cardTitle{
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      margin-bottom:8px;
-    }
-    .cardTitle .h{font-weight:1000; letter-spacing:.2px}
-    .cardTitle .sub{font-size:12px; color:var(--mut); font-weight:900}
-
-    .field label{
-      display:block;
-      font-weight:900;
-      font-size:12px;
-      color:var(--mut);
-      margin-bottom:6px;
+    .tog {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 8px 10px; border: 1px solid var(--stroke);
+      border-radius: 14px; background: rgba(255,255,255,.04);
     }
 
-    input, select, textarea{
-      width:100%;
-      border:1px solid var(--stroke2);
-      border-radius:12px;
-      padding:10px 10px;
-      background:rgba(0,0,0,.26);
-      color:var(--txt);
-      outline:none;
-      font-weight:800;
-      transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
+    .listTop {
+      margin-top: var(--gap);
+      display: flex; gap: var(--gap); align-items: center; justify-content: space-between;
+      padding: 8px 12px; border: 1px solid var(--stroke);
+      background: rgba(255,255,255,.04); border-radius: 14px; flex-wrap: wrap;
     }
-    input:focus, select:focus, textarea:focus{
-      border-color:rgba(55,214,255,.45);
-      box-shadow: var(--focus);
-      background:rgba(0,0,0,.30);
+
+    .filterBar {
+      margin-top: var(--gap);
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      padding: 8px 10px; border: 1px solid var(--stroke);
+      background: rgba(0,0,0,.18); border-radius: 14px;
     }
-    input[type="checkbox"]{ width:auto; }
-    textarea{min-height:78px; resize:vertical; font-family:var(--mono); font-weight:700;}
-    .mono{font-family:var(--mono)}
 
-    .hint{margin-top:6px; font-size:12px; color:var(--mut); line-height:1.25}
-    .grid2{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr;}
-    .grid3{display:grid; gap:var(--gap); grid-template-columns: 1fr 1fr 1fr;}
+    .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+    .seg button { padding: 7px 10px; border-radius: 999px; font-size: 12px; }
 
-    .tog{
-      display:flex; align-items:center; justify-content:space-between; gap:12px;
-      padding:8px 10px; border:1px solid var(--stroke);
-      border-radius:14px; background:rgba(255,255,255,.04);
-    }
-    .tog .l{display:flex; flex-direction:column; gap:2px; min-width:0}
-    .tog .t{font-weight:1000; font-size:12px; color:rgba(255,255,255,.90)}
-    .tog .s{font-weight:900; font-size:12px; color:var(--mut)}
-    .tog input{transform:scale(1.1)}
-
-    .listTop{
-      margin-top:var(--gap);
-      display:flex; gap:var(--gap); align-items:center; justify-content:space-between;
-      padding:8px 10px;
-      border:1px solid var(--stroke);
-      background:rgba(255,255,255,.04);
-      border-radius:14px;
-      flex-wrap:wrap;
-    }
-    .listTop .meta{font-size:12px; color:var(--mut); font-weight:900}
-    .listTop .meta b{color:rgba(255,255,255,.92)}
-
-    .filterBar{
-      margin-top:var(--gap);
-      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-      padding:8px 10px;
-      border:1px solid var(--stroke);
-      background:rgba(0,0,0,.18);
-      border-radius:14px;
-    }
-    .filterBar .sp{flex:1 1 auto}
-    .seg{display:flex; gap:6px; flex-wrap:wrap}
-    .seg button{padding:7px 9px; border-radius:999px; font-size:12px}
-    .miniField{display:flex; gap:8px; align-items:center}
-    .miniField label{margin:0; font-size:12px; color:var(--mut); font-weight:900}
-    .miniField input, .miniField select{width:auto; padding:8px 10px}
-
-    .list{
-      margin-top:var(--gap);
-      display:grid;
+    .list {
+      margin-top: var(--gap);
+      display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap:var(--gap);
+      gap: var(--gap);
     }
 
-    .cam{
-      border:1px solid var(--stroke);
-      background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
-      border-radius:14px;
-      padding:10px 10px;
-      display:flex;
-      gap:10px;
-      align-items:flex-start;
-      min-width:0;
-      transition: transform .10s ease, border-color .12s ease, background .12s ease;
+    .cam {
+      border: 1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
+      border-radius: 14px;
+      padding: 12px;
+      display: flex;
+      gap: 12px;
+      transition: all .12s ease;
     }
-    .cam.active{border-color:rgba(55,214,255,.58); background:rgba(55,214,255,.10)}
-    .cam:hover{border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.07); transform: translateY(-1px);}
-    .cam:focus-within{box-shadow: var(--focus);}
+    .cam.active { border-color: rgba(55,214,255,.58); background: rgba(55,214,255,.10); }
+    .cam:hover { border-color: rgba(255,255,255,.24); background: rgba(255,255,255,.07); transform: translateY(-2px); }
 
-    .mini{
-      flex:0 0 auto;
-      width:62px; height:62px;
-      border-radius:14px;
-      border:1px solid var(--stroke2);
-      background:rgba(0,0,0,.28);
-      display:grid; place-items:center;
-      font-weight:1000;
-      color:rgba(255,255,255,.88);
-      font-family:var(--mono);
-      position:relative;
-      overflow:hidden;
+    .mini {
+      width: 64px; height: 64px; border-radius: 14px;
+      border: 1px solid var(--stroke2); background: rgba(0,0,0,.28);
+      display: grid; place-items: center; font-weight: 1000;
+      color: rgba(255,255,255,.88); font-family: var(--mono);
+      overflow: hidden; position: relative;
     }
-    .mini img{
-      width:100%; height:100%;
-      object-fit:cover;
-      display:block;
-      opacity:.95;
-      filter:saturate(1.05) contrast(1.07);
-      transform:scale(1.03);
-    }
-    .mini .badge{
-      position:absolute;
-      left:6px; top:6px;
-      font-size:11px;
-      font-weight:1000;
-      padding:3px 6px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.20);
-      background:rgba(0,0,0,.40);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
+    .mini img { width: 100%; height: 100%; object-fit: cover; opacity: .95; }
+
+    .cam .body { flex: 1; min-width: 0; }
+    .t1 { font-weight: 1000; font-size: 13.5px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .t2 { margin-top: 4px; font-size: 12px; color: var(--mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .tags { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag {
+      font-size: 11px; font-weight: 1000;
+      border: 1px solid var(--stroke2); background: rgba(255,255,255,.06);
+      padding: 4px 8px; border-radius: 999px;
+      color: rgba(255,255,255,.88);
     }
 
-    .cam .body{min-width:0; flex:1 1 auto}
-    .t1{
-      font-weight:1000;
-      font-size:13px;
-      line-height:1.12;
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    .toast {
+      position: fixed; left: 16px; bottom: 16px;
+      background: rgba(0,0,0,.7); border: 1px solid rgba(255,255,255,.2);
+      border-radius: 12px; padding: 12px 16px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.6);
+      font-size: 13px; font-weight: 900;
+      opacity: 0; transform: translateY(12px);
+      transition: all .2s ease; z-index: 99999;
+      max-width: 90vw;
     }
-    .t2{
-      margin-top:3px;
-      font-size:12px;
-      color:var(--mut);
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    .toast.on { opacity: 1; transform: translateY(0); }
+
+    /* HUD Catálogo 4-UP */
+    .hudCard { margin-top: var(--gap); display: none; }
+    .hudBar {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      padding: 8px 12px; border: 1px solid var(--stroke);
+      background: rgba(0,0,0,.18); border-radius: 14px; margin-top: 8px;
     }
-
-    .tags{margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;}
-    .tag{
-      font-size:11px; font-weight:1000;
-      border:1px solid var(--stroke2);
-      background:rgba(255,255,255,.06);
-      padding:4px 7px;
-      border-radius:999px;
-      color:rgba(255,255,255,.88);
-      max-width:100%;
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    }
-    .tag.kind{border-color:rgba(255,255,255,.22); background:rgba(0,0,0,.22)}
-    .tag.src{border-color:rgba(55,214,255,.22); background:rgba(55,214,255,.08)}
-    .tag.place{border-color:rgba(255,206,87,.22); background:rgba(255,206,87,.08)}
-    .tag.news{border-color:rgba(255,90,90,.22); background:rgba(255,90,90,.10)}
-    .tag.alt{border-color:rgba(255,255,255,.18); background:rgba(0,0,0,.18)}
-    .tag.fav{border-color:rgba(255,206,87,.40); background:rgba(255,206,87,.14);}
-
-    .cam .actions{flex:0 0 auto; display:flex; flex-direction:column; gap:8px; align-items:stretch;}
-    .smallBtn{padding:7px 9px; border-radius:12px; font-size:12px; font-weight:1000;}
-    .star{border-color:rgba(255,206,87,.28); background:rgba(255,206,87,.10);}
-    .star.on{border-color:rgba(255,206,87,.56); background:rgba(255,206,87,.20);}
-
-    details{margin-top:10px;}
-    summary{cursor:pointer; font-weight:1000; color:rgba(255,255,255,.88)}
-    summary:hover{color:rgba(255,255,255,.98)}
-    .diag{margin-top:8px; font-size:12px; color:var(--mut); line-height:1.38}
-    .diag b{color:rgba(255,255,255,.90)}
-
-    .toast{
-      position:fixed; left:12px; bottom:12px;
-      background:rgba(0,0,0,.62);
-      border:1px solid rgba(255,255,255,.16);
-      border-radius:12px;
-      padding:10px 12px;
-      box-shadow:0 10px 34px rgba(0,0,0,.58);
-      font-size:12px; font-weight:900;
-      opacity:0; transform:translateY(8px);
-      transition:opacity .18s ease, transform .18s ease;
-      pointer-events:none;
-      max-width:min(560px, calc(100vw - 24px));
-      z-index:99999;
-      white-space:pre-wrap;
-    }
-    .toast.on{opacity:1; transform:translateY(0)}
-
-    /* ───────────────────────── HUD Catálogo 4-UP (NUEVO) ───────────────────────── */
-    .hudCard{ margin-top:var(--gap); }
-    .hudBar{
-      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-      padding:8px 10px;
-      border:1px solid var(--stroke);
-      background:rgba(0,0,0,.18);
-      border-radius:14px;
-      margin-top:8px;
-    }
-    .hudGrid{
-      margin-top:10px;
-      display:grid;
+    .hudGrid {
+      margin-top: 12px;
+      display: grid;
       grid-template-columns: 1fr 1fr;
-      gap:10px;
+      gap: 12px;
     }
-    .hudTile{
-      border:1px solid var(--stroke);
-      border-radius:16px;
-      background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
-      padding:10px 10px;
-      min-height:110px;
-      display:flex;
-      flex-direction:column;
-      gap:8px;
-      cursor:pointer;
-      transition: transform .10s ease, border-color .12s ease, background .12s ease;
-      position:relative;
-      overflow:hidden;
+    .hudTile {
+      border: 1px solid var(--stroke);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
+      padding: 12px;
+      min-height: 120px;
+      display: flex; flex-direction: column; gap: 8px;
+      cursor: pointer; transition: all .12s ease;
     }
-    .hudTile:hover{ transform: translateY(-1px); border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.07); }
-    .hudTile.sel{ border-color:rgba(55,214,255,.62); background:rgba(55,214,255,.10); box-shadow: var(--focus); }
-    .hudTopRow{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .hudSlot{
-      display:flex; gap:8px; align-items:center;
-      font-weight:1000;
-      letter-spacing:.2px;
-      font-size:12px;
-      color:rgba(255,255,255,.92);
-    }
-    .hudSlot .pos{
-      font-family:var(--mono);
-      padding:3px 7px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.18);
-      background:rgba(0,0,0,.22);
-      color:rgba(255,255,255,.86);
-      font-size:11px;
-      font-weight:1000;
-    }
-    .hudBadge{
-      font-family:var(--mono);
-      font-weight:1000;
-      font-size:11px;
-      padding:3px 7px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.18);
-      background:rgba(0,0,0,.22);
-      color:rgba(255,255,255,.86);
-      white-space:nowrap;
-    }
-    .hudBadge.yt{ border-color:rgba(55,214,255,.28); background:rgba(55,214,255,.10); }
-    .hudBadge.hls{ border-color:rgba(25,226,138,.24); background:rgba(25,226,138,.10); }
-    .hudBadge.img{ border-color:rgba(255,206,87,.26); background:rgba(255,206,87,.10); }
-    .hudTitle{
-      font-weight:1000;
-      font-size:13px;
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    }
-    .hudSubline{
-      font-size:12px;
-      color:var(--mut);
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    }
-    .hudMiniHint{
-      position:absolute;
-      right:10px; bottom:10px;
-      font-family:var(--mono);
-      font-size:11px;
-      font-weight:1000;
-      opacity:.75;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(0,0,0,.18);
-      padding:3px 7px;
-      border-radius:999px;
-    }
+    .hudTile:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.08); }
+    .hudTile.sel { border-color: rgba(55,214,255,.7); background: rgba(55,214,255,.15); box-shadow: var(--focus); }
 
-    @media (max-width:1060px){
-      .row3{grid-template-columns:1fr 1fr;}
-    }
-    @media (max-width:980px){
-      .row{grid-template-columns:1fr 1fr;}
-      .row2{grid-template-columns:1fr;}
-      .right{max-width: 60vw;}
-    }
-    @media (max-width:560px){
-      .row3{grid-template-columns:1fr;}
-      .right{max-width: 52vw;}
-      button{padding:7px 9px}
-    }
+    @media (max-width: 1060px) { .row3 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 980px) { .row { grid-template-columns: 1fr 1fr; } .row2 { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .row3 { grid-template-columns: 1fr; } }
   </style>
 
-  <!-- Carga cams.js -->
-  <script>window.APP_VERSION="2.3.9";</script>
+  <script>window.APP_VERSION = "2.3.9";</script>
   <script src="./cams.js?v=2.3.9"></script>
 </head>
-
 <body>
-  <div class="wrap">
 
-    <div class="top" id="topBar">
-      <div class="left">
-        <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Buscando state…</span></div>
-        <div class="chip off" id="rotChip">⟳ Rotación: OFF</div>
-        <div class="brand">
-          <div class="k">OBS CAM PANEL · v2.3.9</div>
-          <div class="n" id="nowTxt">—</div>
-        </div>
-      </div>
-      <div class="right">
-        <button class="smallBtn" id="btnPrev">⟵ PREV</button>
-        <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
-        <button class="smallBtn" id="btnPlay">⏯ PLAY</button>
-        <button class="smallBtn" id="btnRefresh">↻ REFRESH (cams.js)</button>
-        <button class="smallBtn" id="btnReload">↻ RECARGAR LISTA</button>
+<div class="wrap">
+  <!-- Barra superior fija -->
+  <div class="top" id="topBar">
+    <div class="left">
+      <div class="pill"><span class="dot" id="dot"></span><span id="statusTxt">Iniciando...</span></div>
+      <div class="chip off" id="rotChip">⟳ Rotación: OFF</div>
+      <div class="brand">
+        <div class="k">OBS CAM PANEL · v2.3.9</div>
+        <div class="n" id="nowTxt">—</div>
       </div>
     </div>
-
-    <div class="row">
-      <div class="card field">
-        <label>Buscar</label>
-        <input id="q" placeholder="Busca: tokyo, beach, nasa, madrid, hls, youtube, news…" />
-        <div class="hint">
-          Resalta la cámara activa si detecta <span class="mono">state</span>. “IR” manda comando al player.
-        </div>
-      </div>
-
-      <div class="card field">
-        <label>Vista + Filtro</label>
-        <div class="grid2">
-          <select id="view">
-            <option value="catalog">Catálogo (sin ALT)</option>
-            <option value="main">Main (puede incluir ALT)</option>
-            <option value="news">News</option>
-            <option value="newsCatalog">News (catálogo)</option>
-            <option value="all">ALL (merge main+cat+news)</option>
-            <option value="allNoAlt">ALL (merge, sin ALT)</option>
-          </select>
-          <select id="kind">
-            <option value="">Todos</option>
-            <option value="youtube">YouTube</option>
-            <option value="hls">HLS</option>
-            <option value="image">IMG</option>
-            <option value="other">Otros</option>
-          </select>
-        </div>
-        <div class="hint">Para que no se “infle” la lista, usa <b>Catálogo</b>. “ALL merge” te da máxima cantidad.</div>
-      </div>
-
-      <div class="card field">
-        <label>Key (namespacing)</label>
-        <input id="key" class="mono" placeholder="vacío = sin key" />
-        <div class="hint">
-          allowLegacy: <span id="legacyTxt">1</span> ·
-          KEY auto: <span class="mono">?key</span> / <span class="mono">rlc_last_key_v1</span> / <span class="mono">msg.key</span>
-        </div>
-      </div>
-
-      <div class="card field">
-        <label>Player</label>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <button class="smallBtn" id="btnOpen">Abrir player</button>
-          <button class="smallBtn" id="btnSync">Ir a activa</button>
-          <button class="smallBtn ok" id="btnSendCamsCfg">Aplicar config → (BC)</button>
-        </div>
-        <div class="hint">Si NO aparece state, OBS a veces aísla storage/BC entre Dock y BrowserSource.</div>
-      </div>
+    <div class="right">
+      <button class="smallBtn" id="btnPrev">⟵ PREV</button>
+      <button class="smallBtn primary" id="btnNext">NEXT ⟶</button>
+      <button class="smallBtn" id="btnPlay">⏯ PLAY/PAUSE</button>
+      <button class="smallBtn" id="btnRefresh">↻ REFRESH</button>
+      <button class="smallBtn" id="btnReload">↻ RECARGAR</button>
     </div>
-
-    <div class="row2">
-      <div class="card">
-        <div class="cardTitle">
-          <div class="h">Opciones cams.js (webcams)</div>
-          <div class="sub mono">window.RLCCams</div>
-        </div>
-
-        <div class="grid3" style="margin-top:10px">
-          <div class="field">
-            <label>Target cams</label>
-            <input id="camsTarget" type="number" min="50" max="5000" step="50" value="900" class="mono"/>
-            <div class="hint">Equivale a <span class="mono">?camsTarget=</span> (si tu cams.js limita, no rompe)</div>
-          </div>
-
-          <div class="tog">
-            <div class="l">
-              <div class="t">Auto-discovery</div>
-              <div class="s">Buscar más webcams LIVE</div>
-            </div>
-            <input id="camsDiscovery" type="checkbox" />
-          </div>
-
-          <div class="tog">
-            <div class="l">
-              <div class="t">Validar embed</div>
-              <div class="s">Más “limpio”, más requests</div>
-            </div>
-            <input id="camsValidate" type="checkbox" />
-          </div>
-        </div>
-
-        <div class="filterBar">
-          <div class="seg" id="segTarget">
-            <button class="ghost" data-t="650">650</button>
-            <button class="ghost" data-t="900">900</button>
-            <button class="ghost" data-t="1200">1200</button>
-            <button class="ghost" data-t="1800">1800</button>
-            <button class="ghost" data-t="2500">2500</button>
-            <button class="ghost" data-t="3500">3500</button>
-          </div>
-          <div class="sp"></div>
-          <button class="smallBtn primary" id="btnApplyCams">Aplicar & Refresh</button>
-          <button class="smallBtn" id="btnClearCache">Limpiar cache</button>
-          <button class="smallBtn" id="btnPickFeatured">Random Featured (4)</button>
-        </div>
-
-        <div class="hint">
-          Usa <span class="mono">window.RLCCams</span> si existe; si no, funciona por BC (modo “remote”).
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="cardTitle">
-          <div class="h">Noticieros (opcional)</div>
-          <div class="sub mono">camsNews=1</div>
-        </div>
-
-        <div class="grid3" style="margin-top:10px">
-          <div class="tog">
-            <div class="l">
-              <div class="t">News ENABLED</div>
-              <div class="s">Genera lista news aparte</div>
-            </div>
-            <input id="newsEnabled" type="checkbox" />
-          </div>
-          <div class="tog">
-            <div class="l">
-              <div class="t">Mix en CAM_LIST</div>
-              <div class="s">Meter news en main</div>
-            </div>
-            <input id="newsMix" type="checkbox" />
-          </div>
-          <div class="tog">
-            <div class="l">
-              <div class="t">News en catálogo</div>
-              <div class="s">Aparecen en “Catálogo”</div>
-            </div>
-            <input id="newsInCatalog" type="checkbox" />
-          </div>
-        </div>
-
-        <div class="grid2" style="margin-top:10px">
-          <div class="field">
-            <label>News target</label>
-            <input id="newsTarget" type="number" min="10" max="500" step="10" value="80" class="mono"/>
-            <div class="hint">Equivale a <span class="mono">?camsNewsTarget=</span></div>
-          </div>
-          <div class="field">
-            <label>Tip</label>
-            <div class="hint">
-              URL típica: <span class="mono">?camsNews=1</span> +
-              opcional <span class="mono">camsNewsMix=1</span> / <span class="mono">camsNewsCatalog=1</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="filterBar">
-          <button class="smallBtn primary" id="btnApplyNews">Aplicar News & Refresh</button>
-          <button class="smallBtn" id="btnViewNews">Cambiar vista → NEWS</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ✅ Rotación PRO -->
-    <div class="row3">
-      <div class="card">
-        <div class="cardTitle">
-          <div class="h">Rotación PRO</div>
-          <div class="sub" id="rotStatusTxt">OFF</div>
-        </div>
-
-        <div class="grid2" style="margin-top:10px">
-          <div class="tog">
-            <div class="l">
-              <div class="t">Rotación ENABLED</div>
-              <div class="s">Auto “IR” por intervalo</div>
-            </div>
-            <input id="rotEnabled" type="checkbox" />
-          </div>
-
-          <div class="field">
-            <label>Intervalo (seg)</label>
-            <input id="rotEvery" type="number" min="3" max="3600" step="1" value="30" class="mono"/>
-            <div class="hint">Recomendación: 15–60s (según tu escena)</div>
-          </div>
-        </div>
-
-        <div class="grid2" style="margin-top:10px">
-          <div class="field">
-            <label>Modo</label>
-            <select id="rotMode">
-              <option value="seq">Secuencial</option>
-              <option value="rnd">Random</option>
-              <option value="rndNoRep">Random (sin repetir)</option>
-            </select>
-            <div class="hint">“Sin repetir” intenta rotar sin repetir hasta agotar el subset.</div>
-          </div>
-
-          <div class="field">
-            <label>Usar filtros actuales</label>
-            <select id="rotUseUiFilters">
-              <option value="1">Sí (view/kind/búsqueda/hideAlt/favs/limit)</option>
-              <option value="0">No (ignora búsqueda/limit; respeta vista + ALT)</option>
-            </select>
-            <div class="hint">Si quieres “solo tag” estable, pon <b>No</b>.</div>
-          </div>
-        </div>
-
-        <div class="filterBar" style="margin-top:10px">
-          <button class="smallBtn primary" id="btnRotToggle">⟳ START</button>
-          <button class="smallBtn" id="btnRotNow">⏭ Rotar ahora</button>
-          <div class="sp"></div>
-          <button class="smallBtn" id="btnRotReset">Reset ciclo</button>
-        </div>
-
-        <div class="hint">
-          La rotación usa el subset resultante (tipo/tag + opcional filtros UI). Si el subset queda vacío, se pausa sola.
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="cardTitle">
-          <div class="h">Rotación por Tipo/Tag</div>
-          <div class="sub mono">subset filter</div>
-        </div>
-
-        <div class="grid2" style="margin-top:10px">
-          <div class="field">
-            <label>Solo tipo (kind)</label>
-            <select id="rotKind">
-              <option value="">(cualquiera)</option>
-              <option value="youtube">youtube</option>
-              <option value="hls">hls</option>
-              <option value="image">image</option>
-              <option value="other">other</option>
-            </select>
-            <div class="hint">Ej: rotar SOLO YouTube.</div>
-          </div>
-
-          <div class="field">
-            <label>Tag (contiene)</label>
-            <input id="rotTag" placeholder='Ej: news  |  spain  |  featured' />
-            <div class="hint">Busca en <span class="mono">tags[]</span> / <span class="mono">tag</span> / <span class="mono">category</span>.</div>
-          </div>
-        </div>
-
-        <div class="grid2" style="margin-top:10px">
-          <div class="tog">
-            <div class="l">
-              <div class="t">Solo favoritos</div>
-              <div class="s">Rotar SOLO ★</div>
-            </div>
-            <input id="rotFavsOnly" type="checkbox" />
-          </div>
-
-          <div class="tog">
-            <div class="l">
-              <div class="t">Exigir tag</div>
-              <div class="s">Si vacío → no filtra</div>
-            </div>
-            <input id="rotTagStrict" type="checkbox" />
-          </div>
-        </div>
-
-        <div class="hint">
-          Consejo rápido: para “rotación de noticieros”, pon tag <b>news</b> y kind vacío.
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="cardTitle">
-          <div class="h">Rotación: Diagnóstico</div>
-          <div class="sub" id="rotDiagMini">—</div>
-        </div>
-
-        <div class="diag" id="rotDiag">
-          —<br>
-        </div>
-
-        <div class="hint">
-          Si ves “0 candidatos”, revisa: vista (view), hideAlt, kind/tag, y si tienes “Solo favoritos”.
-        </div>
-      </div>
-    </div>
-
-    <!-- ✅ HUD Catálogo (aparece solo en catálogo/newsCatalog) -->
-    <div class="card hudCard" id="hudCard" style="display:none;">
-      <div class="cardTitle">
-        <div class="h">HUD Catálogo (4-UP)</div>
-        <div class="sub" id="hudSub">Destino: —</div>
-      </div>
-
-      <div class="hudBar">
-        <div class="seg" id="segHudMode">
-          <button data-mode="auto" class="segOn">AUTO</button>
-          <button data-mode="main">Principal</button>
-          <button data-mode="slot">Slot</button>
-        </div>
-        <div class="sp"></div>
-        <button class="smallBtn" id="btnHudPrev">⟵ PREV SLOT</button>
-        <button class="smallBtn primary" id="btnHudNext">NEXT SLOT ⟶</button>
-        <button class="smallBtn" id="btnHudSync">Sync desde STATE</button>
-        <button class="smallBtn danger" id="btnHudClear">Limpiar HUD</button>
-      </div>
-
-      <div class="hudGrid" id="hudGrid"></div>
-
-      <div class="hint">
-        En catálogo, selecciona un <b>slot</b> (TL/TR/BL/BR). Luego pulsa <b>IR</b> en una cámara para asignarla a ese slot.
-        (Envía payload con <span class="mono">slot/targetSlot</span>; si tu player no soporta slots, hará fallback al cambio normal.)
-      </div>
-    </div>
-
-    <div class="listTop">
-      <div class="meta" id="countTxt">Cams: —</div>
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <button class="smallBtn" id="btnFavs">★ Solo favoritos</button>
-        <button class="smallBtn danger" id="btnClearFavs">✕ Limpiar favs</button>
-      </div>
-    </div>
-
-    <div class="filterBar">
-      <div class="seg" id="segKind">
-        <button data-kind="" class="segOn">ALL</button>
-        <button data-kind="youtube">YouTube</button>
-        <button data-kind="hls">HLS</button>
-        <button data-kind="image">IMG</button>
-        <button data-kind="other">Otros</button>
-      </div>
-
-      <div class="sp"></div>
-
-      <div class="tog" style="padding:6px 10px">
-        <div class="l">
-          <div class="t">Ocultar ALT</div>
-          <div class="s">Quita duplicados/alternativas</div>
-        </div>
-        <input id="hideAlt" type="checkbox" />
-      </div>
-
-      <div class="miniField">
-        <label for="sort">Orden</label>
-        <select id="sort">
-          <option value="activeFav">Activa + fav primero</option>
-          <option value="relevance">Relevancia (búsqueda)</option>
-          <option value="title">Título</option>
-          <option value="place">Lugar</option>
-          <option value="source">Fuente</option>
-          <option value="id">ID</option>
-        </select>
-      </div>
-
-      <div class="miniField">
-        <label for="limit">Límite</label>
-        <input id="limit" type="number" min="0" max="5000" step="50" value="0" class="mono" style="width:92px" />
-      </div>
-    </div>
-
-    <div class="list" id="list"></div>
-
-    <details>
-      <summary>Diagnóstico (por qué no llega al player / estado / buses)</summary>
-      <div class="card" style="margin-top:10px">
-        <div class="diag" id="diagTxt">—</div>
-        <div style="margin-top:10px; display:grid; gap:10px; grid-template-columns:1fr 1fr;">
-          <div>
-            <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
-              <div class="diag"><b>Último state (raw)</b></div>
-              <button class="smallBtn" id="btnCopyState">Copiar</button>
-            </div>
-            <textarea id="diagState" readonly></textarea>
-          </div>
-          <div>
-            <div style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
-              <div class="diag"><b>Último cmd enviado (raw)</b></div>
-              <button class="smallBtn" id="btnCopyCmd">Copiar</button>
-            </div>
-            <textarea id="diagCmd" readonly></textarea>
-          </div>
-        </div>
-      </div>
-    </details>
-
   </div>
 
-  <div class="toast" id="toast">—</div>
+  <!-- Controles principales -->
+  <div class="row">
+    <div class="card">
+      <label>Buscar</label>
+      <input id="q" placeholder="tokyo, beach, madrid, news, hls..." />
+    </div>
+
+    <div class="card">
+      <label>Vista</label>
+      <select id="view">
+        <option value="catalog">Catálogo (recomendado)</option>
+        <option value="main">Lista principal</option>
+        <option value="news">Solo noticias</option>
+        <option value="newsCatalog">Noticias (catálogo)</option>
+        <option value="all">Todo combinado</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <label>Key (namespace)</label>
+      <input id="key" class="mono" placeholder="vacío = global" />
+    </div>
+
+    <div class="card">
+      <label>Acciones rápidas</label>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="smallBtn" id="btnOpen">Abrir Player</button>
+        <button class="smallBtn" id="btnSync">Ir a activa</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rotación PRO -->
+  <div class="card" style="margin-top:var(--gap)">
+    <div class="cardTitle">
+      <div class="h">Rotación automática</div>
+      <div class="sub" id="rotStatusTxt">OFF</div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--gap); margin-top:12px;">
+      <div class="tog">
+        <div>Activar</div>
+        <input type="checkbox" id="rotEnabled" />
+      </div>
+
+      <div>
+        <label>Intervalo (s)</label>
+        <input type="number" id="rotEvery" min="5" max="300" value="30" />
+      </div>
+
+      <div>
+        <label>Modo</label>
+        <select id="rotMode">
+          <option value="seq">Secuencial</option>
+          <option value="rnd">Aleatorio</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <button class="smallBtn primary" id="btnRotToggle">INICIAR ROTACIÓN</button>
+      <button class="smallBtn" id="btnRotNow">Rotar ahora</button>
+    </div>
+  </div>
+
+  <!-- Lista de cámaras -->
+  <div class="listTop">
+    <div class="meta" id="countTxt">Cámaras: cargando...</div>
+  </div>
+
+  <div class="list" id="list">
+    <p style="text-align:center; padding:60px 20px; color:#666;">
+      Esperando carga de cámaras desde cams.js...<br>
+      <small>(puede tardar 5–15 segundos la primera vez)</small>
+    </p>
+  </div>
+
+  <!-- Diagnóstico -->
+  <details style="margin-top:var(--gap)">
+    <summary>Diagnóstico y debug</summary>
+    <div class="card" style="margin-top:12px">
+      <div id="diagTxt">Estado: iniciando...</div>
+    </div>
+  </details>
+</div>
+
+<div class="toast" id="toast"></div>
 
 <script>
+// JavaScript completo actualizado y compatible (enero 2026)
 (() => {
   "use strict";
 
-  // ───────────────────────── Guard anti doble carga ─────────────────────────
-  const LOAD_GUARD = "__RLC_OBS_CAM_PANEL_LOADED_V239";
-  try { if (window[LOAD_GUARD]) return; window[LOAD_GUARD] = true; } catch (_) {}
-
-  // ───────────────────────── Header fixed: altura dinámica ─────────────────────────
-  const topBar = document.getElementById("topBar");
-  function setTopH(){
-    try{
-      if (!topBar) return;
-      const h = Math.max(60, Math.round(topBar.getBoundingClientRect().height || topBar.offsetHeight || 80));
-      document.documentElement.style.setProperty("--topH", h + "px");
-    }catch(_){}
-  }
-  window.addEventListener("resize", ()=>setTopH(), { passive:true });
-  try{
-    if ("MutationObserver" in window && topBar){
-      const mo = new MutationObserver(()=>setTopH());
-      mo.observe(topBar, { childList:true, subtree:true, characterData:true });
-    }
-  }catch(_){}
-  setTopH();
-
-  // ───────────────────────── Utils ─────────────────────────
-  const qs = (s, r=document) => r.querySelector(s);
-  const now = ()=>Date.now();
-  const norm = (s)=>String(s||"").trim().toLowerCase();
-  const safeJson = (raw, fb=null) => { try { return JSON.parse(raw); } catch (_) { return fb; } };
-
-  const stripDiacritics = (s)=>{
-    try { return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch(_){}
-    return String(s||"");
-  };
-
-  const cssEscape = (s)=>{
-    try { return CSS.escape(String(s)); } catch(_){}
-    return String(s).replace(/["\\]/g, "\\$&");
-  };
-
-  function uuidLike(){
-    try { return crypto.randomUUID(); } catch(_){}
-    return "n"+Math.random().toString(16).slice(2)+String(Date.now());
-  }
-
-  function clamp(n,a,b){ n=Number(n); if(!Number.isFinite(n)) n=a; return Math.max(a, Math.min(b, n)); }
-
-  async function copyText(txt){
-    try{
-      await navigator.clipboard.writeText(String(txt||""));
-      toast("Copiado ✅");
-    }catch(_){
-      toast("No se pudo copiar");
-    }
-  }
-
-  function toast(msg){
-    const el = qs("#toast");
-    el.textContent = String(msg||"");
-    el.classList.add("on");
-    clearTimeout(toast._t);
-    toast._t = setTimeout(()=>el.classList.remove("on"), 1250);
-  }
-
-  // ───────────────────────── Params + KEY auto (2.3.9) ─────────────────────────
-  const u = new URL(location.href);
-
-  const allowLegacy = (u.searchParams.get("allowLegacy") == null)
-    ? true
-    : (u.searchParams.get("allowLegacy")==="1" || u.searchParams.get("allowLegacy")==="true");
-  qs("#legacyTxt").textContent = allowLegacy ? "1" : "0";
-
-  const LAST_KEY_STORE = "rlc_last_key_v1";
-  const KEY_STORE = "rlc_obs_panel_key_v1";
-  const KEY_PARAM = (u.searchParams.get("key") || "").trim();
-  const KEY_LAST  = (localStorage.getItem(LAST_KEY_STORE) || "").trim();
-  const KEY_SAVED = (localStorage.getItem(KEY_STORE) || "").trim();
-
-  let KEY = KEY_PARAM || KEY_LAST || KEY_SAVED || "";
-  qs("#key").value = KEY;
-
-  // Player URL (por defecto index.html). Permite: ?player=./cam-page/index.html
-  const playerUrlParam = (u.searchParams.get("player") || "./index.html").trim();
-
-  function lsGet(k){ try { return localStorage.getItem(k); } catch(_) { return null; } }
-  function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(_){} }
-
-  // Persistencia por KEY (parámetros/filtros)
-  const OPT_BASE = "rlc_obs_panel_opts_v1";
-  const optKey = ()=> KEY ? `${OPT_BASE}:${KEY}` : OPT_BASE;
-
-  function loadOpts(){
-    const o = safeJson(lsGet(optKey()), null);
-    return (o && typeof o === "object") ? o : {};
-  }
-  function saveOpts(patch){
-    const cur = loadOpts();
-    const next = Object.assign({}, cur, patch || {});
-    lsSet(optKey(), JSON.stringify(next));
-  }
-
-  let favOnly = false;
-
-  function applyOptsToUI(){
-    const o = loadOpts();
-
-    // cams
-    if (o.camsTarget != null) qs("#camsTarget").value = String(o.camsTarget);
-    if (typeof o.camsDiscovery === "boolean") qs("#camsDiscovery").checked = o.camsDiscovery;
-    if (typeof o.camsValidate === "boolean") qs("#camsValidate").checked = o.camsValidate;
-
-    // news
-    if (typeof o.newsEnabled === "boolean") qs("#newsEnabled").checked = o.newsEnabled;
-    if (typeof o.newsMix === "boolean") qs("#newsMix").checked = o.newsMix;
-    if (typeof o.newsInCatalog === "boolean") qs("#newsInCatalog").checked = o.newsInCatalog;
-    if (o.newsTarget != null) qs("#newsTarget").value = String(o.newsTarget);
-
-    // view/filters
-    if (o.view) qs("#view").value = String(o.view);
-    if (o.kind != null) qs("#kind").value = String(o.kind);
-    if (typeof o.hideAlt === "boolean") qs("#hideAlt").checked = o.hideAlt;
-    if (o.sort) qs("#sort").value = String(o.sort);
-    if (o.limit != null) qs("#limit").value = String(o.limit);
-    if (typeof o.favOnly === "boolean") favOnly = o.favOnly;
-
-    // rotation
-    if (typeof o.rotEnabled === "boolean") qs("#rotEnabled").checked = o.rotEnabled;
-    if (o.rotEvery != null) qs("#rotEvery").value = String(o.rotEvery);
-    if (o.rotMode) qs("#rotMode").value = String(o.rotMode);
-    if (o.rotUseUiFilters != null) qs("#rotUseUiFilters").value = String(o.rotUseUiFilters ? 1 : 0);
-    if (o.rotKind != null) qs("#rotKind").value = String(o.rotKind);
-    if (o.rotTag != null) qs("#rotTag").value = String(o.rotTag);
-    if (typeof o.rotFavsOnly === "boolean") qs("#rotFavsOnly").checked = o.rotFavsOnly;
-    if (typeof o.rotTagStrict === "boolean") qs("#rotTagStrict").checked = o.rotTagStrict;
-
-    // HUD (nuevo)
-    if (o.hudMode) hudMode = String(o.hudMode);
-    if (o.hudSlot != null) hudSlot = clamp(parseInt(o.hudSlot,10), 1, 4) | 0;
-
-    syncHudModeSeg();
-    syncKindSeg();
-  }
-
-  // ───────────────────────── Candidate keys/channels ─────────────────────────
-  const BUS_CANDIDATES_ALL   = ["rlc_bus_v1","rlc_bus"];
-  const CMD_CANDIDATES_ALL   = ["rlc_cmd_v1","rlc_cmd"];
-  const STATE_CANDIDATES_ALL = ["rlc_state_v1","rlc_state"];
-  const EVT_CANDIDATES_ALL   = ["rlc_evt_v1","rlc_evt"];
-
-  let BUS_KEYS = [];
-  let CMD_KEYS = [];
-  let STATE_KEYS = [];
-  let EVT_KEYS = [];
-
-  function makeKeyList(baseList){
-    const out = [];
-    for (const b of baseList){
-      if (KEY) out.push(`${b}:${KEY}`);
-      // si allowLegacy=0 y hay KEY, NO añadimos base legacy
-      if (!KEY || allowLegacy) out.push(b);
-    }
-    return Array.from(new Set(out));
-  }
-
-  function recomputeKeys(){
-    BUS_KEYS   = makeKeyList(BUS_CANDIDATES_ALL);
-    CMD_KEYS   = makeKeyList(CMD_CANDIDATES_ALL);
-    STATE_KEYS = makeKeyList(STATE_CANDIDATES_ALL);
-    EVT_KEYS   = makeKeyList(EVT_CANDIDATES_ALL);
-  }
-  recomputeKeys();
-
-  function setKey(newKey){
-    const k = String(newKey||"").trim();
-    if (k === KEY) return false;
-    KEY = k;
-    qs("#key").value = KEY;
-
-    try { localStorage.setItem(KEY_STORE, KEY); } catch(_){}
-    try { if (KEY) localStorage.setItem(LAST_KEY_STORE, KEY); } catch(_){}
-
-    recomputeKeys();
-    openChannels();
-    openCamsBC();
-    favs = loadFavs();
-
-    applyOptsToUI();
-    renderList();
-    updateHudVisibility(); // HUD
-    renderHud(); // HUD
-    updateDiag();
-    updateRotationUi();
-    toast(KEY ? `key=${KEY}` : "key vacía");
-    return true;
-  }
-
-  // ───────────────────────── UI refs ─────────────────────────
-  const dot = qs("#dot");
-  const statusTxt = qs("#statusTxt");
-  const nowTxt = qs("#nowTxt");
-  const rotChip = qs("#rotChip");
-
+  const qs = s => document.querySelector(s);
+  const toastEl = qs("#toast");
   const listEl = qs("#list");
-  const qEl = qs("#q");
-  const kindEl = qs("#kind");
   const viewEl = qs("#view");
-  const hideAltEl = qs("#hideAlt");
-  const sortEl = qs("#sort");
-  const limitEl = qs("#limit");
+  const qEl = qs("#q");
+  const keyEl = qs("#key");
 
-  const btnPrev = qs("#btnPrev");
-  const btnNext = qs("#btnNext");
-  const btnPlay = qs("#btnPlay");
-  const btnReload = qs("#btnReload");
-  const btnRefresh = qs("#btnRefresh");
-  const btnOpen = qs("#btnOpen");
-  const btnSync = qs("#btnSync");
-  const btnFavs = qs("#btnFavs");
-  const btnClearFavs = qs("#btnClearFavs");
-  const countTxt = qs("#countTxt");
+  let currentKey = "";
+  let rotationTimer = null;
 
-  const camsTargetEl = qs("#camsTarget");
-  const camsDiscoveryEl = qs("#camsDiscovery");
-  const camsValidateEl = qs("#camsValidate");
-  const btnApplyCams = qs("#btnApplyCams");
-  const btnClearCache = qs("#btnClearCache");
-  const btnPickFeatured = qs("#btnPickFeatured");
-
-  const newsEnabledEl = qs("#newsEnabled");
-  const newsMixEl = qs("#newsMix");
-  const newsInCatalogEl = qs("#newsInCatalog");
-  const newsTargetEl = qs("#newsTarget");
-  const btnApplyNews = qs("#btnApplyNews");
-  const btnViewNews = qs("#btnViewNews");
-  const btnSendCamsCfg = qs("#btnSendCamsCfg");
-
-  const diagTxt = qs("#diagTxt");
-  const diagState = qs("#diagState");
-  const diagCmd = qs("#diagCmd");
-  const btnCopyState = qs("#btnCopyState");
-  const btnCopyCmd = qs("#btnCopyCmd");
-
-  // Rotation UI
-  const rotEnabledEl = qs("#rotEnabled");
-  const rotEveryEl = qs("#rotEvery");
-  const rotModeEl = qs("#rotMode");
-  const rotUseUiFiltersEl = qs("#rotUseUiFilters");
-  const rotKindEl = qs("#rotKind");
-  const rotTagEl = qs("#rotTag");
-  const rotFavsOnlyEl = qs("#rotFavsOnly");
-  const rotTagStrictEl = qs("#rotTagStrict");
-  const btnRotToggle = qs("#btnRotToggle");
-  const btnRotNow = qs("#btnRotNow");
-  const btnRotReset = qs("#btnRotReset");
-  const rotStatusTxt = qs("#rotStatusTxt");
-  const rotDiagMini = qs("#rotDiagMini");
-  const rotDiag = qs("#rotDiag");
-
-  // HUD UI (nuevo)
-  const hudCard = qs("#hudCard");
-  const hudSub = qs("#hudSub");
-  const hudGrid = qs("#hudGrid");
-  const segHudMode = qs("#segHudMode");
-  const btnHudPrev = qs("#btnHudPrev");
-  const btnHudNext = qs("#btnHudNext");
-  const btnHudSync = qs("#btnHudSync");
-  const btnHudClear = qs("#btnHudClear");
-
-  // ───────────────────────── BroadcastChannels (player/control bus) ─────────────────────────
-  let bcs = [];
-  function closeChannels(){
-    for (const c of bcs){ try { c.close(); } catch(_){} }
-    bcs = [];
-  }
-  function openChannels(){
-    closeChannels();
-    if (!("BroadcastChannel" in window)) return;
-
-    for (const busName of BUS_KEYS){
-      try{
-        const bc = new BroadcastChannel(busName);
-        bc.onmessage = (ev)=>onBus(ev?.data, busName);
-        bcs.push(bc);
-      } catch(_){}
-    }
+  function toast(msg, ms = 2200) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("on");
+    setTimeout(() => toastEl.classList.remove("on"), ms);
   }
 
-  // ───────────────────────── BroadcastChannel (cams.js control bus) ─────────────────────────
-  let camsBC = null;
-  let camsBCKeyed = null;
-
-  function openCamsBC(){
-    try { if (camsBC) camsBC.close(); } catch(_){}
-    try { if (camsBCKeyed) camsBCKeyed.close(); } catch(_){}
-    camsBC = null; camsBCKeyed = null;
-
-    if (!("BroadcastChannel" in window)) return;
-
-    // cams.js escucha rlc_bus_v1 (legacy) y rlc_bus_v1:{key}
-    try { if (allowLegacy || !KEY) camsBC = new BroadcastChannel("rlc_bus_v1"); } catch(_){}
-    try { if (KEY) camsBCKeyed = new BroadcastChannel(`rlc_bus_v1:${KEY}`); } catch(_){}
+  function setKey(k) {
+    currentKey = (k || "").trim();
+    keyEl.value = currentKey;
+    toast(currentKey ? `Key: ${currentKey}` : "Modo global");
   }
 
-  function postCamsBC(msg){
-    try { if (camsBC) camsBC.postMessage(msg); } catch(_){}
-    try { if (camsBCKeyed) camsBCKeyed.postMessage(msg); } catch(_){}
-  }
-
-  // ───────────────────────── State parse (2.3.9 + legacy) ─────────────────────────
-  let lastState = null;
-  let lastSeenAt = 0;
-  let lastStateKeyUsed = "";
-
-  function setConn(state){
-    dot.classList.remove("ok","bad");
-    if (state === true) dot.classList.add("ok");
-    else if (state === false) dot.classList.add("bad");
-  }
-
-  function keyOkForMsg(obj){
-    const mk = String(obj?.key || "").trim();
-
-    // Si no hay KEY y llega mk, adoptamos
-    if (!KEY && mk) {
-      setKey(mk);
-      return true;
-    }
-
-    if (KEY) {
-      // allowLegacy=0 => no aceptamos mensajes sin mk (legacy) si ya estamos en KEY
-      if (!allowLegacy && !mk) return false;
-      if (!mk) return true;           // legacy permitido
-      return mk === KEY;
-    }
-    return true;
-  }
-
-  function readState(){
-    lastStateKeyUsed = "";
-
-    if (!KEY) {
-      const lk = (localStorage.getItem(LAST_KEY_STORE) || "").trim();
-      if (lk) setKey(lk);
-    }
-
-    for (const k of STATE_KEYS){
-      const raw = lsGet(k);
-      if (!raw) continue;
-      const s = safeJson(raw, null);
-      if (!s || typeof s !== "object") continue;
-
-      const t = String(s.type || s.t || "").toLowerCase();
-      if (t && t !== "state") {
-        if (!s.cam && !s.nowCam && !s.currentCam && !s.camId && !s.currentCamId && !s.activeCamId) continue;
-      }
-
-      if (!keyOkForMsg(s)) continue;
-
-      lastStateKeyUsed = k;
-      return s;
-    }
-    return null;
-  }
-
-  function extractCam(s){
-    const cam = (s && typeof s.cam === "object" && s.cam) ? s.cam
-      : (s && typeof s.nowCam === "object" && s.nowCam) ? s.nowCam
-      : (s && typeof s.currentCam === "object" && s.currentCam) ? s.currentCam
-      : (s && typeof s.activeCam === "object" && s.activeCam) ? s.activeCam
-      : null;
-
-    const id =
-      (cam && cam.id != null) ? String(cam.id)
-      : (s && s.camId != null) ? String(s.camId)
-      : (s && s.currentCamId != null) ? String(s.currentCamId)
-      : (s && s.activeCamId != null) ? String(s.activeCamId)
-      : (s && s.id != null) ? String(s.id)
-      : "";
-
-    const title =
-      (cam && cam.title) ? String(cam.title)
-      : (s && s.camTitle) ? String(s.camTitle)
-      : (s && s.title) ? String(s.title)
-      : "";
-
-    const place =
-      (cam && cam.place) ? String(cam.place)
-      : (s && s.camPlace) ? String(s.camPlace)
-      : (s && s.place) ? String(s.place)
-      : "";
-
-    const kind =
-      (cam && cam.kind) ? String(cam.kind)
-      : (s && s.camKind) ? String(s.camKind)
-      : (s && s.kind) ? String(s.kind)
-      : "";
-
-    const source = (cam && cam.source) ? String(cam.source) : (s && s.source) ? String(s.source) : "";
-
-    return { id, title, place, kind, source, raw: cam };
-  }
-
-  function extractPlaying(s){
-    if (!s || typeof s !== "object") return null;
-    if (typeof s.playing === "boolean") return s.playing;
-    if (typeof s.isPlaying === "boolean") return s.isPlaying;
-    if (typeof s.paused === "boolean") return !s.paused;
-    if (typeof s.isPaused === "boolean") return !s.isPaused;
-    return null;
-  }
-
-  function renderTopFromState(s){
-    const cam = extractCam(s);
-    const title = cam.title || (cam.id ? `Cam ${cam.id}` : "—");
-    const place = cam.place ? ` — ${cam.place}` : "";
-    const kind = cam.kind ? ` · ${cam.kind}` : "";
-    nowTxt.textContent = `${title}${place}${kind}`;
-
-    const playing = extractPlaying(s);
-    if (playing === true) { statusTxt.textContent = "LIVE"; btnPlay.textContent = "⏸ PAUSE"; }
-    else if (playing === false) { statusTxt.textContent = "PAUSA"; btnPlay.textContent = "▶ PLAY"; }
-    else { statusTxt.textContent = "STATE OK"; btnPlay.textContent = "⏯ PLAY"; }
-
-    setConn(true);
-    setTopH();
-  }
-
-  function onBus(msg, busName){
-    if (!msg || typeof msg !== "object") return;
-
-    const t = String(msg.type || msg.t || "").toLowerCase();
-
-    if (t === "event" || t === "evt" || t === "boot" || msg.name === "PLAYER_BOOT" || msg.name === "OBS_PANEL_BOOT") {
-      const mk = String(msg.key || "").trim();
-      if (mk && !KEY) setKey(mk);
-      return;
-    }
-
-    if (t === "state" || msg.type === "state") {
-      if (!keyOkForMsg(msg)) return;
-      lastState = msg;
-      lastSeenAt = now();
-      lastStateKeyUsed = busName || lastStateKeyUsed;
-      renderTopFromState(msg);
-      markActiveCam();
-      // HUD (best-effort)
-      updateHudVisibility();
-      syncHudFromState(msg);
-      renderHud();
-      updateDiag();
-      return;
-    }
-
-    if (!t && (msg.cam || msg.nowCam || msg.currentCam || msg.camId || msg.activeCamId || msg.currentCamId)) {
-      if (!keyOkForMsg(msg)) return;
-      lastState = msg;
-      lastSeenAt = now();
-      lastStateKeyUsed = busName || lastStateKeyUsed;
-      renderTopFromState(msg);
-      markActiveCam();
-      updateHudVisibility();
-      syncHudFromState(msg);
-      renderHud();
-      updateDiag();
-    }
-  }
-
-  window.addEventListener("storage", (e)=>{
-    const k = String(e.key||"");
-    if (!k) return;
-    if (!STATE_KEYS.includes(k)) return;
-
-    const s = readState();
-    if (s){
-      lastState = s;
-      lastSeenAt = now();
-      renderTopFromState(s);
-      markActiveCam();
-      updateHudVisibility();
-      syncHudFromState(s);
-      renderHud();
-      updateDiag();
-    }
-  });
-
-  // ───────────────────────── Command send (2.3.9 compatible) ─────────────────────────
-  let lastSendAt = 0;
-  let lastCmdRaw = "";
-
-  function buildCmdPacket(cmd, payload){
-    const t = now();
-    const p = payload || {};
-    const pkt = {
-      type: "cmd",
-      t: "cmd",
-      ts: t,
-      time: t,
-      nonce: uuidLike(),
-
-      cmd: String(cmd||""),
-      op: String(cmd||""),
-      action: String(cmd||""),
-      name: String(cmd||""),
-
-      payload: p,
-      p: p,
-      data: p
-    };
-    if (KEY) pkt.key = KEY;
-    return pkt;
-  }
-
-  function writeCmdToStorage(raw){
-    for (const k of CMD_KEYS) lsSet(k, raw);
-  }
-
-  function sendCmd(cmd, payload={}){
-    const t = now();
-    if (t - lastSendAt < 60) return;
-    lastSendAt = t;
-
-    if (!KEY) {
-      const lk = (localStorage.getItem(LAST_KEY_STORE) || "").trim();
-      if (lk) setKey(lk);
-    }
-
-    const pkt = buildCmdPacket(cmd, payload);
-    const raw = JSON.stringify(pkt);
-    lastCmdRaw = raw;
-    diagCmd.value = raw;
-
-    writeCmdToStorage(raw);
-
-    for (const bc of bcs){
-      try { bc.postMessage(pkt); } catch(_){}
-    }
-
-    const extra = (payload && payload.id!=null) ? " ("+payload.id+")" : "";
-    toast(`CMD → ${cmd}${extra}`);
-    updateDiag();
-  }
-
-  // ───────────────────────── cams.js list + update events ─────────────────────────
-  let lastCamsDetail = null;
-
-  function pickDetailList(d, ...names){
-    if (!d || typeof d !== "object") return null;
-    for (const n of names){
-      const v = d[n];
-      if (Array.isArray(v)) return v;
-    }
-    return null;
-  }
-
-  function uniqById(list){
-    const m = new Map();
-    for (const c of (Array.isArray(list) ? list : [])){
-      if (!c || c.id == null) continue;
-      const id = String(c.id);
-      if (!m.has(id)) m.set(id, c);
-    }
-    return Array.from(m.values());
-  }
-
-  // ✅ API list helpers (mucho más tolerante)
-  function camsApi(){
-    return (window.RLCCams && typeof window.RLCCams === "object") ? window.RLCCams : null;
-  }
-  function apiTryGetList(api, name){
-    if (!api) return null;
-    try {
-      if (typeof api.getList === "function") {
-        const v = api.getList(name);
-        if (Array.isArray(v)) return v;
-      }
-    } catch(_){}
-    try {
-      if (typeof api.getLists === "function") {
-        const o = api.getLists();
-        if (o && typeof o === "object") {
-          const v = o[name];
-          if (Array.isArray(v)) return v;
-        }
-      }
-    } catch(_){}
-    try {
-      // algunos builds guardan en api.state / api.data
-      const bag = api.state || api.data || api._state || api._data;
-      if (bag && typeof bag === "object") {
-        const v = bag[name];
-        if (Array.isArray(v)) return v;
-      }
-    } catch(_){}
-    return null;
-  }
-
-  function getWindowList(){
-    return (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : null)
-      || (Array.isArray(window.camList) ? window.camList : null)
-      || (Array.isArray(window.cams) ? window.cams : null)
-      || null;
-  }
-  function getWindowCatalog(){
-    return (Array.isArray(window.CAM_CATALOG_LIST) ? window.CAM_CATALOG_LIST : null) || null;
-  }
-  function getWindowNews(){
-    return (Array.isArray(window.CAM_NEWS_LIST) ? window.CAM_NEWS_LIST : null) || null;
-  }
-
-  function getListByView(){
-    const v = String(viewEl.value || "catalog");
-    const d = lastCamsDetail || null;
-    const api = camsApi();
-
-    // prioridad 1: event.detail
-    const mainFromDetail = pickDetailList(d,"list","main","mainList","cams","camList");
-    const catFromDetail  = pickDetailList(d,"catalog","catalogList","cat","catList","catalogCams");
-    const newsFromDetail = pickDetailList(d,"news","newsList","newsCams","news_items");
-    const newsCatFromDetail = pickDetailList(d,"newsCatalog","newsCatalogList","news_catalog","newsCat","newsCatList");
-
-    // prioridad 2: globals
-    const mainFromWindow = getWindowList();
-    const catFromWindow  = getWindowCatalog();
-    const newsFromWindow = getWindowNews();
-
-    // prioridad 3: RLCCams (si expone)
-    const mainFromApi = apiTryGetList(api, "main") || apiTryGetList(api, "list") || apiTryGetList(api, "cams");
-    const catFromApi  = apiTryGetList(api, "catalog") || apiTryGetList(api, "catalogList") || apiTryGetList(api, "cat");
-    const newsFromApi = apiTryGetList(api, "news") || apiTryGetList(api, "newsList");
-    const newsCatFromApi = apiTryGetList(api, "newsCatalog") || apiTryGetList(api, "newsCatalogList") || null;
-
-    const main = mainFromDetail || mainFromWindow || mainFromApi || [];
-    const cat  = catFromDetail  || catFromWindow  || catFromApi  || [];
-    const news = newsFromDetail || newsFromWindow || newsFromApi || [];
-    const newsCat = newsCatFromDetail || newsCatFromApi || news;
-
-    if (v === "main") return main;
-    if (v === "catalog") return cat.length ? cat : main;
-    if (v === "news") return news;
-    if (v === "newsCatalog") return newsCat;
-
-    if (v === "all" || v === "allNoAlt"){
-      return uniqById([].concat(main, cat, news));
-    }
-
-    return cat.length ? cat : main;
-  }
-
-  function applyCamsUiFromDetail(d){
-    if (!d || typeof d !== "object") return;
-    const f = (d.flags && typeof d.flags === "object") ? d.flags : d;
-
-    if (typeof f.target === "number") qs("#camsTarget").value = String(clamp(f.target, 50, 5000) | 0);
-    if (typeof f.autoDiscovery === "boolean") qs("#camsDiscovery").checked = f.autoDiscovery;
-    if (typeof f.validateEmbed === "boolean") qs("#camsValidate").checked = f.validateEmbed;
-
-    if (typeof f.newsEnabled === "boolean") qs("#newsEnabled").checked = f.newsEnabled;
-    if (typeof f.newsMix === "boolean") qs("#newsMix").checked = f.newsMix;
-    if (typeof f.newsInCatalog === "boolean") qs("#newsInCatalog").checked = f.newsInCatalog;
-    if (typeof f.newsTarget === "number") qs("#newsTarget").value = String(clamp(f.newsTarget, 10, 500) | 0);
-  }
-
-  window.addEventListener("rlc_cam_list_updated", (ev)=>{
-    lastCamsDetail = (ev && ev.detail) ? ev.detail : null;
-    applyCamsUiFromDetail(lastCamsDetail);
-    renderList();
-    updateHudVisibility();
-    renderHud();
-    updateDiag();
-    updateRotationUi();
-  });
-
-  // ✅ Espera inteligente para “encontrar cams” (sin matar rendimiento)
-  let ensureTimer = null;
-  let ensureTry = 0;
-  function listsTotals(){
-    const main = (getWindowList() || []).length;
-    const cat  = (getWindowCatalog() || []).length;
-    const news = (getWindowNews() || []).length;
-    // también cuenta por getListByView (por si viene de detail/api)
-    const viewLen = (getListByView() || []).length;
-    return { main, cat, news, viewLen };
-  }
-  function hasAnyCams(){
-    const t = listsTotals();
-    return (t.main + t.cat + t.news + t.viewLen) > 0;
-  }
-  function ensureListsLoaded(force=false){
-    clearTimeout(ensureTimer);
-    if (force) ensureTry = 0;
-
-    // ya hay cams => re-render y listo
-    if (hasAnyCams()){
-      ensureTry = 0;
-      renderList();
-      return;
-    }
-
-    // intentos con backoff suave
-    ensureTry++;
-    const delay = clamp(250 * ensureTry, 250, 2500);
-
-    // “toquecito” a cams.js por si aún no refrescó (solo en los primeros intentos)
-    if (ensureTry <= 3){
-      try { camsRefresh(); } catch(_){}
-    }
-
-    ensureTimer = setTimeout(()=>{
-      // si sigue vacío, intenta re-render (por si justo entró algo)
-      try { renderList(); } catch(_){}
-      // reintenta hasta un máximo razonable
-      if (ensureTry < 12 && !hasAnyCams()){
-        ensureListsLoaded(false);
-      } else if (!hasAnyCams()){
-        // mensaje útil (no spam)
-        toast("Aún sin cams: revisa que cams.js cargue y que no esté bloqueado por CORS/OBS");
-      }
-    }, delay);
-  }
-
-  function syncUiFromRLCCams(){
-    const api = camsApi();
-    if (!api) return;
-    try {
-      const t = api.getTarget && api.getTarget();
-      if (typeof t === "number") qs("#camsTarget").value = String(clamp(t, 50, 5000) | 0);
-    } catch(_){}
-  }
-
-  // ───────────────────────── Favorites ─────────────────────────
-  const FAV_KEY_BASE = "rlc_obs_favs_v1";
-  const favStoreKey = ()=> KEY ? `${FAV_KEY_BASE}:${KEY}` : FAV_KEY_BASE;
-
-  function loadFavs(){
-    const arr = safeJson(lsGet(favStoreKey()), []);
-    return new Set(Array.isArray(arr) ? arr.map(String) : []);
-  }
-  function saveFavs(set){
-    lsSet(favStoreKey(), JSON.stringify(Array.from(set)));
-  }
-  let favs = loadFavs();
-
-  // ───────────────────────── HUD Catálogo (NUEVO) ─────────────────────────
-  // hudMode: auto/main/slot  (auto => en catálogo usa slot; fuera usa main)
-  let hudMode = "auto";
-  let hudSlot = 1; // 1..4
-  let hudSlots = [
-    { id:"", title:"—", place:"", kind:"", source:"" },
-    { id:"", title:"—", place:"", kind:"", source:"" },
-    { id:"", title:"—", place:"", kind:"", source:"" },
-    { id:"", title:"—", place:"", kind:"", source:"" }
-  ];
-
-  const SLOT_POS = ["TL","TR","BL","BR"];
-
-  function isCatalogLikeView(v){
-    v = String(v || "");
-    return v === "catalog" || v === "newsCatalog";
-  }
-
-  function effectiveTargetMode(){
-    const v = String(viewEl.value || "catalog");
-    if (hudMode === "main") return "main";
-    if (hudMode === "slot") return "slot";
-    // auto
-    return isCatalogLikeView(v) ? "slot" : "main";
-  }
-
-  function syncHudModeSeg(){
-    if (!segHudMode) return;
-    for (const b of segHudMode.querySelectorAll("button[data-mode]")){
-      const m = String(b.getAttribute("data-mode")||"auto");
-      b.classList.toggle("segOn", m === hudMode);
-    }
-  }
-
-  function updateHudVisibility(){
-    if (!hudCard) return;
-    const show = isCatalogLikeView(viewEl.value);
-    hudCard.style.display = show ? "" : "none";
-    updateHudSub();
-    setTopH();
-  }
-
-  function updateHudSub(){
-    const mode = effectiveTargetMode();
-    const pos = SLOT_POS[(hudSlot-1)|0] || "—";
-    if (hudSub){
-      hudSub.textContent = (mode === "slot")
-        ? `Destino: SLOT ${hudSlot} (${pos})`
-        : `Destino: Principal`;
-    }
-  }
-
-  function badgeClassForKind(kind){
-    const k = norm(kind);
-    if (k === "youtube") return "yt";
-    if (k === "hls") return "hls";
-    if (k === "image") return "img";
-    return "";
-  }
-
-  function ensureHudGrid(){
-    if (!hudGrid) return;
-    if (hudGrid.childElementCount) return;
-
-    for (let i=1;i<=4;i++){
-      const tile = document.createElement("div");
-      tile.className = "hudTile";
-      tile.dataset.slot = String(i);
-
-      const top = document.createElement("div");
-      top.className = "hudTopRow";
-
-      const slot = document.createElement("div");
-      slot.className = "hudSlot";
-      slot.innerHTML = `SLOT <b>${i}</b> <span class="pos">${SLOT_POS[i-1]}</span>`;
-
-      const badge = document.createElement("div");
-      badge.className = "hudBadge";
-      badge.textContent = "—";
-      badge.dataset.role = "badge";
-
-      top.appendChild(slot);
-      top.appendChild(badge);
-
-      const title = document.createElement("div");
-      title.className = "hudTitle";
-      title.textContent = "—";
-      title.dataset.role = "title";
-
-      const sub = document.createElement("div");
-      sub.className = "hudSubline";
-      sub.textContent = "—";
-      sub.dataset.role = "sub";
-
-      const hint = document.createElement("div");
-      hint.className = "hudMiniHint";
-      hint.textContent = "click → seleccionar";
-      hint.dataset.role = "hint";
-
-      tile.appendChild(top);
-      tile.appendChild(title);
-      tile.appendChild(sub);
-      tile.appendChild(hint);
-
-      tile.addEventListener("click", ()=>{
-        hudSlot = i;
-        saveOpts({ hudSlot: hudSlot });
-        updateHudSub();
-        renderHud();
-        toast(`HUD: slot ${hudSlot} (${SLOT_POS[hudSlot-1]})`);
-      });
-
-      hudGrid.appendChild(tile);
-    }
-  }
-
-  function renderHud(){
-    if (!hudCard || hudCard.style.display === "none") return;
-    ensureHudGrid();
-    updateHudSub();
-    syncHudModeSeg();
-
-    const tiles = hudGrid.querySelectorAll(".hudTile");
-    tiles.forEach((t)=>{
-      const slot = clamp(parseInt(t.dataset.slot,10),1,4)|0;
-      const info = hudSlots[slot-1] || {};
-      const sel = (slot === hudSlot);
-      t.classList.toggle("sel", sel);
-
-      const badge = t.querySelector('[data-role="badge"]');
-      const title = t.querySelector('[data-role="title"]');
-      const sub = t.querySelector('[data-role="sub"]');
-      const hint = t.querySelector('[data-role="hint"]');
-
-      const kind = String(info.kind || "");
-      const id = String(info.id || "");
-      const ttl = String(info.title || "—");
-      const plc = String(info.place || "");
-      const src = String(info.source || "");
-
-      if (badge){
-        badge.className = "hudBadge " + badgeClassForKind(kind);
-        badge.textContent = kind ? kind.toUpperCase() : "—";
-      }
-      if (title){
-        title.textContent = ttl || (id ? `Cam ${id}` : "—");
-      }
-      if (sub){
-        const s = `${id ? "id:"+id : ""}${plc ? " · "+plc : ""}${src ? " · "+src : ""}`.trim();
-        sub.textContent = s || "—";
-      }
-      if (hint){
-        hint.textContent = sel ? "DESTINO ✓" : "click → seleccionar";
-        hint.style.opacity = sel ? "1" : ".75";
-      }
-    });
-  }
-
-  function extractCamLike(o){
-    if (!o || typeof o !== "object") return null;
-    // Si viene como {cam:{...}} o parecido
-    const c = extractCam(o);
-    if (c && (c.id || c.title || c.kind || c.place || c.source)) return c;
-    // Si viene ya como cam directa
-    const id = (o.id!=null) ? String(o.id) : (o.camId!=null) ? String(o.camId) : "";
-    const title = (o.title!=null) ? String(o.title) : "";
-    const place = (o.place!=null) ? String(o.place) : "";
-    const kind = (o.kind!=null) ? String(o.kind) : "";
-    const source = (o.source!=null) ? String(o.source) : "";
-    if (id || title || kind || place || source) return { id, title, place, kind, source, raw:o };
-    return null;
-  }
-
-  function findArrayDeep(obj, maxDepth=4){
-    const seen = new Set();
-    const q = [{v:obj,d:0}];
-    while(q.length){
-      const {v,d} = q.shift();
-      if (!v || typeof v !== "object") continue;
-      if (seen.has(v)) continue;
-      seen.add(v);
-
-      // arrays candidatas de 4
-      if (Array.isArray(v) && v.length >= 4){
-        const first4 = v.slice(0,4);
-        // heurística: elementos con id/camId/cam/kind/title
-        const ok = first4.some(x=>{
-          if (!x || typeof x !== "object") return false;
-          return (x.id!=null || x.camId!=null || x.cam || x.kind || x.title);
-        });
-        if (ok) return v;
-      }
-
-      if (d >= maxDepth) continue;
-      for (const k of Object.keys(v)){
-        const child = v[k];
-        if (child && typeof child === "object") q.push({v:child,d:d+1});
+  function refreshCams() {
+    if (window.RLCCams?.refresh) {
+      window.RLCCams.refresh();
+      toast("Refresh → cams.js");
+    } else {
+      try {
+        const bc = new BroadcastChannel("rlc_bus_v1");
+        bc.postMessage({ type: "CAMS_REFRESH", ts: Date.now() });
+        bc.close();
+        toast("Refresh enviado por Broadcast");
+      } catch(e) {
+        toast("No se pudo refrescar");
       }
     }
-    return null;
   }
 
-  function syncHudFromState(s){
-    // Solo nos interesa “best-effort” para dibujar el HUD.
-    // Si no encontramos slots, dejamos los últimos.
-    if (!s || typeof s !== "object") return false;
+  function renderCamera(cam) {
+    const div = document.createElement("div");
+    div.className = "cam";
 
-    const candidates = [];
+    const thumb = cam.thumb || 
+      (cam.kind === "youtube" && cam.youtubeId ? 
+        `https://i.ytimg.com/vi/${cam.youtubeId}/hqdefault.jpg` : "");
 
-    // 1) keys típicas
-    const directArrays = [
-      s.slots, s.slotCams, s.grid, s.gridSlots, s.catalogSlots, s.catalog,
-      s.multi, s.multicam, s.layout, s.tiles, s.panels
-    ].filter(Array.isArray);
+    div.innerHTML = `
+      <div class="mini">
+        ${thumb ? `<img src="${thumb}" loading="lazy" alt="">` : cam.kind?.toUpperCase() || "?"}
+      </div>
+      <div class="body">
+        <div class="t1">${cam.title || `Cámara ${cam.id || "?"}`}</div>
+        <div class="t2">
+          ${cam.place ? cam.place + " · " : ""}
+          ${cam.source || cam.kind?.toUpperCase() || ""}
+        </div>
+      </div>
+      <div class="actions">
+        <button onclick="goto('${cam.id}')">IR</button>
+      </div>
+    `;
 
-    for (const arr of directArrays){
-      if (Array.isArray(arr) && arr.length >= 4){
-        candidates.push(arr);
-      }
-    }
-
-    // 2) objetos contenedores típicos
-    const containers = [
-      s.catalog, s.multicam, s.multi, s.layout, s.grid, s.scene, s.view, s.screen
-    ].filter(x=>x && typeof x === "object");
-
-    for (const c of containers){
-      for (const key of ["slots","cams","items","views","panes","tiles","grid","cells","cards"]){
-        const arr = c[key];
-        if (Array.isArray(arr) && arr.length >= 4) candidates.push(arr);
-      }
-    }
-
-    // 3) deep scan (último recurso)
-    if (!candidates.length){
-      const deep = findArrayDeep(s, 4);
-      if (Array.isArray(deep) && deep.length >= 4) candidates.push(deep);
-    }
-
-    // elegir la mejor: la que tenga más “cam-likeness” en los 4 primeros
-    let best = null;
-    let bestScore = -1;
-
-    for (const arr of candidates){
-      let sc = 0;
-      for (let i=0;i<4;i++){
-        const x = arr[i];
-        const c = extractCamLike(x);
-        if (c && (c.id || c.title || c.kind)) sc += 1;
-        if (c && c.id) sc += 1;
-      }
-      if (sc > bestScore){
-        bestScore = sc;
-        best = arr;
-      }
-    }
-
-    if (!best || bestScore <= 0) return false;
-
-    const next = [];
-    for (let i=0;i<4;i++){
-      const c = extractCamLike(best[i]) || { id:"", title:"—", place:"", kind:"", source:"", raw: best[i] };
-      next.push({ id:c.id||"", title:c.title||"—", place:c.place||"", kind:c.kind||"", source:c.source||"" });
-    }
-    if (next.length === 4){
-      hudSlots = next;
-      return true;
-    }
-    return false;
+    return div;
   }
 
-  function makeTargetPayload(){
-    const mode = effectiveTargetMode();
-    if (mode !== "slot") return { target:"main" };
-
-    const slot = clamp(hudSlot, 1, 4) | 0;
-    const idx = slot - 1;
-    const pos = SLOT_POS[idx] || "";
-    return {
-      target: "slot",
-      slot: slot,
-      targetSlot: slot,
-      slotIndex: idx,
-      gridIndex: idx,
-      paneIndex: idx,
-      cellIndex: idx,
-      pos: pos,
-      layout: "2x2",
-      view: "catalog"
-    };
-  }
-
-  function gotoCamWithTarget(camObjOrId){
-    const id = (typeof camObjOrId === "string") ? camObjOrId : String(camObjOrId?.id || "");
+  window.goto = function(id) {
     if (!id) return;
-
-    // buscar cam en lista actual (para HUD inmediato)
-    let cObj = null;
-    try{
-      const base = getListByView();
-      cObj = (Array.isArray(base) ? base.find(x=>x && String(x.id)===id) : null) || null;
-    }catch(_){}
-
-    const target = makeTargetPayload();
-
-    const payload = Object.assign({
-      id, camId:id, targetId:id, gotoId:id, setCamId:id
-    }, target, {
-      // extras compat
-      scope: target.target === "slot" ? "slot" : "main",
-      assign: target.target === "slot" ? "slot" : "main",
-      setSlot: target.target === "slot" ? target.slot : undefined
-    });
-
-    // actualiza HUD local “optimista” si vamos a slot
-    if (target.target === "slot"){
-      const slot = clamp(target.slot,1,4)|0;
-      const info = cObj ? {
-        id:String(cObj.id||id),
-        title:String(cObj.title||`Cam ${id}`),
-        place:String(cObj.place||""),
-        kind:String(cObj.kind||""),
-        source:String(cObj.source||"")
-      } : {
-        id:id, title:`Cam ${id}`, place:"", kind:"", source:""
-      };
-      hudSlots[slot-1] = info;
-      renderHud();
+    try {
+      const bc = new BroadcastChannel("rlc_bus_v1");
+      bc.postMessage({
+        type: "GOTO",
+        id: id,
+        camId: id,
+        ts: Date.now()
+      });
+      bc.close();
+      toast(`Cambiando a: ${id}`);
+    } catch(e) {
+      toast("Error al cambiar cámara");
     }
+  };
 
-    sendCmd("GOTO", payload);
-
-    if (target.target === "slot"){
-      toast(`IR → slot ${target.slot} (${SLOT_POS[(target.slot-1)|0]}) · id:${id}`);
-    }
-  }
-
-  // ───────────────────────── Render list ─────────────────────────
-  function camKindBadge(kind){
-    const k = norm(kind);
-    if (k === "youtube") return "YT";
-    if (k === "hls") return "HLS";
-    if (k === "image") return "IMG";
-    return "CAM";
-  }
-
-  function ytThumbFromUrl(url){
-    const s = String(url||"");
-    if (!s) return "";
-    let m = s.match(/youtu\.be\/([a-zA-Z0-9_-]{6,})/);
-    if (m) return `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;
-    m = s.match(/[?&]v=([a-zA-Z0-9_-]{6,})/);
-    if (m) return `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;
-    m = s.match(/\/embed\/([a-zA-Z0-9_-]{6,})/);
-    if (m) return `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;
-    return "";
-  }
-
-  function camText(c){
-    const raw = [
-      c.id, c.kind, c.title, c.place, c.source, c.originUrl, c.url,
-      (Array.isArray(c.tags) ? c.tags.join(" ") : (c.tags || "")),
-      (c.tag || ""), (c.category || ""), (c.categories || ""),
-      (c.isAlt ? "alt" : ""), (c.altOf || "")
-    ].map(x=>String(x||"")).join(" ");
-    return stripDiacritics(raw).toLowerCase();
-  }
-
-  function kindFilterOk(c){
-    const kf = norm(kindEl.value);
-    if (!kf) return true;
-    const ck = norm(c.kind);
-    if (kf === "other") return ck !== "youtube" && ck !== "hls" && ck !== "image";
-    return ck === kf;
-  }
-
-  function queryOk(c){
-    const q = stripDiacritics(norm(qEl.value));
-    if (!q) return true;
-    return camText(c).includes(q);
-  }
-
-  function hideAltOk(c){
-    const hide = !!hideAltEl.checked;
-    const v = String(viewEl.value||"");
-    const mustHideAlt = hide || (v === "allNoAlt");
-    if (!mustHideAlt) return true;
-    return !c.isAlt;
-  }
-
-  function isNewsCam(c){
-    if (!c) return false;
-    if (Array.isArray(c.tags) && c.tags.includes("news")) return true;
-    if (typeof c.tag === "string" && String(c.tag).toLowerCase().includes("news")) return true;
-    if (typeof c.category === "string" && String(c.category).toLowerCase().includes("news")) return true;
-    return false;
-  }
-
-  function getActiveId(){
-    const s = lastState || readState();
-    const cam = s ? extractCam(s) : {id:""};
-    return cam && cam.id ? String(cam.id) : "";
-  }
-
-  function compareStr(a,b){
-    a = String(a||"").toLowerCase();
-    b = String(b||"").toLowerCase();
-    if (a < b) return -1;
-    if (a > b) return 1;
-    return 0;
-  }
-
-  // ✅ mantenemos la última lista renderizada (IDs) para rotación con filtros UI
-  let lastRenderedIds = [];
-
-  function renderList(customList=null){
-    const baseList = Array.isArray(customList) ? customList : getListByView();
-    const activeId = getActiveId();
-    const sortMode = String(sortEl.value || "activeFav");
-    const lim = clamp(parseInt(limitEl.value||"0", 10), 0, 5000) | 0;
-
-    let filtered = (Array.isArray(baseList) ? baseList : [])
-      .filter(c => c && c.id != null)
-      .filter(kindFilterOk)
-      .filter(queryOk)
-      .filter(hideAltOk)
-      .filter(c => !favOnly || favs.has(String(c.id)));
-
-    const q = stripDiacritics(norm(qEl.value));
-    const relevanceScore = (c)=>{
-      if (!q) return 0;
-      const txt = camText(c);
-      const title = stripDiacritics(String(c.title||"")).toLowerCase();
-      let s = 0;
-      if (title.includes(q)) s += 5;
-      if (txt.includes(q)) s += 2;
-      if (String(c.place||"").toLowerCase().includes(q)) s += 1;
-      if (String(c.source||"").toLowerCase().includes(q)) s += 1;
-      return s;
-    };
-
-    filtered.sort((A,B)=>{
-      const aId = String(A.id), bId = String(B.id);
-      const aFav = favs.has(aId), bFav = favs.has(bId);
-      const aAct = (activeId && aId === activeId), bAct = (activeId && bId === activeId);
-
-      if (sortMode === "activeFav"){
-        if (aAct !== bAct) return aAct ? -1 : 1;
-        if (aFav !== bFav) return aFav ? -1 : 1;
-        return compareStr(A.title, B.title) || compareStr(A.place, B.place) || compareStr(aId,bId);
-      }
-      if (sortMode === "relevance"){
-        const ra = relevanceScore(A), rb = relevanceScore(B);
-        if (rb !== ra) return rb - ra;
-        if (aAct !== bAct) return aAct ? -1 : 1;
-        if (aFav !== bFav) return aFav ? -1 : 1;
-        return compareStr(A.title, B.title) || compareStr(A.place, B.place) || compareStr(aId,bId);
-      }
-      if (sortMode === "title") return compareStr(A.title, B.title) || compareStr(A.place, B.place) || compareStr(aId,bId);
-      if (sortMode === "place") return compareStr(A.place, B.place) || compareStr(A.title, B.title) || compareStr(aId,bId);
-      if (sortMode === "source") return compareStr(A.source, B.source) || compareStr(A.title, B.title) || compareStr(aId,bId);
-      if (sortMode === "id") return compareStr(aId,bId);
-      return 0;
-    });
-
-    if (lim > 0 && filtered.length > lim) filtered = filtered.slice(0, lim);
-
-    // guarda IDs renderizados (para rotación con filtros UI)
-    lastRenderedIds = filtered.map(c => String(c.id));
-
-    const totalMain = (getWindowList() || []).length;
-    const totalCat  = (getWindowCatalog() || []).length;
-    const totalNews = (getWindowNews() || []).length;
-
-    const v = String(viewEl.value || "catalog");
-    const vLabel = (v === "main") ? "MAIN"
-      : (v === "catalog") ? "CAT"
-      : (v === "news") ? "NEWS"
-      : (v === "newsCatalog") ? "NEWS_CAT"
-      : (v === "all") ? "ALL"
-      : (v === "allNoAlt") ? "ALL_NO_ALT"
-      : "LIST";
-
-    // si no hay nada todavía, mensaje útil
-    const emptyHint = (!filtered.length && !hasAnyCams())
-      ? " · <b>Esperando cams…</b> (si tarda: pulsa REFRESH o revisa cams.js)"
-      : "";
-
-    const mode = effectiveTargetMode();
-    const tgt = (mode === "slot" && isCatalogLikeView(v))
-      ? ` · target=slot${hudSlot}(${SLOT_POS[hudSlot-1]})`
-      : ` · target=main`;
-
-    countTxt.innerHTML =
-      `Mostrando: <b>${filtered.length}</b> · vista <b>${vLabel}</b>` +
-      `${favOnly ? " · ★ favs" : ""}` +
-      `${hideAltEl.checked ? " · sin ALT" : ""}` +
-      `${lim ? " · limit " + lim : ""}` +
-      ` · totals: main=${totalMain}, cat=${totalCat}, news=${totalNews}` +
-      tgt +
-      emptyHint;
+  function renderList() {
+    const cams = window.CAM_CATALOG_LIST?.length ? window.CAM_CATALOG_LIST :
+                 window.CAM_LIST?.length ? window.CAM_LIST : [];
 
     listEl.innerHTML = "";
-    const frag = document.createDocumentFragment();
 
-    for (const c of filtered){
-      const id = String(c.id);
-      const el = document.createElement("div");
-      el.className = "cam";
-      el.dataset.id = id;
-
-      const mini = document.createElement("div");
-      mini.className = "mini";
-
-      const badge = document.createElement("div");
-      badge.className = "badge";
-      badge.textContent = camKindBadge(c.kind);
-      mini.appendChild(badge);
-
-      let thumb = (c && c.thumb) ? String(c.thumb) : "";
-      if (!thumb && norm(c.kind) === "youtube") {
-        thumb = ytThumbFromUrl(c.url || c.originUrl || "");
-      }
-
-      if (thumb) {
-        const img = document.createElement("img");
-        img.loading = "lazy";
-        img.referrerPolicy = "no-referrer";
-        img.alt = "thumb";
-        img.src = thumb;
-        mini.appendChild(img);
-      } else {
-        const fallback = document.createElement("div");
-        fallback.style.fontSize = "12px";
-        fallback.style.opacity = ".9";
-        fallback.textContent = camKindBadge(c.kind);
-        mini.appendChild(fallback);
-      }
-
-      const body = document.createElement("div");
-      body.className = "body";
-
-      const t1 = document.createElement("div");
-      t1.className = "t1";
-      t1.textContent = c.title || `Cam ${id}`;
-
-      const t2 = document.createElement("div");
-      t2.className = "t2";
-      t2.textContent = `${c.place ? c.place + " · " : ""}${c.source || ""}`.trim() || "—";
-
-      const tags = document.createElement("div");
-      tags.className = "tags";
-
-      const tagKind = document.createElement("div");
-      tagKind.className = "tag kind";
-      tagKind.textContent = (c.kind || "cam");
-      tags.appendChild(tagKind);
-
-      const tagId = document.createElement("div");
-      tagId.className = "tag";
-      tagId.textContent = `id:${id}`;
-      tags.appendChild(tagId);
-
-      if (favs.has(id)){
-        const f = document.createElement("div");
-        f.className = "tag fav";
-        f.textContent = "★";
-        tags.appendChild(f);
-      }
-
-      if (c.source){
-        const s = document.createElement("div");
-        s.className = "tag src";
-        s.textContent = c.source;
-        tags.appendChild(s);
-      }
-      if (c.place){
-        const p = document.createElement("div");
-        p.className = "tag place";
-        p.textContent = c.place;
-        tags.appendChild(p);
-      }
-
-      const isNews = isNewsCam(c) || (String(viewEl.value||"").includes("news"));
-      if (isNews) {
-        const n = document.createElement("div");
-        n.className = "tag news";
-        n.textContent = "NEWS";
-        tags.appendChild(n);
-      }
-      if (c.isAlt) {
-        const a = document.createElement("div");
-        a.className = "tag alt";
-        a.textContent = `ALT${c.altOf ? ":"+c.altOf : ""}`;
-        tags.appendChild(a);
-      }
-
-      // target badge (solo si estamos en catálogo y destino slot)
-      if (isCatalogLikeView(viewEl.value) && effectiveTargetMode() === "slot"){
-        const tb = document.createElement("div");
-        tb.className = "tag";
-        tb.style.borderColor = "rgba(55,214,255,.35)";
-        tb.style.background = "rgba(55,214,255,.12)";
-        tb.textContent = `→ slot${hudSlot}:${SLOT_POS[hudSlot-1]}`;
-        tags.appendChild(tb);
-      }
-
-      body.appendChild(t1);
-      body.appendChild(t2);
-      body.appendChild(tags);
-
-      const actions = document.createElement("div");
-      actions.className = "actions";
-
-      const bGo = document.createElement("button");
-      bGo.className = "smallBtn primary";
-      bGo.textContent = "IR";
-      bGo.addEventListener("click", (ev)=>{
-        ev.preventDefault();
-        gotoCamWithTarget(id);
-      });
-
-      const bStar = document.createElement("button");
-      bStar.className = "smallBtn star" + (favs.has(id) ? " on" : "");
-      bStar.textContent = favs.has(id) ? "★" : "☆";
-      bStar.title = "Favorito";
-      bStar.addEventListener("click", (ev)=>{
-        ev.preventDefault();
-        if (favs.has(id)) favs.delete(id);
-        else favs.add(id);
-        saveFavs(favs);
-        renderList();
-        renderHud();
-        updateRotationUi();
-      });
-
-      const bOpen = document.createElement("button");
-      bOpen.className = "smallBtn";
-      bOpen.textContent = "ORIG";
-      bOpen.title = "Abrir originUrl";
-      bOpen.addEventListener("click", (ev)=>{
-        ev.preventDefault();
-        const url = c.originUrl || c.url || "";
-        if (url) window.open(url, "_blank", "noopener");
-      });
-
-      actions.appendChild(bGo);
-      actions.appendChild(bStar);
-      actions.appendChild(bOpen);
-
-      el.appendChild(mini);
-      el.appendChild(body);
-      el.appendChild(actions);
-
-      frag.appendChild(el);
-    }
-
-    listEl.appendChild(frag);
-    markActiveCam();
-
-    saveOpts({
-      view: viewEl.value,
-      kind: kindEl.value,
-      hideAlt: !!hideAltEl.checked,
-      sort: sortEl.value,
-      limit: clamp(parseInt(limitEl.value||"0",10),0,5000)|0,
-      favOnly: !!favOnly
-    });
-
-    updateHudVisibility();
-    renderHud();
-    updateRotationUi();
-  }
-
-  function markActiveCam(){
-    const activeId = getActiveId();
-    const items = listEl.querySelectorAll(".cam");
-    for (const el of items){
-      el.classList.toggle("active", !!(activeId && el.dataset.id === activeId));
-    }
-  }
-
-  function scrollToActive(){
-    const activeId = getActiveId();
-    if (!activeId) return;
-    const el = listEl.querySelector(`.cam[data-id="${cssEscape(activeId)}"]`);
-    if (el) el.scrollIntoView({ block:"center", behavior:"smooth" });
-  }
-
-  // ───────────────────────── cams.js actions ─────────────────────────
-  function camsRefresh(){
-    const api = camsApi();
-    if (api && typeof api.refresh === "function"){
-      try { api.refresh(); toast("cams.js → refresh()"); ensureListsLoaded(true); return; } catch(_){}
-    }
-    postCamsBC({ type:"CAMS_REFRESH", ts: now(), key: KEY || "" });
-    toast("CAMS_REFRESH → BC");
-    ensureListsLoaded(true);
-  }
-
-  function camsClearCache(){
-    const api = camsApi();
-    if (api && typeof api.clearCache === "function"){
-      try { api.clearCache(); toast("cams.js → clearCache()"); return; } catch(_){}
-    }
-    postCamsBC({ type:"CAMS_CLEAR_CACHE", ts: now(), key: KEY || "" });
-    toast("CAMS_CLEAR_CACHE → BC");
-  }
-
-  function applyCamsOptions(){
-    const api = camsApi();
-    const target = clamp(parseInt(camsTargetEl.value, 10), 50, 5000) | 0;
-    const autoDisc = !!camsDiscoveryEl.checked;
-    const validate = !!camsValidateEl.checked;
-
-    saveOpts({ camsTarget: target, camsDiscovery: autoDisc, camsValidate: validate });
-
-    if (api){
-      try { api.setTarget && api.setTarget(target); } catch(_){}
-      try { api.setAutoDiscovery && api.setAutoDiscovery(autoDisc); } catch(_){}
-      try { api.setValidateEmbed && api.setValidateEmbed(validate); } catch(_){}
-    }
-
-    postCamsBC({ type:"CAMS_SET_TARGET", value: target, ts: now(), key: KEY || "" });
-    postCamsBC({ type:"CAMS_SET_AUTODISCOVERY", value: autoDisc, ts: now(), key: KEY || "" });
-    postCamsBC({ type:"CAMS_SET_VALIDATE", value: validate, ts: now(), key: KEY || "" });
-
-    camsRefresh();
-    toast(`Aplicado: target=${target} disc=${autoDisc?1:0} val=${validate?1:0}`);
-  }
-
-  function applyNewsOptions(){
-    const api = camsApi();
-    const en = !!newsEnabledEl.checked;
-    const mix = !!newsMixEl.checked;
-    const inCat = !!newsInCatalogEl.checked;
-    const nTarget = clamp(parseInt(newsTargetEl.value, 10), 10, 500) | 0;
-
-    saveOpts({ newsEnabled: en, newsMix: mix, newsInCatalog: inCat, newsTarget: nTarget });
-
-    if (api){
-      try { api.setNewsEnabled && api.setNewsEnabled(en); } catch(_){}
-      try { api.setNewsMix && api.setNewsMix(mix); } catch(_){}
-      try { api.setNewsInCatalog && api.setNewsInCatalog(inCat); } catch(_){}
-      try { api.setNewsTarget && api.setNewsTarget(nTarget); } catch(_){}
-    }
-
-    postCamsBC({ type:"CAMS_SET_NEWS_ENABLED", value: en, ts: now(), key: KEY || "" });
-    postCamsBC({ type:"CAMS_SET_NEWS_MIX", value: mix, ts: now(), key: KEY || "" });
-    postCamsBC({ type:"CAMS_SET_NEWS_CATALOG", value: inCat, ts: now(), key: KEY || "" });
-    postCamsBC({ type:"CAMS_SET_NEWS_TARGET", value: nTarget, ts: now(), key: KEY || "" });
-
-    camsRefresh();
-    toast(`News: en=${en?1:0} mix=${mix?1:0} cat=${inCat?1:0} target=${nTarget}`);
-  }
-
-  function pickFeatured4(){
-    const api = camsApi();
-    if (api && typeof api.getCatalogFeatured === "function"){
-      try {
-        const items = api.getCatalogFeatured(4) || [];
-        if (Array.isArray(items) && items.length){
-          viewEl.value = "catalog";
-          renderList(items);
-          toast("Mostrando featured (4)");
-          return;
-        }
-      } catch(_){}
-    }
-
-    // fallback: intenta filtrar “featured” dentro del catálogo
-    const cat = getListByView().filter(c => c && c.id != null);
-    const featured = cat.filter(c => camText(c).includes("featured") || (Array.isArray(c.tags) && c.tags.includes("featured")));
-    const pool = featured.length ? featured : cat;
-    if (!pool.length){
-      toast("No hay catálogo aún (esperando cams)");
-      ensureListsLoaded(true);
-      return;
-    }
-    const out = [];
-    const used = new Set();
-    while (out.length < 4 && used.size < pool.length){
-      const c = pool[(Math.random()*pool.length)|0];
-      const id = String(c.id);
-      if (used.has(id)) continue;
-      used.add(id);
-      out.push(c);
-    }
-    viewEl.value = "catalog";
-    renderList(out);
-    toast("Mostrando random (4)");
-  }
-
-  // ───────────────────────── Kind Segmented ─────────────────────────
-  function syncKindSeg(){
-    const seg = qs("#segKind");
-    if (!seg) return;
-    const k = String(kindEl.value||"");
-    for (const b of seg.querySelectorAll("button[data-kind]")){
-      const bk = String(b.getAttribute("data-kind")||"");
-      b.classList.toggle("segOn", bk === k);
-    }
-  }
-
-  // ───────────────────────── ROTACIÓN PRO ─────────────────────────
-  let rotTimer = null;
-  let rotIndex = 0;
-  let rotPool = [];         // ids actuales
-  let rotUsed = new Set();  // para rndNoRep
-  let lastRotAt = 0;
-
-  function camTagsBlob(c){
-    const parts = [];
-    if (!c) return "";
-    if (Array.isArray(c.tags)) parts.push(c.tags.join(" "));
-    if (c.tags && !Array.isArray(c.tags)) parts.push(String(c.tags));
-    if (c.tag) parts.push(String(c.tag));
-    if (c.category) parts.push(String(c.category));
-    if (c.categories) parts.push(String(c.categories));
-    return stripDiacritics(parts.join(" ")).toLowerCase();
-  }
-
-  function kindOkForRotation(c, rotKind){
-    const rk = norm(rotKind);
-    if (!rk) return true;
-    const ck = norm(c.kind);
-    if (rk === "other") return ck !== "youtube" && ck !== "hls" && ck !== "image";
-    return ck === rk;
-  }
-
-  function tagOkForRotation(c, rotTag, strict){
-    const t = stripDiacritics(norm(rotTag));
-    if (!t) return strict ? false : true;
-    const blob = camTagsBlob(c);
-    return blob.includes(t);
-  }
-
-  function buildRotationCandidates(){
-    const useUi = String(rotUseUiFiltersEl.value || "1") === "1";
-    const rotKind = String(rotKindEl.value || "");
-    const rotTag = String(rotTagEl.value || "");
-    const favsOnly = !!rotFavsOnlyEl.checked;
-    const strictTag = !!rotTagStrictEl.checked;
-
-    const base = getListByView()
-      .filter(c => c && c.id != null)
-      .filter(c => hideAltOk(c));
-
-    let list;
-    if (useUi){
-      const idSet = new Set(lastRenderedIds || []);
-      list = base.filter(c => idSet.has(String(c.id)));
-    } else {
-      list = base.slice();
-    }
-
-    list = list
-      .filter(c => kindOkForRotation(c, rotKind))
-      .filter(c => tagOkForRotation(c, rotTag, strictTag))
-      .filter(c => !favsOnly || favs.has(String(c.id)));
-
-    const seen = new Set();
-    const out = [];
-    for (const c of list){
-      const id = String(c.id);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      out.push(c);
-    }
-    return out;
-  }
-
-  function refreshRotationPool(){
-    const list = buildRotationCandidates();
-    rotPool = list.map(c => String(c.id));
-    if (rotIndex >= rotPool.length) rotIndex = 0;
-
-    const rotMode = String(rotModeEl.value || "seq");
-    if (rotMode === "rndNoRep"){
-      const poolSet = new Set(rotPool);
-      const nextUsed = new Set();
-      for (const id of rotUsed) if (poolSet.has(id)) nextUsed.add(id);
-      rotUsed = nextUsed;
-      if (rotUsed.size >= rotPool.length) rotUsed.clear();
-    }
-
-    const useUi = (String(rotUseUiFiltersEl.value || "1") === "1");
-    const meta = `cands=${rotPool.length} · useUI=${useUi ? 1 : 0}`;
-    rotDiagMini.textContent = meta;
-
-    const rk = String(rotKindEl.value || "") || "(any)";
-    const rt = String(rotTagEl.value || "") || "(none)";
-    const favsOnly = rotFavsOnlyEl.checked ? "1" : "0";
-    const strict = rotTagStrictEl.checked ? "1" : "0";
-    const everyS = clamp(parseInt(rotEveryEl.value || "30", 10), 3, 3600);
-
-    rotDiag.innerHTML =
-      `<b>Pool</b>: ${rotPool.length} cámaras<br>`+
-      `<b>Modo</b>: ${rotMode} · <b>Intervalo</b>: ${everyS}s<br>`+
-      `<b>Filtros</b>: kind=${rk} · tag~=${rt} · favsOnly=${favsOnly} · tagStrict=${strict}<br>`+
-      `<b>Usar filtros UI</b>: ${useUi ? "sí" : "no"}<br>`+
-      `<b>Pos</b>: idx=${rotIndex} · usados=${rotUsed.size}`;
-  }
-
-  function updateRotationUi(){
-    refreshRotationPool();
-
-    const enabled = !!rotEnabledEl.checked;
-    const running = !!rotTimer;
-
-    rotStatusTxt.textContent = enabled ? (running ? "RUNNING" : "ARMED") : "OFF";
-
-    rotChip.classList.toggle("off", !(enabled && running));
-    rotChip.textContent = enabled && running ? `⟳ Rotación: ON (${rotPool.length})` : "⟳ Rotación: OFF";
-
-    btnRotToggle.textContent = (enabled && running) ? "⟲ STOP" : "⟳ START";
-    btnRotToggle.classList.toggle("danger", enabled && running);
-    btnRotToggle.classList.toggle("primary", !(enabled && running));
-
-    if (enabled && rotPool.length === 0){
-      const t = now();
-      if (t - lastRotAt > 2500) toast("Rotación: 0 candidatos (revisa tipo/tag/filtros)");
-    }
-    setTopH();
-  }
-
-  function stopRotation(){
-    if (rotTimer){ clearInterval(rotTimer); rotTimer = null; }
-    updateRotationUi();
-  }
-
-  function startRotation(){
-    stopRotation();
-    if (!rotEnabledEl.checked) return;
-
-    const everySec = clamp(parseInt(rotEveryEl.value||"30",10), 3, 3600) | 0;
-    saveRotationOpts();
-    updateRotationUi();
-
-    if (rotPool.length === 0){
-      rotEnabledEl.checked = false;
-      saveRotationOpts();
-      updateRotationUi();
-      toast("Rotación desactivada (0 candidatos)");
+    if (!cams.length) {
+      listEl.innerHTML = `
+        <p style="text-align:center; padding:80px 20px; color:#555; font-size:15px;">
+          Esperando cámaras...<br>
+          <small>(puede tardar unos segundos la primera vez)</small>
+        </p>`;
       return;
     }
 
-    rotTimer = setInterval(()=>{
-      if (!rotEnabledEl.checked) { stopRotation(); return; }
-      rotateOnce("tick");
-    }, everySec * 1000);
-
-    updateRotationUi();
-    toast(`Rotación ON (${everySec}s)`);
-  }
-
-  function pickNextId(){
-    if (!rotPool.length) return "";
-
-    const mode = String(rotModeEl.value || "seq");
-    if (mode === "seq"){
-      const id = rotPool[rotIndex % rotPool.length];
-      rotIndex = (rotIndex + 1) % rotPool.length;
-      return id;
-    }
-
-    if (mode === "rnd"){
-      const id = rotPool[(Math.random() * rotPool.length) | 0];
-      return id;
-    }
-
-    if (mode === "rndNoRep"){
-      if (rotUsed.size >= rotPool.length) rotUsed.clear();
-      const candidates = rotPool.filter(id => !rotUsed.has(id));
-      const id = candidates.length ? candidates[(Math.random()*candidates.length)|0] : rotPool[(Math.random()*rotPool.length)|0];
-      rotUsed.add(id);
-      return id;
-    }
-
-    const id = rotPool[rotIndex % rotPool.length];
-    rotIndex = (rotIndex + 1) % rotPool.length;
-    return id;
-  }
-
-  function rotateOnce(reason="manual"){
-    refreshRotationPool();
-    if (!rotPool.length){
-      stopRotation();
-      rotEnabledEl.checked = false;
-      saveRotationOpts();
-      updateRotationUi();
-      toast("Rotación OFF (0 candidatos)");
-      return;
-    }
-
-    const id = pickNextId();
-    if (!id) return;
-
-    lastRotAt = now();
-    sendCmd("GOTO", { id, camId:id, targetId:id, gotoId:id, setCamId:id, reason: "ROTATE_"+reason });
-    updateRotationUi();
-  }
-
-  function resetRotationCycle(){
-    rotIndex = 0;
-    rotUsed.clear();
-    toast("Rotación: ciclo reseteado");
-    updateRotationUi();
-  }
-
-  function saveRotationOpts(){
-    saveOpts({
-      rotEnabled: !!rotEnabledEl.checked,
-      rotEvery: clamp(parseInt(rotEveryEl.value||"30",10),3,3600)|0,
-      rotMode: String(rotModeEl.value || "seq"),
-      rotUseUiFilters: String(rotUseUiFiltersEl.value||"1")==="1",
-      rotKind: String(rotKindEl.value || ""),
-      rotTag: String(rotTagEl.value || ""),
-      rotFavsOnly: !!rotFavsOnlyEl.checked,
-      rotTagStrict: !!rotTagStrictEl.checked
+    const fragment = document.createDocumentFragment();
+    cams.slice(0, 120).forEach(cam => {
+      fragment.appendChild(renderCamera(cam));
     });
+
+    listEl.appendChild(fragment);
+    qs("#countTxt").textContent = `Cámaras: ${cams.length}`;
   }
 
-  // ───────────────────────── Controls ─────────────────────────
-  btnNext.addEventListener("click", ()=>{
-    const mode = effectiveTargetMode();
-    if (isCatalogLikeView(viewEl.value) && mode === "slot"){
-      const t = makeTargetPayload();
-      sendCmd("NEXT", Object.assign({}, t, { scope:"slot" }));
+  // Eventos
+  viewEl.addEventListener("change", renderList);
+  qEl.addEventListener("input", renderList); // búsqueda local básica
+
+  qs("#btnRefresh").onclick = refreshCams;
+  qs("#btnReload").onclick = () => location.reload();
+  keyEl.onchange = () => setKey(keyEl.value);
+
+  qs("#btnRotToggle").onclick = function() {
+    if (rotationTimer) {
+      clearInterval(rotationTimer);
+      rotationTimer = null;
+      this.textContent = "INICIAR ROTACIÓN";
+      qs("#rotStatusTxt").textContent = "OFF";
+      toast("Rotación detenida");
     } else {
-      sendCmd("NEXT");
+      const sec = parseInt(qs("#rotEvery").value) || 30;
+      rotationTimer = setInterval(() => {
+        const cams = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
+        if (!cams.length) return;
+        const random = cams[Math.floor(Math.random() * cams.length)];
+        if (random?.id) goto(random.id);
+      }, sec * 1000);
+      this.textContent = "DETENER ROTACIÓN";
+      qs("#rotStatusTxt").textContent = "ON";
+      toast(`Rotación iniciada (${sec}s)`);
     }
-  });
+  };
 
-  btnPrev.addEventListener("click", ()=>{
-    const mode = effectiveTargetMode();
-    if (isCatalogLikeView(viewEl.value) && mode === "slot"){
-      const t = makeTargetPayload();
-      sendCmd("PREV", Object.assign({}, t, { scope:"slot" }));
-    } else {
-      sendCmd("PREV");
+  qs("#btnRotNow").onclick = () => {
+    const cams = window.CAM_CATALOG_LIST || window.CAM_LIST || [];
+    if (cams.length) {
+      const random = cams[Math.floor(Math.random() * cams.length)];
+      if (random?.id) goto(random.id);
     }
-  });
+  };
 
-  btnPlay.addEventListener("click", ()=>{
-    const s = lastState || readState();
-    const playing = extractPlaying(s);
-    if (playing === true) sendCmd("PAUSE");
-    else if (playing === false) sendCmd("PLAY");
-    else sendCmd("TOGGLE_PLAY");
-  });
-
-  btnReload.addEventListener("click", ()=>{
-    // fuerza “encontrar cams” y re-render
-    ensureListsLoaded(true);
-    renderList();
-    toast("Lista recargada");
-  });
-
-  btnRefresh.addEventListener("click", ()=>camsRefresh());
-
-  btnOpen.addEventListener("click", ()=>{
-    const base = playerUrlParam || "./index.html";
-    const url = new URL(base, location.href);
-
-    if (KEY) url.searchParams.set("key", KEY);
-    if (!allowLegacy) url.searchParams.set("allowLegacy", "0");
-    if (!url.searchParams.has("v")) url.searchParams.set("v", (window.APP_VERSION || "2.3.9"));
-
-    window.open(url.toString(), "_blank", "noopener");
-  });
-
-  btnSync.addEventListener("click", ()=>scrollToActive());
-
-  btnFavs.addEventListener("click", ()=>{
-    favOnly = !favOnly;
-    btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
-    saveOpts({ favOnly: !!favOnly });
+  // Escuchar actualización de cams.js
+  window.addEventListener("rlc_cam_list_updated", () => {
     renderList();
   });
 
-  btnClearFavs.addEventListener("click", ()=>{
-    favs = new Set();
-    saveFavs(favs);
-    renderList();
-    renderHud();
-  });
+  // Inicio
+  setKey(keyEl.value);
+  renderList();
+  refreshCams();
 
-  qEl.addEventListener("input", ()=>renderList());
-  kindEl.addEventListener("change", ()=>{
-    syncKindSeg();
-    saveOpts({ kind: kindEl.value });
-    renderList();
-  });
-  viewEl.addEventListener("change", ()=>{
-    saveOpts({ view: viewEl.value });
-    renderList();
-    updateHudVisibility();
-    renderHud();
-  });
-  hideAltEl.addEventListener("change", ()=>{
-    saveOpts({ hideAlt: !!hideAltEl.checked });
-    renderList();
-  });
-  sortEl.addEventListener("change", ()=>{
-    saveOpts({ sort: sortEl.value });
-    renderList();
-  });
-  limitEl.addEventListener("change", ()=>{
-    saveOpts({ limit: clamp(parseInt(limitEl.value||"0",10),0,5000)|0 });
-    renderList();
-  });
-
-  btnApplyCams.addEventListener("click", ()=>applyCamsOptions());
-  btnClearCache.addEventListener("click", ()=>camsClearCache());
-  btnPickFeatured.addEventListener("click", ()=>pickFeatured4());
-
-  btnApplyNews.addEventListener("click", ()=>applyNewsOptions());
-  btnViewNews.addEventListener("click", ()=>{
-    viewEl.value = "news";
-    saveOpts({ view: "news" });
-    renderList();
-    toast("Vista → NEWS");
-  });
-
-  btnSendCamsCfg.addEventListener("click", ()=>{
-    applyCamsOptions();
-    applyNewsOptions();
-    toast("Config enviada (BC) + refresh");
-  });
-
-  // Presets target
-  const segTarget = qs("#segTarget");
-  if (segTarget){
-    segTarget.addEventListener("click", (ev)=>{
-      const b = ev.target && ev.target.closest("button[data-t]");
-      if (!b) return;
-      const t = clamp(parseInt(b.getAttribute("data-t")||"900",10), 50, 5000)|0;
-      camsTargetEl.value = String(t);
-      saveOpts({ camsTarget: t });
-      toast(`Target → ${t}`);
-    });
-  }
-
-  // Kind segmented
-  const segKind = qs("#segKind");
-  if (segKind){
-    segKind.addEventListener("click", (ev)=>{
-      const b = ev.target && ev.target.closest("button[data-kind]");
-      if (!b) return;
-      const k = String(b.getAttribute("data-kind")||"");
-      kindEl.value = k;
-      syncKindSeg();
-      saveOpts({ kind: k });
+  // Reintento suave si aún no hay cámaras
+  let tries = 0;
+  const waitInterval = setInterval(() => {
+    if ((window.CAM_LIST?.length || window.CAM_CATALOG_LIST?.length || 0) > 0) {
+      clearInterval(waitInterval);
       renderList();
-    });
-  }
-
-  // Key change manual
-  qs("#key").addEventListener("change", ()=>{
-    setKey((qs("#key").value || "").trim());
-    ensureListsLoaded(true);
-  });
-
-  // Copy buttons
-  btnCopyState.addEventListener("click", ()=>copyText(diagState.value));
-  btnCopyCmd.addEventListener("click", ()=>copyText(diagCmd.value));
-
-  // Rotation listeners
-  function onRotationChange(){
-    saveRotationOpts();
-    updateRotationUi();
-    if (rotTimer){
-      startRotation();
-    }
-  }
-
-  rotEnabledEl.addEventListener("change", ()=>{
-    saveRotationOpts();
-    if (rotEnabledEl.checked) startRotation();
-    else stopRotation();
-  });
-  rotEveryEl.addEventListener("change", onRotationChange);
-  rotModeEl.addEventListener("change", onRotationChange);
-  rotUseUiFiltersEl.addEventListener("change", onRotationChange);
-  rotKindEl.addEventListener("change", onRotationChange);
-  rotTagEl.addEventListener("input", ()=>{
-    saveRotationOpts();
-    updateRotationUi();
-  });
-  rotFavsOnlyEl.addEventListener("change", onRotationChange);
-  rotTagStrictEl.addEventListener("change", onRotationChange);
-
-  btnRotToggle.addEventListener("click", ()=>{
-    if (rotTimer){
-      rotEnabledEl.checked = false;
-      saveRotationOpts();
-      stopRotation();
-      toast("Rotación OFF");
+    } else if (++tries < 12) {
+      refreshCams();
     } else {
-      rotEnabledEl.checked = true;
-      saveRotationOpts();
-      startRotation();
+      clearInterval(waitInterval);
+      toast("Carga lenta. Revisa cams.js");
     }
-  });
+  }, 1800);
 
-  btnRotNow.addEventListener("click", ()=>{
-    if (!rotEnabledEl.checked){
-      rotateOnce("manual_off");
-    } else {
-      rotateOnce("manual");
-    }
-  });
-
-  btnRotReset.addEventListener("click", ()=>resetRotationCycle());
-
-  // ───────────────────────── HUD events (NUEVO) ─────────────────────────
-  if (segHudMode){
-    segHudMode.addEventListener("click", (ev)=>{
-      const b = ev.target && ev.target.closest("button[data-mode]");
-      if (!b) return;
-      hudMode = String(b.getAttribute("data-mode")||"auto");
-      saveOpts({ hudMode: hudMode });
-      syncHudModeSeg();
-      updateHudSub();
-      renderList(); // para actualizar badge target
-      renderHud();
-      toast(`HUD mode → ${hudMode}`);
-    });
-  }
-
-  btnHudPrev && btnHudPrev.addEventListener("click", ()=>{
-    const t = makeTargetPayload();
-    if (t.target === "slot"){
-      sendCmd("PREV", Object.assign({}, t, { scope:"slot" }));
-    } else {
-      sendCmd("PREV");
-    }
-  });
-
-  btnHudNext && btnHudNext.addEventListener("click", ()=>{
-    const t = makeTargetPayload();
-    if (t.target === "slot"){
-      sendCmd("NEXT", Object.assign({}, t, { scope:"slot" }));
-    } else {
-      sendCmd("NEXT");
-    }
-  });
-
-  btnHudSync && btnHudSync.addEventListener("click", ()=>{
-    const s = lastState || readState();
-    if (s && syncHudFromState(s)){
-      renderHud();
-      toast("HUD: sync OK");
-    } else {
-      toast("HUD: no se encontró layout en STATE");
-    }
-  });
-
-  btnHudClear && btnHudClear.addEventListener("click", ()=>{
-    hudSlots = [
-      { id:"", title:"—", place:"", kind:"", source:"" },
-      { id:"", title:"—", place:"", kind:"", source:"" },
-      { id:"", title:"—", place:"", kind:"", source:"" },
-      { id:"", title:"—", place:"", kind:"", source:"" }
-    ];
-    renderHud();
-    toast("HUD: limpiado");
-  });
-
-  // ───────────────────────── Diag / watchdog ─────────────────────────
-  function updateDiag(){
-    const age = lastSeenAt ? (now() - lastSeenAt) : null;
-    const ageTxt = (age==null) ? "—" : `${Math.round(age)}ms`;
-
-    const foundState = !!(lastState || readState());
-    const stateKey = lastStateKeyUsed || "(no detectado)";
-    const busInfo = ("BroadcastChannel" in window) ? `${bcs.length} canales` : "sin BroadcastChannel";
-    const origin = location.origin;
-
-    const api = camsApi();
-    const camsVer = (api && api.version) ? String(api.version) : "(sin RLCCams)";
-
-    const totalMain = (getWindowList() || []).length;
-    const totalCat  = (getWindowCatalog() || []).length;
-    const totalNews = (getWindowNews() || []).length;
-
-    const mode = effectiveTargetMode();
-    const tgtTxt = (isCatalogLikeView(viewEl.value) && mode === "slot")
-      ? `slot${hudSlot}(${SLOT_POS[hudSlot-1]})`
-      : "main";
-
-    diagTxt.innerHTML =
-      `<b>origin</b>: ${origin}<br>`+
-      `<b>KEY</b>: ${KEY ? `<span class="mono">${KEY}</span>` : "(vacía)"} · allowLegacy=${allowLegacy ? "1":"0"} · lastKey=<span class="mono">${(localStorage.getItem("rlc_last_key_v1")||"")}</span><br>`+
-      `<b>STATE</b>: ${foundState ? "sí" : "no"} · <b>age</b>: ${ageTxt} · <b>storage key usada</b>: <span class="mono">${stateKey}</span><br>`+
-      `<b>CMD keys</b>: <span class="mono">${CMD_KEYS.join(", ")}</span><br>`+
-      `<b>STATE keys</b>: <span class="mono">${STATE_KEYS.join(", ")}</span><br>`+
-      `<b>BUS</b>: ${busInfo} · <b>cams.js</b>: <span class="mono">${camsVer}</span><br>`+
-      `<b>Listas</b>: CAM_LIST=${totalMain}, CAT=${totalCat}, NEWS=${totalNews}<br>`+
-      `<b>HUD</b>: mode=<span class="mono">${hudMode}</span> · target=<span class="mono">${tgtTxt}</span><br>`+
-      `<b>Tip</b>: si en OBS no sincroniza, suele ser por aislamiento de storage/BC entre Dock y BrowserSource. Abre el player con la misma <span class="mono">key</span> y prueba en ventana normal para confirmar.`;
-
-    const s = lastState || readState();
-    diagState.value = s ? JSON.stringify(s, null, 2) : "";
-    if (!diagCmd.value) diagCmd.value = lastCmdRaw || "";
-
-    if (lastCamsDetail) applyCamsUiFromDetail(lastCamsDetail);
-    else syncUiFromRLCCams();
-  }
-
-  function tick(){
-    const s = readState();
-    if (s){
-      lastState = s;
-      lastSeenAt = now();
-      renderTopFromState(s);
-      // HUD
-      updateHudVisibility();
-      syncHudFromState(s);
-      renderHud();
-    }
-
-    const age = now() - (lastSeenAt || 0);
-    if (!lastSeenAt){
-      setConn(null);
-      statusTxt.textContent = "SIN STATE";
-    } else if (age > 8000){
-      setConn(false);
-      statusTxt.textContent = "STATE VIEJO";
-    } else {
-      setConn(true);
-    }
-
-    markActiveCam();
-    updateDiag();
-    updateRotationUi();
-  }
-
-  // ───────────────────────── Boot ─────────────────────────
-  openChannels();
-  openCamsBC();
-
-  applyOptsToUI();
-  btnFavs.textContent = favOnly ? "★ Mostrando favs" : "★ Solo favoritos";
-
-  const s0 = readState();
-  if (s0){
-    lastState = s0;
-    lastSeenAt = now();
-    renderTopFromState(s0);
-    syncHudFromState(s0);
-  } else {
-    statusTxt.textContent = "SIN STATE";
-  }
-
-  // primer render + “encuentra cams” suave
-  try {
-    renderList();
-    syncUiFromRLCCams();
-    ensureListsLoaded(true);
-    updateHudVisibility();
-    renderHud();
-  } catch(_){}
-
-  updateDiag();
-  syncKindSeg();
-  syncHudModeSeg();
-  setTopH();
-
-  // Ping suave al bus
-  try {
-    const ping = { type:"event", name:"OBS_PANEL_BOOT", ts: now() };
-    if (KEY) ping.key = KEY;
-    for (const bc of bcs) { try { bc.postMessage(ping); } catch(_){} }
-  } catch(_){}
-
-  // si rotEnabled venía guardado: arranca
-  try{
-    const o = loadOpts();
-    if (o && o.rotEnabled){
-      rotEnabledEl.checked = true;
-      startRotation();
-    } else {
-      updateRotationUi();
-    }
-  }catch(_){}
-
-  setInterval(tick, 750);
 })();
 </script>
 </body>

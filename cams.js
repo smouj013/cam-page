@@ -248,18 +248,18 @@
     "kamera live webcam",
   ];
 
-  // Seed de lugares (AMPLIADO)
+  // Seed de lugares (AMPLIADO CON MÁS)
   const PLACE_SEEDS = [
     // USA/CA
     "New York","Times Square","Brooklyn","Manhattan","Las Vegas","Miami","Orlando","Los Angeles","San Francisco","Seattle","Chicago","Boston","Washington DC","Philadelphia","New Orleans","Honolulu","Anchorage",
     "Dallas","Austin","Houston","San Diego","Phoenix","Denver","Portland","Atlanta","Nashville","Detroit","Minneapolis","Salt Lake City","Tampa","Key West","Savannah","Charleston","Baltimore","Pittsburgh",
-    "Toronto","Vancouver","Montreal","Niagara Falls","Calgary","Ottawa","Quebec City",
+    "Toronto","Vancouver","Montreal","Niagara Falls","Calgary","Ottawa","Quebec City","Edmonton","Halifax","Winnipeg",
 
     // LATAM
     "Caracas","Venezuela","Bogotá","Medellín","Cali","Cartagena",
     "Ciudad de México","Cancún","Guadalajara","Monterrey","Tijuana",
     "Buenos Aires","Santiago","Valparaíso","Lima","Cusco","Rio de Janeiro","São Paulo","Copacabana","Salvador","Fortaleza",
-    "Montevideo","Asunción","La Paz","Santa Cruz","Quito","Guayaquil","Panama City","San José Costa Rica","Havana",
+    "Montevideo","Asunción","La Paz","Santa Cruz","Quito","Guayaquil","Panama City","San José Costa Rica","Havana","San Juan Puerto Rico","Santo Domingo",
 
     // Europa (mucho más)
     "Madrid","Barcelona","Valencia","Sevilla","Málaga","Bilbao","Granada","Córdoba","Zaragoza","Alicante","San Sebastián","Palma","Ibiza","Tenerife","Gran Canaria","Mallorca",
@@ -277,7 +277,7 @@
     "Athens","Santorini","Mykonos","Crete",
     "Istanbul","Ankara","Izmir",
     "Sofia","Bucharest","Belgrade","Zagreb","Ljubljana",
-    "Kyiv","Odessa",
+    "Kyiv","Odessa","Moscow","St Petersburg","Minsk","Riga","Tallinn","Vilnius",
 
     // Asia/Oceanía
     "Tokyo","Shibuya","Shinjuku","Osaka","Kyoto","Sapporo","Fukuoka",
@@ -285,13 +285,13 @@
     "Singapore","Hong Kong","Taipei","Bangkok","Phuket","Chiang Mai","Hanoi","Ho Chi Minh City","Da Nang",
     "Kuala Lumpur","Jakarta","Bali","Manila",
     "Dubai","Abu Dhabi","Doha","Jerusalem","Tel Aviv",
-    "Sydney","Melbourne","Brisbane","Perth","Auckland","Wellington",
+    "Sydney","Melbourne","Brisbane","Perth","Auckland","Wellington","Christchurch",
 
     // África
     "Cape Town","Johannesburg","Durban",
     "Marrakesh","Casablanca","Rabat","Tanger",
     "Cairo","Alexandria",
-    "Nairobi","Lagos"
+    "Nairobi","Lagos","Accra","Tunis","Algiers"
   ];
 
   const PLACE_SUFFIXES = [
@@ -896,6 +896,85 @@
       ["wildlife_pandas","Pandas — LIVE","China","panda live cam","wildlife,panda"],
       ["wildlife_africa_waterhole","África waterhole — LIVE","África","african watering hole live cam","wildlife,africa"],
       ["wildlife_eagles","Águilas — LIVE","USA","eagle nest live cam","wildlife,birds"],
+
+      // ──────────────── MÁS CAMS AÑADIDAS ────────────────
+      ["us_boston_harbor","Boston Harbor — LIVE","Boston, USA","boston harbor live cam","usa,port"],
+      ["us_atlanta_city","Downtown — LIVE","Atlanta, USA","atlanta live cam downtown","usa,city"],
+      ["us_denver_city","Union Station — LIVE","Denver, USA","denver union station live cam","usa,city,train"],
+      ["ca_montreal_oldport","Old Port — LIVE","Montreal, Canadá","montreal old port live cam","canada,port"],
+      ["mx_guadalajara_city","Centro — LIVE","Guadalajara, México","guadalajara live cam","mexico,city"],
+      ["br_salvador_beach","Salvador Beach — LIVE","Salvador, Brasil","salvador beach live cam","brazil,beach"],
+      ["ar_ushuaia_city","Ushuaia — LIVE","Ushuaia, Argentina","ushuaia live cam","argentina,city"],
+      ["cl_valparaiso_port","Valparaíso Port — LIVE","Valparaíso, Chile","valparaiso port live cam","chile,port"],
+      ["pe_lima_city","Miraflores — LIVE","Lima, Perú","lima miraflores live cam","peru,city,beach"],
+      ["ec_galapagos","Galápagos — LIVE","Galápagos, Ecuador","galapagos live cam","ecuador,island,wildlife"],
+      ["pa_panama_canal","Panama Canal — LIVE","Panamá","panama canal live cam","panama,canal"],
+      ["cr_sanjose_city","San José — LIVE","San José, Costa Rica","san jose costa rica live cam","costarica,city"],
+      ["cu_havana_malecon","Malecón — LIVE","Havana, Cuba","havana malecon live cam","cuba,city,coast"],
+      ["pr_sanjuan_old","Old San Juan — LIVE","San Juan, Puerto Rico","old san juan live cam","puertorico,city"],
+      ["do_santodomingo","Santo Domingo — LIVE","Santo Domingo, República Dominicana","santo domingo live cam","dominicanrepublic,city"],
+      ["ve_caracas_city","Caracas — LIVE","Caracas, Venezuela","caracas live cam","venezuela,city"],
+      ["bo_lapaz_city","La Paz — LIVE","La Paz, Bolivia","la paz bolivia live cam","bolivia,city"],
+      ["py_asuncion_city","Asunción — LIVE","Asunción, Paraguay","asuncion live cam","paraguay,city"],
+      ["uy_montevideo_rambla","Rambla — LIVE","Montevideo, Uruguay","montevideo rambla live cam","uruguay,city,coast"],
+      ["no_bergen_city","Bergen — LIVE","Bergen, Noruega","bergen live cam","norway,city"],
+      ["se_gothenburg_city","Gothenburg — LIVE","Gothenburg, Suecia","gothenburg live cam","sweden,city"],
+      ["fi_rovaniemi_santa","Santa Claus Village — LIVE","Rovaniemi, Finlandia","rovaniemi santa claus live cam","finland,christmas"],
+      ["is_blue_lagoon","Blue Lagoon — LIVE","Islandia","blue lagoon live cam","iceland,nature"],
+      ["dk_aarhus_city","Aarhus — LIVE","Aarhus, Dinamarca","aarhus live cam","denmark,city"],
+      ["pl_krakow_market","Market Square — LIVE","Krakow, Polonia","krakow market square live cam","poland,city"],
+      ["cz_prague_bridge","Charles Bridge — LIVE","Praga, Chequia","prague charles bridge live cam","czech,landmark"],
+      ["hu_budapest_chainbridge","Chain Bridge — LIVE","Budapest, Hungría","budapest chain bridge live cam","hungary,bridge"],
+      ["sk_bratislava_city","Centro — LIVE","Bratislava, Eslovaquia","bratislava live cam","slovakia,city"],
+      ["ru_moscow_redsquare","Red Square — LIVE","Moscow, Rusia","moscow red square live cam","russia,landmark"],
+      ["ru_stpetersburg_neva","Neva River — LIVE","St. Petersburg, Rusia","st petersburg neva live cam","russia,river"],
+      ["ua_kyiv_maiden","Maidan — LIVE","Kyiv, Ucrania","kyiv maidan live cam","ukraine,city"],
+      ["by_minsk_city","Centro — LIVE","Minsk, Bielorrusia","minsk live cam","belarus,city"],
+      ["lv_riga_city","Centro — LIVE","Riga, Letonia","riga live cam","latvia,city"],
+      ["lt_vilnius_city","Centro — LIVE","Vilnius, Lituania","vilnius live cam","lithuania,city"],
+      ["ee_tallinn_city","Centro — LIVE","Tallinn, Estonia","tallinn live cam","estonia,city"],
+      ["bg_sofia_city","Centro — LIVE","Sofia, Bulgaria","sofia live cam","bulgaria,city"],
+      ["ro_bucharest_city","Centro — LIVE","Bucharest, Rumanía","bucharest live cam","romania,city"],
+      ["rs_belgrade_city","Centro — LIVE","Belgrade, Serbia","belgrade live cam","serbia,city"],
+      ["hr_zagreb_city","Centro — LIVE","Zagreb, Croacia","zagreb live cam","croatia,city"],
+      ["si_ljubljana_city","Centro — LIVE","Ljubljana, Eslovenia","ljubljana live cam","slovenia,city"],
+      ["gr_mykonos_windmills","Windmills — LIVE","Mykonos, Grecia","mykonos windmills live cam","greece,island"],
+      ["tr_ankara_city","Centro — LIVE","Ankara, Turquía","ankara live cam","turkey,city"],
+      ["tr_izmir_city","Centro — LIVE","Izmir, Turquía","izmir live cam","turkey,city"],
+      ["il_telaviv_beach","Tel Aviv Beach — LIVE","Tel Aviv, Israel","tel aviv beach live cam","israel,beach"],
+      ["ae_abudhabi_city","Centro — LIVE","Abu Dhabi, EAU","abu dhabi live cam","uae,city"],
+      ["qa_doha_city","Centro — LIVE","Doha, Catar","doha live cam","qatar,city"],
+      ["jp_sapporo_city","Centro — LIVE","Sapporo, Japón","sapporo live cam","japan,city"],
+      ["jp_fukuoka_city","Centro — LIVE","Fukuoka, Japón","fukuoka live cam","japan,city"],
+      ["kr_busan_city","Centro — LIVE","Busan, Corea del Sur","busan live cam","korea,city"],
+      ["cn_taipei_101","Taipei 101 — LIVE","Taipei, Taiwán","taipei 101 live cam","taiwan,landmark"],
+      ["hk_hongkong_city","Centro — LIVE","Hong Kong","hong kong live cam","hongkong,city"],
+      ["sg_singapore_city","Centro — LIVE","Singapur","singapore live cam","singapore,city"],
+      ["th_chiangmai_city","Centro — LIVE","Chiang Mai, Tailandia","chiang mai live cam","thailand,city"],
+      ["vn_danang_city","Centro — LIVE","Da Nang, Vietnam","da nang live cam","vietnam,city"],
+      ["my_kualalumpur_city","Centro — LIVE","Kuala Lumpur, Malasia","kuala lumpur live cam","malaysia,city"],
+      ["id_jakarta_city","Centro — LIVE","Jakarta, Indonesia","jakarta live cam","indonesia,city"],
+      ["ph_manila_bay","Manila Bay — LIVE","Manila, Filipinas","manila bay live cam","philippines,bay"],
+      ["in_delhi_gate","India Gate — LIVE","Delhi, India","india gate live cam","india,landmark"],
+      ["np_kathmandu_temple","Pashupatinath Temple — LIVE","Kathmandu, Nepal","pashupatinath live cam","nepal,temple"],
+      ["lk_colombo_port","Port — LIVE","Colombo, Sri Lanka","colombo port live cam","srilanka,port"],
+      ["au_brisbane_city","Centro — LIVE","Brisbane, Australia","brisbane live cam","australia,city"],
+      ["au_perth_city","Centro — LIVE","Perth, Australia","perth live cam","australia,city"],
+      ["nz_wellington_city","Centro — LIVE","Wellington, Nueva Zelanda","wellington live cam","newzealand,city"],
+      ["za_johannesburg_city","Centro — LIVE","Johannesburg, Sudáfrica","johannesburg live cam","southafrica,city"],
+      ["za_durban_beach","Durban Beach — LIVE","Durban, Sudáfrica","durban beach live cam","southafrica,beach"],
+      ["ma_casablanca_city","Centro — LIVE","Casablanca, Marruecos","casablanca live cam","morocco,city"],
+      ["eg_alexandria_city","Centro — LIVE","Alexandria, Egipto","alexandria live cam","egypt,city"],
+      ["tn_tunis_city","Centro — LIVE","Tunis, Túnez","tunis live cam","tunisia,city"],
+      ["dz_algiers_city","Centro — LIVE","Algiers, Argelia","algiers live cam","algeria,city"],
+      ["ng_lagos_city","Centro — LIVE","Lagos, Nigeria","lagos live cam","nigeria,city"],
+      ["gh_accra_city","Centro — LIVE","Accra, Ghana","accra live cam","ghana,city"],
+      ["wildlife_elephants","Elefantes — LIVE","África","elephant live cam","wildlife,africa,elephants"],
+      ["wildlife_giraffes","Jirafas — LIVE","África","giraffe live cam","wildlife,africa,giraffes"],
+      ["volcano_iceland","Volcán Islandia — LIVE","Islandia","iceland volcano live cam","volcano,iceland"],
+      ["ocean_coral_reef","Coral Reef — LIVE","Ocean","coral reef live cam","ocean,underwater"],
+      ["zoo_san_diego","San Diego Zoo — LIVE","San Diego, USA","san diego zoo live cam","zoo,usa"],
+      ["aquarium_monterey","Monterey Bay Aquarium — LIVE","Monterey, USA","monterey bay aquarium live cam","aquarium,usa"]
     ];
 
     // Relleno hasta 210 con targets “genéricos” muy productivos (siempre devuelven directos distintos)
@@ -910,6 +989,16 @@
       "traffic cam live",
       "marina live cam",
       "mountain live cam",
+      "zoo live cam",
+      "aquarium live cam",
+      "wildlife live cam",
+      "volcano live cam",
+      "river live cam",
+      "lake live cam",
+      "bridge live cam",
+      "port live cam",
+      "traffic camera live",
+      "cctv live"
     ];
 
     // Genera extras (IDs únicos) para llegar a 210+ (sin repetir)
@@ -1429,6 +1518,62 @@
   g.RLC_CATALOG_PAGE_SIZE = CATALOG_PAGE_SIZE;
 
   emitUpdate();
+
+  // ─────────────────────────────────────────────────────────────
+  // NUEVO: Método para añadir cam custom desde URL (integrable con panel admin vía BC)
+  // ─────────────────────────────────────────────────────────────
+  g.RLCCams.addCustom = async function addCustom(url, options = {}) {
+    const u = safeStr(url);
+    if (!u) return null;
+
+    let kind = "";
+    let youtubeId = extractYouTubeIdFromUrl(u);
+    let hlsUrl = "";
+    let title = safeStr(options.title) || "Custom Cam";
+    let place = safeStr(options.place) || "Custom";
+    let source = safeStr(options.source) || "Custom URL";
+    let tags = Array.isArray(options.tags) ? options.tags.slice(0, 12) : ["custom"];
+
+    if (youtubeId) {
+      kind = "youtube";
+      if (!await isEmbeddableYouTube(youtubeId, MOD._abort.signal)) return null;
+    } else if (looksLikeM3U8(u)) {
+      kind = "hls";
+      hlsUrl = u;
+    } else {
+      return null; // solo youtube o hls
+    }
+
+    const id = `custom_${Math.floor(Math.random() * 1e9)}`;
+    if (seenIds.has(id)) return null;
+
+    const cam = {
+      id,
+      title,
+      place,
+      source,
+      kind,
+      tags,
+      isAlt: false
+    };
+
+    if (kind === "youtube") {
+      cam.youtubeId = youtubeId;
+      cam.originUrl = u;
+      cam.thumb = youtubeThumb(youtubeId);
+    } else if (kind === "hls") {
+      cam.url = hlsUrl;
+      cam.originUrl = hlsUrl;
+    }
+
+    if (pushCam(cam)) {
+      g.CAM_LIST = OUT;
+      g.CAM_CATALOG_LIST = OUT_CATALOG;
+      emitUpdate();
+      return cam;
+    }
+    return null;
+  };
 
   // ─────────────────────────────────────────────────────────────
   // 3) AUTO-DISCOVERY — completar a TARGET_CAMS con cams REALES
@@ -2153,7 +2298,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Hook opcional (Admin): escucha BC para refresh/clear
+  // Hook opcional (Admin): escucha BC para refresh/clear + ADD_CUSTOM
   // ─────────────────────────────────────────────────────────────
   function msgSig(msg) {
     try {
@@ -2201,6 +2346,14 @@
       __validateUsed = 0;
       const timer = setTimeout(() => { discoverMore(); }, 0);
       MOD._timers.push(timer);
+    }
+
+    // NUEVO: Mensaje para añadir custom desde panel
+    if (t === "CAMS_ADD_CUSTOM") {
+      const url = safeStr(msg.url || msg.value);
+      if (!url) return;
+      const opts = (typeof msg.options === "object") ? msg.options : {};
+      g.RLCCams.addCustom(url, opts);
     }
   }
 
