@@ -1,10 +1,10 @@
 <!-- control.html — Random Live Cams (CONTROL) v2.3.9 — UPDATED + HARDENED (Neo-Atlas / Newsroom)
   ✅ MISMA versión (2.3.9) — NO cambia control.js
-  ✅ Fix CLAVE: IDs duplicados (causaban “cambio algo y no me deja” / handlers apuntando al nodo equivocado)
-  ✅ “Edit-lock” anti-clobber: mientras editas un input/select, evita que otro script te lo pise antes de darle a Aplicar
-  ✅ Card nueva: Tickers (NEWS+ECON) con params nuevos (uiScale/barH/fontPx/refresh/sources)
-  ✅ Mantiene aliases/IDs legacy sin duplicar IDs (solo espejos con IDs distintos)
-  ✅ REPAIR MODE: control.html?repair=1
+  ✅ Fix CLAVE: sin IDs duplicados (evita “cambio algo y no me deja” / handlers al nodo equivocado)
+  ✅ Edit-lock anti-clobber: mientras editas un input/select/textarea, evita que otro script te pise el valor
+  ✅ Card nueva: Tickers (NEWS+ECON) con params (uiScale/barH/fontPx/refresh/sources) + aliases legacy
+  ✅ Aliases/IDs legacy SIN duplicar IDs (espejos ocultos con IDs distintos) + puente de clicks para botones legacy
+  ✅ REPAIR MODE: control.html?repair=1 (limpia SW/caches/storage)
   ✅ Diagnóstico on-screen (errores JS)
 -->
 <!doctype html>
@@ -60,9 +60,11 @@
   <!-- ✅ REPAIR MODE: control.html?repair=1 -->
   <script>
     (() => {
+      "use strict";
       try{
         const u = new URL(location.href);
-        if(!u.searchParams.has("repair")) return;
+        const v = (u.searchParams.get("repair") || "").trim().toLowerCase();
+        if(!(v === "1" || v === "true" || v === "yes")) return;
 
         const go = async () => {
           try{
@@ -624,6 +626,71 @@
         <div class="hint">✅ Se envía al player por <b>BroadcastChannel</b> y se guarda en local (con KEY).</div>
       </div>
 
+      <!-- ✅ TICKERS (NEWS + ECON) -->
+      <div class="card">
+        <div class="cardTitle">Tickers (News + Econ)</div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlNewsTickerOn"><span>News ticker</span>
+            <select id="ctlNewsTickerOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
+          </label>
+
+          <label class="row" style="margin:0" for="ctlEconTickerOn"><span>Econ ticker</span>
+            <select id="ctlEconTickerOn" class="select"><option value="off">OFF</option><option value="on">ON</option></select>
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickersUiScale"><span>UI scale</span>
+            <input id="ctlTickersUiScale" class="input" type="number" min="0.5" max="2.0" step="0.05" value="1" inputmode="decimal" />
+          </label>
+          <label class="row" style="margin:0" for="ctlTickersBarH"><span>Bar H (px)</span>
+            <input id="ctlTickersBarH" class="input" type="number" min="24" max="140" step="1" value="44" inputmode="numeric" />
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="row" style="margin:0" for="ctlTickersFontPx"><span>Font (px)</span>
+            <input id="ctlTickersFontPx" class="input" type="number" min="10" max="28" step="1" value="14" inputmode="numeric" />
+          </label>
+          <label class="row" style="margin:0" for="ctlTickersRefreshSec"><span>Refresh (s)</span>
+            <input id="ctlTickersRefreshSec" class="input" type="number" min="10" max="600" step="1" value="30" inputmode="numeric" />
+          </label>
+        </div>
+
+        <div class="stack10">
+          <div class="hint" style="margin-bottom:6px">
+            Sources (uno por línea). Ejemplos: <span class="mono">news:reuters</span>, <span class="mono">econ:stooq</span>, <span class="mono">rss:https://…</span>
+          </div>
+          <textarea id="ctlTickersSources" class="input mono" placeholder="news:reuters
+news:ap
+econ:stooq
+rss:https://example.com/feed.xml"></textarea>
+        </div>
+
+        <div class="row2">
+          <button id="ctlTickersApply" class="btn full" type="button">Aplicar tickers</button>
+          <button id="ctlTickersReset" class="btn ghost full" type="button">Reset tickers</button>
+        </div>
+
+        <div class="hint">✅ Compatible con <span class="mono">rlcTickersControl.js</span> y con IDs legacy (espejos ocultos).</div>
+
+        <!-- Aliases LEGACY ocultos (SIN duplicar IDs visibles) -->
+        <div style="display:none">
+          <select id="ctlNewsOn" aria-hidden="true"><option value="off">off</option><option value="on">on</option></select>
+          <select id="ctlEconOn" aria-hidden="true"><option value="off">off</option><option value="on">on</option></select>
+
+          <input id="ctlUiScale" type="number" />
+          <input id="ctlBarH" type="number" />
+          <input id="ctlFontPx" type="number" />
+          <input id="ctlTickerRefresh" type="number" />
+          <textarea id="ctlSources"></textarea>
+
+          <button id="ctlTickerApply" type="button"></button>
+          <button id="ctlTickerReset" type="button"></button>
+        </div>
+      </div>
+
       <!-- CAM SELECT -->
       <div class="card">
         <div class="cardTitle">Cambiar cámara</div>
@@ -646,6 +713,7 @@
 
         <div id="ctlPreviewWrap" class="previewWrap" style="display:none">
           <iframe id="ctlPreview" class="previewFrame" title="Preview stream"
+            loading="lazy"
             referrerpolicy="strict-origin-when-cross-origin"
             allow="autoplay; encrypted-media; picture-in-picture"></iframe>
         </div>
@@ -919,7 +987,6 @@
         try{
           el.dataset.rlcEditLock = "1";
           el.dataset.rlcDraft = String(el.value ?? "");
-          // marca visual mínima (no intrusiva)
           el.style.outline = "2px solid rgba(55,214,255,.22)";
           el.style.outlineOffset = "2px";
         }catch(_){}
@@ -945,7 +1012,7 @@
               el.style.outline = "";
               el.style.outlineOffset = "";
             }catch(_){}
-          }, 420); // margen para click en “Aplicar”
+          }, 420);
           pending.set(el, t);
         }catch(_){}
       };
@@ -1011,6 +1078,19 @@
         b.addEventListener("input",  syncBtoA, { passive: true });
       };
 
+      const forwardClicks = (srcId, destIds) => {
+        const src = byId(srcId);
+        if(!src) return;
+        src.addEventListener("click", () => {
+          for(const did of destIds){
+            const d = byId(did);
+            if(d && d !== src){
+              try{ d.click(); }catch(_){}
+            }
+          }
+        }, { passive: true });
+      };
+
       // Chat hide commands
       mirror("ctlChatHideCmd", "ctlChatHideCommands");
       // Vote cmds
@@ -1021,7 +1101,7 @@
       mirror("ctlKey", "ctlRoomKey");
       mirror("ctlKey", "ctlBusKey");
 
-      // Preview alias (si algún script usa toggle alternativo)
+      // Preview alias
       mirror("ctlPreviewOn", "ctlPreviewToggle");
 
       // Tickers aliases (legacy / fallback)
@@ -1032,6 +1112,13 @@
       mirror("ctlTickersFontPx", "ctlFontPx");
       mirror("ctlTickersRefreshSec", "ctlTickerRefresh");
       mirror("ctlTickersSources", "ctlSources");
+
+      // Puente de clicks: botones “nuevos” → “legacy” (por si rlcTickersControl/control.js escucha IDs antiguos)
+      forwardClicks("ctlTickersApply", ["ctlTickerApply"]);
+      forwardClicks("ctlTickersReset", ["ctlTickerReset"]);
+
+      // Puente de clicks: Ajustes “nuevo” → varios legacy típicos
+      forwardClicks("ctlApplySettings", ["ctlApply","ctlApplyAll","ctlSettingsApply","ctlCfgApply","ctlHudApply"]);
     })();
   </script>
 
