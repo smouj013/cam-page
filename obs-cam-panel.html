@@ -1,13 +1,10 @@
 <!-- obs-cam-panel.html — RLC OBS Cam Panel v2.3.9 (HARDENED + KEYED + cams.js v2.3.8/2.3.9 compatible + NEWS optional)
   ✅ NO SUBE VERSION (2.3.9)
   ✅ PERF FIX (2026-01): evita cuelgues/lag
-     - Tick MUCHO más ligero (sin JSON.stringify gigante cada 750ms)
-     - Diagnóstico “RAW” solo cuando abres el panel o al copiar (throttle)
-     - Rotación UI throttled (no recalcula pool cada tick)
-     - Render de lista incremental por chunks (no bloquea con 1000+ cams)
-     - markActiveCam solo cuando cambia la cam activa
-     - TopH recalculado con throttle (sin MutationObserver agresivo)
-  ✅ Mantiene: KEY/allowLegacy, HUD 4-UP, rotación, favoritos, filtros, BC+storage, compat mensajes/state
+     - Tick MUCHO más ligero
+     - Render incremental por chunks (no bloquea con 1000+ cams)
+  ✅ FIX CRÍTICO (2026-01-13):
+     - Evita bucle infinito ensureListsLoaded() ⇄ camsRefresh() que congelaba el panel cuando CAM_LIST estaba vacía.
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -579,7 +576,8 @@
               <div class="t">Auto-discovery</div>
               <div class="s">Buscar más webcams LIVE</div>
             </div>
-            <input id="camsDiscovery" type="checkbox" />
+            <!-- ✅ por defecto ON para que no arranque “vacío” -->
+            <input id="camsDiscovery" type="checkbox" checked />
           </div>
 
           <div class="tog">
@@ -897,13 +895,13 @@
 
   // ───────────────────────── PERF knobs ─────────────────────────
   const PERF = {
-    TICK_MS: 1200,          // antes 750ms
-    DIAG_SMALL_MS: 1800,    // diagTxt (ligero)
-    DIAG_RAW_MS: 9000,      // textarea RAW (pesado)
-    ROT_UI_MS: 1500,        // throttling UI rotación/pool
-    TOPH_THROTTLE_MS: 250,  // recalcular topH sin spam
-    RENDER_CHUNK: 110,      // items por chunk
-    RENDER_BUDGET_MS: 10    // presupuesto por chunk (fallback sin idle)
+    TICK_MS: 1200,
+    DIAG_SMALL_MS: 1800,
+    DIAG_RAW_MS: 9000,
+    ROT_UI_MS: 1500,
+    TOPH_THROTTLE_MS: 250,
+    RENDER_CHUNK: 110,
+    RENDER_BUDGET_MS: 10
   };
 
   // ───────────────────────── Header fixed: altura dinámica (throttled) ─────────────────────────
@@ -1026,7 +1024,7 @@
   let KEY = KEY_PARAM || KEY_LAST || KEY_SAVED || "";
   qs("#key").value = KEY;
 
-  // Player URL (por defecto index.html). Permite: ?player=./cam-page/index.html
+  // Player URL (por defecto index.html)
   const playerUrlParam = (u.searchParams.get("player") || "./index.html").trim();
 
   function lsGet(k){ try { return localStorage.getItem(k); } catch(_) { return null; } }
@@ -1270,6 +1268,11 @@
   let activeIdCache = "";
   let lastActiveIdApplied = "";
 
+  // ✅ Optimizador: solo parsea state si cambió el RAW (evita freeze por JSON gigante)
+  let _lastStateRaw = "";
+  let _lastStateCheckAt = 0;
+  const STATE_POLL_MIN_MS = 1500;
+
   function keyOkForMsg(obj){
     const mk = String(obj?.key || "").trim();
 
@@ -1284,6 +1287,10 @@
   }
 
   function readState(){
+    const t = now();
+    if (t - _lastStateCheckAt < STATE_POLL_MIN_MS) return lastState;
+    _lastStateCheckAt = t;
+
     lastStateKeyUsed = "";
 
     if (!KEY) {
@@ -1294,20 +1301,25 @@
     for (const k of STATE_KEYS){
       const raw = lsGet(k);
       if (!raw) continue;
+
+      // ✅ si no cambió, no parsees otra vez
+      if (k === lastStateKeyUsed && raw === _lastStateRaw && lastState) return lastState;
+
       const s = safeJson(raw, null);
       if (!s || typeof s !== "object") continue;
 
-      const t = String(s.type || s.t || "").toLowerCase();
-      if (t && t !== "state") {
+      const tt = String(s.type || s.t || "").toLowerCase();
+      if (tt && tt !== "state") {
         if (!s.cam && !s.nowCam && !s.currentCam && !s.camId && !s.currentCamId && !s.activeCamId) continue;
       }
 
       if (!keyOkForMsg(s)) continue;
 
       lastStateKeyUsed = k;
+      _lastStateRaw = raw;
       return s;
     }
-    return null;
+    return lastState;
   }
 
   function extractCam(s){
@@ -1485,7 +1497,7 @@
 
   // ───────────────────────── cams.js list + update events ─────────────────────────
   let lastCamsDetail = null;
-  let lastListSig = ""; // firma para throttling
+  let lastListSig = "";
 
   function pickDetailList(d, ...names){
     if (!d || typeof d !== "object") return null;
@@ -1611,6 +1623,11 @@
     lastCamsDetail = (ev && ev.detail) ? ev.detail : null;
     applyCamsUiFromDetail(lastCamsDetail);
 
+    // ✅ si llegan listas, corta el “ensure”
+    ensureTry = 0;
+    ensureRefreshing = false;
+    clearTimeout(ensureTimer);
+
     const sig = computeListSig();
     if (sig !== lastListSig){
       lastListSig = sig;
@@ -1620,15 +1637,15 @@
       updateDiagSmallThrottled();
       updateRotationUiThrottled();
     } else {
-      // si no cambia firma, evita re-render masivo
       updateDiagSmallThrottled();
       updateRotationUiThrottled();
     }
   });
 
-  // ✅ Espera inteligente para “encontrar cams” (suave)
+  // ✅ Espera inteligente para “encontrar cams” (SIN bucle infinito)
   let ensureTimer = null;
   let ensureTry = 0;
+  let ensureRefreshing = false; // ✅ evita refresh reentrante
 
   function listsTotals(){
     const main = (getWindowList() || []).length;
@@ -1641,12 +1658,17 @@
     const t = listsTotals();
     return (t.main + t.cat + t.news + t.viewLen) > 0;
   }
+
   function ensureListsLoaded(force=false){
     clearTimeout(ensureTimer);
-    if (force) ensureTry = 0;
+    if (force){
+      ensureTry = 0;
+      ensureRefreshing = false;
+    }
 
     if (hasAnyCams()){
       ensureTry = 0;
+      ensureRefreshing = false;
       renderList();
       return;
     }
@@ -1654,11 +1676,14 @@
     ensureTry++;
     const delay = clamp(260 * ensureTry, 260, 2600);
 
-    if (ensureTry <= 2){
-      try { camsRefresh(); } catch(_){}
+    // ✅ pide refresh solo 1 vez por intento (y NO re-entra)
+    if (ensureTry <= 2 && !ensureRefreshing){
+      ensureRefreshing = true;
+      camsRefresh({ silent:true });
     }
 
     ensureTimer = setTimeout(()=>{
+      ensureRefreshing = false;
       try { renderList(); } catch(_){}
       if (ensureTry < 10 && !hasAnyCams()){
         ensureListsLoaded(false);
@@ -1796,7 +1821,6 @@
         updateHudSub();
         renderHud();
         toast(`HUD: slot ${hudSlot} (${SLOT_POS[hudSlot-1]})`);
-        // actualizar badges de lista sin re-render total
         updateListTargetBadges();
       });
 
@@ -1953,7 +1977,7 @@
 
     const slot = clamp(hudSlot, 1, 4) | 0;
     const idx = slot - 1;
-    const pos = SLOT_POS[idx] || "";
+    const pos = ["TL","TR","BL","BR"][idx] || "";
     return {
       target: "slot",
       slot: slot,
@@ -2006,7 +2030,7 @@
     sendCmd("GOTO", payload);
 
     if (target.target === "slot"){
-      toast(`IR → slot ${target.slot} (${SLOT_POS[(target.slot-1)|0]}) · id:${id}`);
+      toast(`IR → slot ${target.slot} (${["TL","TR","BL","BR"][(target.slot-1)|0]}) · id:${id}`);
     }
   }
 
@@ -2095,7 +2119,6 @@
 
   let lastRenderedIds = [];
   let _renderToken = 0;
-  let _rendering = false;
 
   function buildCamCard(c, activeId){
     const id = String(c.id);
@@ -2260,7 +2283,6 @@
 
   function renderList(customList=null){
     const token = ++_renderToken;
-    _rendering = true;
 
     const baseList = Array.isArray(customList) ? customList : getListByView();
     const activeId = getActiveId();
@@ -2355,12 +2377,11 @@
       favOnly: !!favOnly
     });
 
-    // render incremental
     listEl.innerHTML = "";
     let i = 0;
 
     const appendChunk = (idle)=>{
-      if (token !== _renderToken) return; // cancelado
+      if (token !== _renderToken) return;
       const frag = document.createDocumentFragment();
       let added = 0;
 
@@ -2379,7 +2400,6 @@
       if (i < filtered.length){
         scheduleIdle(appendChunk);
       } else {
-        _rendering = false;
         markActiveCamOptimized(true);
         updateHudVisibility();
         renderHud();
@@ -2409,14 +2429,13 @@
   }
 
   // ───────────────────────── cams.js actions ─────────────────────────
-  function camsRefresh(){
+  function camsRefresh(opts={ silent:false }){
     const api = camsApi();
     if (api && typeof api.refresh === "function"){
-      try { api.refresh(); toast("cams.js → refresh()"); ensureListsLoaded(true); return; } catch(_){}
+      try { api.refresh(); if(!opts.silent) toast("cams.js → refresh()"); return; } catch(_){}
     }
     postCamsBC({ type:"CAMS_REFRESH", ts: now(), key: KEY || "" });
-    toast("CAMS_REFRESH → BC");
-    ensureListsLoaded(true);
+    if(!opts.silent) toast("CAMS_REFRESH → BC");
   }
 
   function camsClearCache(){
@@ -2446,7 +2465,10 @@
     postCamsBC({ type:"CAMS_SET_AUTODISCOVERY", value: autoDisc, ts: now(), key: KEY || "" });
     postCamsBC({ type:"CAMS_SET_VALIDATE", value: validate, ts: now(), key: KEY || "" });
 
-    if (opts.refresh) camsRefresh();
+    if (opts.refresh) {
+      camsRefresh();
+      ensureListsLoaded(true);
+    }
     toast(`Aplicado: target=${target} disc=${autoDisc?1:0} val=${validate?1:0}`);
   }
 
@@ -2471,7 +2493,10 @@
     postCamsBC({ type:"CAMS_SET_NEWS_CATALOG", value: inCat, ts: now(), key: KEY || "" });
     postCamsBC({ type:"CAMS_SET_NEWS_TARGET", value: nTarget, ts: now(), key: KEY || "" });
 
-    if (opts.refresh) camsRefresh();
+    if (opts.refresh) {
+      camsRefresh();
+      ensureListsLoaded(true);
+    }
     toast(`News: en=${en?1:0} mix=${mix?1:0} cat=${inCat?1:0} target=${nTarget}`);
   }
 
@@ -2522,12 +2547,12 @@
     }
   }
 
-  // ───────────────────────── ROTACIÓN PRO (throttled UI) ─────────────────────────
+  // ───────────────────────── ROTACIÓN PRO (igual que tu versión) ─────────────────────────
+  // (Se mantiene, sin tocar para no romper compat)
   let rotTimer = null;
   let rotIndex = 0;
   let rotPool = [];
   let rotUsed = new Set();
-  let lastRotAt = 0;
 
   function camTagsBlob(c){
     if (!c) return "";
@@ -2713,7 +2738,6 @@
     const id = pickNextId();
     if (!id) return;
 
-    lastRotAt = now();
     sendCmd("GOTO", { id, camId:id, targetId:id, gotoId:id, setCamId:id, reason: "ROTATE_"+reason });
     updateRotationUiThrottled();
   }
@@ -2773,7 +2797,10 @@
     toast("Lista recargada");
   });
 
-  btnRefresh.addEventListener("click", ()=>camsRefresh());
+  btnRefresh.addEventListener("click", ()=>{
+    camsRefresh();
+    ensureListsLoaded(true);
+  });
 
   btnOpen.addEventListener("click", ()=>{
     const base = playerUrlParam || "./index.html";
@@ -2803,7 +2830,6 @@
     updateRotationUiThrottled();
   });
 
-  // input search: debounce para no re-render en cada tecla
   qEl.addEventListener("input", debounce(()=>renderList(), 140));
 
   kindEl.addEventListener("change", ()=>{
@@ -2845,14 +2871,13 @@
   });
 
   btnSendCamsCfg.addEventListener("click", ()=>{
-    // evita doble refresh + doble toast
     applyCamsOptions({ refresh:false });
     applyNewsOptions({ refresh:false });
     camsRefresh();
+    ensureListsLoaded(true);
     toast("Config enviada (BC) + refresh");
   });
 
-  // Presets target
   const segTarget = qs("#segTarget");
   if (segTarget){
     segTarget.addEventListener("click", (ev)=>{
@@ -2865,7 +2890,6 @@
     });
   }
 
-  // Kind segmented
   const segKind = qs("#segKind");
   if (segKind){
     segKind.addEventListener("click", (ev)=>{
@@ -2879,20 +2903,17 @@
     });
   }
 
-  // Key change manual
   qs("#key").addEventListener("change", ()=>{
     setKey((qs("#key").value || "").trim());
     ensureListsLoaded(true);
   });
 
-  // Copy buttons (asegura RAW actualizado antes)
   btnCopyState.addEventListener("click", ()=>{
     updateDiagRaw(true);
     copyText(diagState.value);
   });
   btnCopyCmd.addEventListener("click", ()=>copyText(diagCmd.value || lastCmdRaw || ""));
 
-  // Rotation listeners
   function onRotationChange(){
     saveRotationOpts();
     updateRotationUiThrottled();
@@ -2940,7 +2961,6 @@
 
   btnRotReset.addEventListener("click", ()=>resetRotationCycle());
 
-  // HUD events
   if (segHudMode){
     segHudMode.addEventListener("click", (ev)=>{
       const b = ev.target && ev.target.closest("button[data-mode]");
@@ -2949,7 +2969,7 @@
       saveOpts({ hudMode: hudMode });
       syncHudModeSeg();
       updateHudSub();
-      renderList(); // actualiza badges y lista con target
+      renderList();
       renderHud();
       toast(`HUD mode → ${hudMode}`);
     });
@@ -3036,7 +3056,6 @@
     _lastDiagRawAt = t;
 
     const s = lastState || readState();
-    // SOLO aquí hacemos stringify bonito (pesado)
     diagState.value = s ? JSON.stringify(s, null, 2) : "";
     if (!diagCmd.value) diagCmd.value = lastCmdRaw || "";
   }
@@ -3100,10 +3119,8 @@
 
   // ───────────────────────── Tick (ligero) ─────────────────────────
   const tick = ()=>{
-    // Fallback: si no llegan mensajes por BC en OBS, lee storage de vez en cuando
     const s = readState();
     if (s){
-      // evita re-hacer todo si es el mismo objeto serializado (best-effort)
       lastState = s;
       lastSeenAt = now();
       renderTopFromState(s);
@@ -3125,7 +3142,6 @@
     markActiveCamOptimized(false);
     updateDiagSmallThrottled();
 
-    // rot UI solo si está activa/armada o si estamos renderizando poco
     if (rotEnabledEl.checked || rotTimer) updateRotationUiThrottled();
   };
 
