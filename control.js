@@ -27,13 +27,23 @@
    ✅ CAM LIST REMOVED (TU PEDIDO):
       - Se elimina COMPLETAMENTE la lista/búsqueda/selector de cams del control.js
       - El control de lista/selección se gestiona en obs-cam-panel.html (sin interferencias)
+
+   🔧 HOTFIX (sin subir versión):
+      - Anti-dup “upgrade-safe” ahora permite reemplazar instancia aunque la versión sea 2.3.9 (usa BUILD_ID interno)
+      - Toggles robustos: soporta <select on/off> y <input type="checkbox">
+      - sendCmd() blindado si JSON.stringify falla
 */
 
 (() => {
   "use strict";
 
   const g = (typeof globalThis !== "undefined") ? globalThis : window;
+
+  // ⚠️ NO subir versión: se mantiene 2.3.9
   const APP_VERSION = String((typeof window !== "undefined" && window.APP_VERSION) || "2.3.9");
+
+  // BUILD interno para permitir hot-replace aunque APP_VERSION no cambie
+  const BUILD_ID = String((typeof window !== "undefined" && window.RLC_CONTROL_BUILD) || "2026-01-13a");
 
   // ───────────────────────── Version helpers
   function _verParts(v) {
@@ -50,7 +60,7 @@
     return 0;
   }
 
-  // ───────────────────────── Singleton anti-dup (upgrade-safe) — BLINDADO
+  // ───────────────────────── Singleton anti-dup (upgrade-safe) — BLINDADO (soporta mismo APP_VERSION con BUILD_ID)
   const SINGLETON_KEY = "__RLC_CONTROL_JS_SINGLETON__";
   const SINGLETON_KIND = "RLC_CONTROL_JS";
 
@@ -58,12 +68,26 @@
     const existing = g[SINGLETON_KEY];
     if (existing && typeof existing === "object" && existing.kind === SINGLETON_KIND) {
       const prevVer = String(existing.version || "0.0.0");
-      if (compareVer(prevVer, APP_VERSION) >= 0) return;
+      const prevBuild = String(existing.build || "");
+      const cv = compareVer(prevVer, APP_VERSION);
+
+      // si el anterior es más nuevo, no hacemos nada
+      if (cv > 0) return;
+
+      // si misma versión pero build distinto, reemplaza (hotfix sin subir versión)
+      if (cv === 0 && prevBuild && prevBuild === BUILD_ID) return;
+
       try { existing.destroy?.(); } catch (_) {}
     }
   } catch (_) {}
 
-  const instance = { kind: SINGLETON_KIND, version: APP_VERSION, _disposed: false, destroy: null };
+  const instance = {
+    kind: SINGLETON_KIND,
+    version: APP_VERSION,
+    build: BUILD_ID,
+    _disposed: false,
+    destroy: null
+  };
   try { g[SINGLETON_KEY] = instance; } catch (_) {}
 
   // ───────────────────────── Utils
@@ -125,6 +149,11 @@
     if (isEditing(el)) return;
     try { el.value = String(v); } catch (_) {}
   }
+  function safeSetText(el, t) {
+    if (!el) return;
+    try { el.textContent = String(t ?? ""); } catch (_) {}
+  }
+
   function debounce(fn, ms = 160) {
     let t = 0;
     return (...args) => {
@@ -161,6 +190,42 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
   function lsDel(k) { try { localStorage.removeItem(k); } catch (_) {} }
+
+  // ───────────────────────── Toggle helpers (select on/off + checkbox)
+  function _elIsCheckbox(el) {
+    try { return String(el?.type || "").toLowerCase() === "checkbox"; } catch (_) { return false; }
+  }
+  function uiIsOn(el, defaultOn = true) {
+    if (!el) return defaultOn;
+    if (_elIsCheckbox(el)) return !!el.checked;
+    const v = String(el.value ?? "").trim().toLowerCase();
+    if (v === "off" || v === "0" || v === "false" || v === "no") return false;
+    if (v === "on" || v === "1" || v === "true" || v === "yes") return true;
+    if (v === "") return defaultOn;
+    return defaultOn;
+  }
+  function _hasOptionValue(sel, value) {
+    try {
+      const vv = String(value);
+      const opts = sel?.options ? Array.from(sel.options) : [];
+      return opts.some(o => String(o?.value ?? "") === vv);
+    } catch (_) { return false; }
+  }
+  function uiSetOn(el, on) {
+    if (!el) return;
+    if (isEditing(el)) return;
+
+    if (_elIsCheckbox(el)) {
+      try { el.checked = !!on; } catch (_) {}
+      return;
+    }
+
+    try {
+      const valOn = _hasOptionValue(el, "on") ? "on" : (_hasOptionValue(el, "1") ? "1" : "on");
+      const valOff = _hasOptionValue(el, "off") ? "off" : (_hasOptionValue(el, "0") ? "0" : "off");
+      el.value = on ? valOn : valOff;
+    } catch (_) {}
+  }
 
   // ───────────────────────── Force CONTROL mode (y evitar interferir fuera)
   let IS_CONTROL_MODE = false;
@@ -339,6 +404,7 @@
       const cw = ifr?.contentWindow;
       if (!cw || typeof cw.postMessage !== "function") return;
 
+      // preferimos origen actual si es same-origin; si falla, "*" fallback
       let origin = "*";
       try { origin = String(location.origin || "*"); } catch (_) {}
       try { cw.postMessage(msg, origin || "*"); }
@@ -386,6 +452,18 @@
     return payload;
   }
 
+  function _safeStringify(obj) {
+    try { return JSON.stringify(obj); } catch (_) {
+      // último recurso: mensaje minimal para no romper cmd
+      try {
+        const minimal = { type: obj?.type || "cmd", ts: obj?.ts || Date.now(), cmd: obj?.cmd || obj?.name || "CMD", payload: null };
+        return JSON.stringify(minimal);
+      } catch (_) {
+        return "";
+      }
+    }
+  }
+
   function sendCmd(cmd, payload = {}) {
     const c = String(cmd || "").trim();
     if (!c) return;
@@ -406,11 +484,13 @@
       data: pl,
 
       from: "control",
-      ver: APP_VERSION
+      ver: APP_VERSION,
+      build: BUILD_ID
     };
     if (KEY) msg.key = KEY;
 
-    const raw = JSON.stringify(msg);
+    const raw = _safeStringify(msg);
+    if (!raw) return;
 
     // localStorage (keyed + legacy)
     lsSet(CMD_KEY, raw);
@@ -609,7 +689,7 @@
   // ───────────────────────── UI status helpers
   function setPill(el, text, ok = true) {
     if (!el) return;
-    try { el.textContent = text; } catch (_) {}
+    safeSetText(el, text);
     try {
       el.classList.toggle("pill--ok", !!ok);
       el.classList.toggle("pill--bad", !ok);
@@ -625,7 +705,7 @@
   function syncKeyUI() {
     if (!ctlKey) return;
     if (KEY && !isEditing(ctlKey)) {
-      try { ctlKey.value = KEY; } catch (_) {}
+      safeSetValue(ctlKey, KEY);
     }
   }
   function applyKeyFromUI() {
@@ -689,9 +769,7 @@
 
   function syncHudUIFromStore() {
     hudCfg = loadHudCfg();
-    if (ctlHudScale && !isEditing(ctlHudScale)) {
-      try { ctlHudScale.value = String(hudCfg.scale ?? 1); } catch (_) {}
-    }
+    if (ctlHudScale && !isEditing(ctlHudScale)) safeSetValue(ctlHudScale, String(hudCfg.scale ?? 1));
   }
   function readHudUI() {
     const base = hudCfg || loadHudCfg();
@@ -735,14 +813,8 @@
   }
 
   function loadTickerCfg() {
-    try {
-      const rawKeyed = lsGet(TICKER_CFG_KEY);
-      if (rawKeyed) return normalizeTickerCfg(JSON.parse(rawKeyed));
-    } catch (_) {}
-    try {
-      const rawBase = lsGet(TICKER_CFG_KEY_BASE);
-      if (rawBase) return normalizeTickerCfg(JSON.parse(rawBase));
-    } catch (_) {}
+    try { const rawKeyed = lsGet(TICKER_CFG_KEY); if (rawKeyed) return normalizeTickerCfg(JSON.parse(rawKeyed)); } catch (_) {}
+    try { const rawBase = lsGet(TICKER_CFG_KEY_BASE); if (rawBase) return normalizeTickerCfg(JSON.parse(rawBase)); } catch (_) {}
     return normalizeTickerCfg(TICKER_DEFAULTS);
   }
 
@@ -775,24 +847,24 @@
 
   function syncTickerUIFromStore() {
     tickerCfg = loadTickerCfg();
-    if (ctlTickerOn) ctlTickerOn.value = tickerCfg.enabled ? "on" : "off";
-    if (ctlTickerLang) ctlTickerLang.value = tickerCfg.lang || "auto";
-    if (ctlTickerSpeed) ctlTickerSpeed.value = String(tickerCfg.speedPxPerSec ?? 55);
-    if (ctlTickerRefresh) ctlTickerRefresh.value = String(tickerCfg.refreshMins ?? 12);
-    if (ctlTickerTop) ctlTickerTop.value = String(tickerCfg.topPx ?? 10);
-    if (ctlTickerHideOnVote) ctlTickerHideOnVote.value = tickerCfg.hideOnVote ? "on" : "off";
-    if (ctlTickerSpan) ctlTickerSpan.value = String(tickerCfg.timespan || "1d");
+    uiSetOn(ctlTickerOn, !!tickerCfg.enabled);
+    if (ctlTickerLang && !isEditing(ctlTickerLang)) safeSetValue(ctlTickerLang, tickerCfg.lang || "auto");
+    if (ctlTickerSpeed && !isEditing(ctlTickerSpeed)) safeSetValue(ctlTickerSpeed, String(tickerCfg.speedPxPerSec ?? 55));
+    if (ctlTickerRefresh && !isEditing(ctlTickerRefresh)) safeSetValue(ctlTickerRefresh, String(tickerCfg.refreshMins ?? 12));
+    if (ctlTickerTop && !isEditing(ctlTickerTop)) safeSetValue(ctlTickerTop, String(tickerCfg.topPx ?? 10));
+    uiSetOn(ctlTickerHideOnVote, !!tickerCfg.hideOnVote);
+    if (ctlTickerSpan && !isEditing(ctlTickerSpan)) safeSetValue(ctlTickerSpan, String(tickerCfg.timespan || "1d"));
     setTickerStatusFromCfg(tickerCfg);
   }
 
   function readTickerUI() {
     const base = tickerCfg || loadTickerCfg();
-    const enabled = ctlTickerOn ? (ctlTickerOn.value !== "off") : base.enabled;
+    const enabled = (ctlTickerOn ? uiIsOn(ctlTickerOn, base.enabled) : base.enabled);
     const lang = ctlTickerLang ? (ctlTickerLang.value || base.lang || "auto") : (base.lang || "auto");
-    const speedPxPerSec = ctlTickerSpeed ? clamp(parseInt(ctlTickerSpeed.value || "55", 10) || 55, 5, 140) : (base.speedPxPerSec || 55);
-    const refreshMins = ctlTickerRefresh ? clamp(parseInt(ctlTickerRefresh.value || "12", 10) || 12, 3, 60) : (base.refreshMins || 12);
-    const topPx = ctlTickerTop ? clamp(parseInt(ctlTickerTop.value || "10", 10) || 10, 0, 120) : (base.topPx || 10);
-    const hideOnVote = ctlTickerHideOnVote ? (ctlTickerHideOnVote.value !== "off") : base.hideOnVote;
+    const speedPxPerSec = ctlTickerSpeed ? clamp(num(ctlTickerSpeed.value, base.speedPxPerSec || 55), 5, 140) : (base.speedPxPerSec || 55);
+    const refreshMins = ctlTickerRefresh ? clamp(num(ctlTickerRefresh.value, base.refreshMins || 12), 3, 60) : (base.refreshMins || 12);
+    const topPx = ctlTickerTop ? clamp(num(ctlTickerTop.value, base.topPx || 10), 0, 120) : (base.topPx || 10);
+    const hideOnVote = ctlTickerHideOnVote ? uiIsOn(ctlTickerHideOnVote, base.hideOnVote) : base.hideOnVote;
     const timespan = ctlTickerSpan ? (ctlTickerSpan.value || base.timespan || "1d") : (base.timespan || "1d");
     return normalizeTickerCfg({ enabled, lang, speedPxPerSec, refreshMins, topPx, hideOnVote, timespan });
   }
@@ -816,14 +888,8 @@
     return c;
   }
   function loadCountdownCfg() {
-    try {
-      const rawKeyed = lsGet(COUNTDOWN_CFG_KEY);
-      if (rawKeyed) return normalizeCountdownCfg(JSON.parse(rawKeyed));
-    } catch (_) {}
-    try {
-      const rawBase = lsGet(COUNTDOWN_CFG_KEY_BASE);
-      if (rawBase) return normalizeCountdownCfg(JSON.parse(rawBase));
-    } catch (_) {}
+    try { const rawKeyed = lsGet(COUNTDOWN_CFG_KEY); if (rawKeyed) return normalizeCountdownCfg(JSON.parse(rawKeyed)); } catch (_) {}
+    try { const rawBase = lsGet(COUNTDOWN_CFG_KEY_BASE); if (rawBase) return normalizeCountdownCfg(JSON.parse(rawBase)); } catch (_) {}
     return normalizeCountdownCfg(COUNTDOWN_DEFAULTS);
   }
   function saveCountdownCfg(cfg) {
@@ -850,20 +916,20 @@
   }
   function syncCountdownUIFromStore() {
     countdownCfg = loadCountdownCfg();
-    if (ctlCountdownOn) ctlCountdownOn.value = countdownCfg.enabled ? "on" : "off";
-    if (ctlCountdownLabel) ctlCountdownLabel.value = String(countdownCfg.label || "Fin de año");
+    uiSetOn(ctlCountdownOn, !!countdownCfg.enabled);
+    if (ctlCountdownLabel && !isEditing(ctlCountdownLabel)) safeSetValue(ctlCountdownLabel, String(countdownCfg.label || "Fin de año"));
     if (ctlCountdownTarget) {
       const ms = countdownCfg.targetMs || nextNewYearTargetMs();
       const d = new Date(ms);
       const pad = (n) => String(n).padStart(2, "0");
       const v = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      if (!ctlCountdownTarget.value || !isEditing(ctlCountdownTarget)) ctlCountdownTarget.value = v;
+      if (!ctlCountdownTarget.value || !isEditing(ctlCountdownTarget)) safeSetValue(ctlCountdownTarget, v);
     }
     setCountdownStatusFromCfg(countdownCfg);
   }
   function readCountdownUI() {
     const base = countdownCfg || loadCountdownCfg();
-    const enabled = ctlCountdownOn ? (ctlCountdownOn.value !== "off") : base.enabled;
+    const enabled = ctlCountdownOn ? uiIsOn(ctlCountdownOn, base.enabled) : base.enabled;
     const label = ctlCountdownLabel ? String(ctlCountdownLabel.value || base.label || "Fin de año").trim() : (base.label || "Fin de año");
     let targetMs = base.targetMs || nextNewYearTargetMs();
     if (ctlCountdownTarget && ctlCountdownTarget.value) {
@@ -886,14 +952,8 @@
   }
 
   function loadBgmCfg() {
-    try {
-      const rawKeyed = lsGet(BGM_CFG_KEY);
-      if (rawKeyed) return normalizeBgmCfg(JSON.parse(rawKeyed));
-    } catch (_) {}
-    try {
-      const rawBase = lsGet(BGM_CFG_KEY_BASE);
-      if (rawBase) return normalizeBgmCfg(JSON.parse(rawBase));
-    } catch (_) {}
+    try { const rawKeyed = lsGet(BGM_CFG_KEY); if (rawKeyed) return normalizeBgmCfg(JSON.parse(rawKeyed)); } catch (_) {}
+    try { const rawBase = lsGet(BGM_CFG_KEY_BASE); if (rawBase) return normalizeBgmCfg(JSON.parse(rawBase)); } catch (_) {}
     return normalizeBgmCfg(BGM_DEFAULTS);
   }
 
@@ -987,12 +1047,12 @@
 
   function setBgmNowLine(text) {
     if (!ctlBgmNow) return;
-    try { ctlBgmNow.textContent = text; } catch (_) {}
+    safeSetText(ctlBgmNow, text);
   }
 
   function readBgmUI() {
     const base = bgmCfg || loadBgmCfg();
-    const enabled = ctlBgmOn ? (ctlBgmOn.value !== "off") : base.enabled;
+    const enabled = ctlBgmOn ? uiIsOn(ctlBgmOn, base.enabled) : base.enabled;
     const vol = ctlBgmVol ? clamp(num(ctlBgmVol.value, base.vol ?? 0.25), 0, 1) : (base.vol ?? 0.25);
     const trackId = ctlBgmTrack ? String(ctlBgmTrack.value || base.trackId || "").trim() : String(base.trackId || "").trim();
     return normalizeBgmCfg({ enabled, vol, trackId });
@@ -1030,9 +1090,9 @@
     bgmCfg = loadBgmCfg();
     ensureBgmTrackOptions();
 
-    if (ctlBgmOn) ctlBgmOn.value = bgmCfg.enabled ? "on" : "off";
-    if (ctlBgmVol && !isEditing(ctlBgmVol)) ctlBgmVol.value = String(bgmCfg.vol ?? 0.25);
-    if (ctlBgmTrack && !isEditing(ctlBgmTrack)) ctlBgmTrack.value = String(bgmCfg.trackId || "");
+    uiSetOn(ctlBgmOn, !!bgmCfg.enabled);
+    if (ctlBgmVol && !isEditing(ctlBgmVol)) safeSetValue(ctlBgmVol, String(bgmCfg.vol ?? 0.25));
+    if (ctlBgmTrack && !isEditing(ctlBgmTrack)) safeSetValue(ctlBgmTrack, String(bgmCfg.trackId || ""));
 
     const tname = (bgmCfg.trackId && bgmTracks?.length)
       ? (bgmTracks.find(t => t.id === bgmCfg.trackId)?.title || bgmCfg.trackId)
@@ -1157,17 +1217,17 @@
 
   function syncHelixUIFromStore() {
     helixCfg = loadHelixCfg();
-    if (ctlTitleOn) ctlTitleOn.value = helixCfg.enabled ? "on" : "off";
-    if (ctlTitleClientId) ctlTitleClientId.value = helixCfg.clientId || "";
-    if (ctlTitleToken) ctlTitleToken.value = helixCfg.token || "";
-    if (ctlTitleTemplate) ctlTitleTemplate.value = helixCfg.template || HELIX_DEFAULTS.template;
-    if (ctlTitleCooldown) ctlTitleCooldown.value = String(helixCfg.cooldownSec || 20);
-    if (ctlTitleBroadcasterId) ctlTitleBroadcasterId.value = helixCfg.broadcasterId || "";
+    uiSetOn(ctlTitleOn, !!helixCfg.enabled);
+    if (ctlTitleClientId && !isEditing(ctlTitleClientId)) safeSetValue(ctlTitleClientId, helixCfg.clientId || "");
+    if (ctlTitleToken && !isEditing(ctlTitleToken)) safeSetValue(ctlTitleToken, helixCfg.token || "");
+    if (ctlTitleTemplate && !isEditing(ctlTitleTemplate)) safeSetValue(ctlTitleTemplate, helixCfg.template || HELIX_DEFAULTS.template);
+    if (ctlTitleCooldown && !isEditing(ctlTitleCooldown)) safeSetValue(ctlTitleCooldown, String(helixCfg.cooldownSec || 20));
+    if (ctlTitleBroadcasterId && !isEditing(ctlTitleBroadcasterId)) safeSetValue(ctlTitleBroadcasterId, helixCfg.broadcasterId || "");
     setTitleStatus(helixCfg.enabled ? "Auto título: ON" : "Auto título: OFF", !!helixCfg.enabled);
   }
   function readHelixUI() {
     const base = helixCfg || loadHelixCfg();
-    const enabled = ctlTitleOn ? (ctlTitleOn.value !== "off") : base.enabled;
+    const enabled = ctlTitleOn ? uiIsOn(ctlTitleOn, base.enabled) : base.enabled;
     const clientId = ctlTitleClientId ? String(ctlTitleClientId.value || base.clientId || "").trim() : String(base.clientId || "").trim();
     const token = ctlTitleToken ? String(ctlTitleToken.value || base.token || "").trim() : String(base.token || "").trim();
     const template = ctlTitleTemplate ? String(ctlTitleTemplate.value || base.template || HELIX_DEFAULTS.template).trim() : String(base.template || HELIX_DEFAULTS.template).trim();
@@ -1707,11 +1767,11 @@
     if (!ch) return;
 
     if (ctlTwitchChannel && !isEditing(ctlTwitchChannel) && !String(ctlTwitchChannel.value || "").trim()) {
-      try { ctlTwitchChannel.value = ch; } catch (_) {}
+      safeSetValue(ctlTwitchChannel, ch);
     }
 
     if (ctlBotUser && !isEditing(ctlBotUser) && !String(ctlBotUser.value || "").trim()) {
-      try { ctlBotUser.value = ch; } catch (_) {}
+      safeSetValue(ctlBotUser, ch);
     }
 
     try {
@@ -1761,28 +1821,28 @@
   }
 
   function readCatalogUIForUrl() {
-    const enabled = ctlCatalogOn ? (ctlCatalogOn.value !== "off") : false;
+    const enabled = ctlCatalogOn ? uiIsOn(ctlCatalogOn, false) : false;
     const layout = ctlCatalogLayout ? String(ctlCatalogLayout.value || "quad") : "quad";
     const gap = ctlCatalogGap ? clamp(parseInt(ctlCatalogGap.value || "8", 10) || 8, 0, 24) : 8;
-    const labels = ctlCatalogLabels ? (ctlCatalogLabels.value !== "off") : true;
+    const labels = ctlCatalogLabels ? uiIsOn(ctlCatalogLabels, true) : true;
 
     const mode = ctlCatalogMode ? String(ctlCatalogMode.value || "follow") : "follow";
     const followSlot = ctlCatalogFollowSlot ? clamp(parseInt(ctlCatalogFollowSlot.value || "0", 10) || 0, 0, 3) : 0;
 
-    const clickCycle = ctlCatalogClickCycle ? (ctlCatalogClickCycle.value !== "off") : true;
-    const ytCookies = ctlCatalogYtCookies ? (ctlCatalogYtCookies.value !== "off") : true;
+    const clickCycle = ctlCatalogClickCycle ? uiIsOn(ctlCatalogClickCycle, true) : true;
+    const ytCookies = ctlCatalogYtCookies ? uiIsOn(ctlCatalogYtCookies, true) : true;
 
-    const wxTiles = ctlCatalogWxTiles ? (ctlCatalogWxTiles.value !== "off") : true;
+    const wxTiles = ctlCatalogWxTiles ? uiIsOn(ctlCatalogWxTiles, true) : true;
     const wxRefreshSec = ctlCatalogWxRefreshSec ? clamp(parseInt(ctlCatalogWxRefreshSec.value || "30", 10) || 30, 10, 180) : 30;
 
-    const muted = ctlCatalogMuted ? (ctlCatalogMuted.value !== "off") : true;
+    const muted = ctlCatalogMuted ? uiIsOn(ctlCatalogMuted, true) : true;
 
     return { enabled, layout, gap, labels, mode, followSlot, clickCycle, ytCookies, wxTiles, wxRefreshSec, muted };
   }
 
   function readBgmUIForUrl() {
     const base = bgmCfg || loadBgmCfg();
-    const enabled = ctlBgmOn ? (ctlBgmOn.value !== "off") : base.enabled;
+    const enabled = ctlBgmOn ? uiIsOn(ctlBgmOn, base.enabled) : base.enabled;
     const vol = ctlBgmVol ? clamp(num(ctlBgmVol.value, base.vol ?? 0.25), 0, 1) : (base.vol ?? 0.25);
     const trackId = ctlBgmTrack ? String(ctlBgmTrack.value || base.trackId || "").trim() : String(base.trackId || "").trim();
     return normalizeBgmCfg({ enabled, vol, trackId });
@@ -1793,30 +1853,30 @@
 
     const mins = clamp(parseInt(ctlMins?.value || "5", 10) || 5, 1, 120);
     const fit = String(ctlFit?.value || "cover").toLowerCase() === "contain" ? "contain" : "cover";
-    const hud = (ctlHud ? (ctlHud.value !== "off") : true);
-    const hudDetails = (ctlHudDetails ? (ctlHudDetails.value !== "off") : true);
-    const autoskip = (ctlAutoskip ? (ctlAutoskip.value !== "off") : true);
-    const adfree = (ctlAdfree ? (ctlAdfree.value !== "off") : false);
+    const hud = (ctlHud ? uiIsOn(ctlHud, true) : true);
+    const hudDetails = (ctlHudDetails ? uiIsOn(ctlHudDetails, true) : true);
+    const autoskip = (ctlAutoskip ? uiIsOn(ctlAutoskip, true) : true);
+    const adfree = (ctlAdfree ? uiIsOn(ctlAdfree, false) : false);
 
     const twitch = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
-    const voteOn = (ctlVoteOn ? (ctlVoteOn.value !== "off") : false);
-    const voteOverlay = (ctlVoteOverlay ? (ctlVoteOverlay.value !== "off") : true);
+    const voteOn = (ctlVoteOn ? uiIsOn(ctlVoteOn, false) : false);
+    const voteOverlay = (ctlVoteOverlay ? uiIsOn(ctlVoteOverlay, true) : true);
     const voteWindow = clamp(parseInt(ctlVoteWindow?.value || "60", 10) || 60, 5, 180);
     const voteAt = clamp(parseInt(ctlVoteAt?.value || "60", 10) || 60, 5, 600);
     const voteLead = clamp(parseInt(ctlVoteLead?.value || "0", 10) || 0, 0, 30);
     const voteCmd = String(ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim();
 
     const stayMins = clamp(parseInt(ctlStayMins?.value || "5", 10) || 5, 1, 120);
-    const ytCookies = (ctlYtCookies ? (ctlYtCookies.value !== "off") : true);
+    const ytCookies = (ctlYtCookies ? uiIsOn(ctlYtCookies, true) : true);
 
-    const chatOn = (ctlChatOn ? (ctlChatOn.value !== "off") : true);
-    const chatHide = (ctlChatHideCmd ? (ctlChatHideCmd.value !== "off") : true);
-    const alertsOn = (ctlAlertsOn ? (ctlAlertsOn.value !== "off") : true);
+    const chatOn = (ctlChatOn ? uiIsOn(ctlChatOn, true) : true);
+    const chatHide = (ctlChatHideCmd ? uiIsOn(ctlChatHideCmd, true) : true);
+    const alertsOn = (ctlAlertsOn ? uiIsOn(ctlAlertsOn, true) : true);
 
-    const adsOn = (ctlAdsOn ? (ctlAdsOn.value !== "off") : true);
+    const adsOn = (ctlAdsOn ? uiIsOn(ctlAdsOn, true) : true);
     const adLead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
     const adDur = clamp(parseInt(ctlAdDur?.value || "30", 10) || 30, 5, 3600);
-    const adShowDuring = (ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true);
+    const adShowDuring = (ctlAdShowDuring ? uiIsOn(ctlAdShowDuring, true) : true);
     const adChatText = String(ctlAdChatText?.value || "").trim();
 
     const tcfg = readTickerUI();
@@ -1895,6 +1955,7 @@
     g[API_KEY] = {
       kind: "RLC_CONTROL_API",
       version: APP_VERSION,
+      build: BUILD_ID,
       key: KEY,
       bus: BUS,
       sendCmd,
@@ -1979,14 +2040,16 @@
 
   function syncPreviewUrl() {
     if (!ctlPreviewOn || !ctlPreviewWrap || !ctlPreview) return;
-    const on = (ctlPreviewOn.value !== "off");
+    const on = uiIsOn(ctlPreviewOn, true);
     try { ctlPreviewWrap.style.display = on ? "" : "none"; } catch (_) {}
 
     if (!on) return;
 
     try {
       const url = buildStreamUrlFromUI();
-      if (url && ctlPreview.src !== url) ctlPreview.src = url;
+      if (!url) return;
+      const cur = String(ctlPreview.getAttribute("src") || ctlPreview.src || "");
+      if (cur !== url) ctlPreview.src = url;
     } catch (_) {}
   }
 
@@ -2015,16 +2078,19 @@
     syncKeyUI();
 
     const cam = st.cam || st.currentCam || {};
-    try { if (ctlNowTitle) ctlNowTitle.textContent = String(cam.title || "—"); } catch (_) {}
-    try { if (ctlNowPlace) ctlNowPlace.textContent = String(cam.place || "—"); } catch (_) {}
+    safeSetText(ctlNowTitle, String(cam.title || "—"));
+    safeSetText(ctlNowPlace, String(cam.place || "—"));
     try {
       const rem = (st.remaining ?? st.remain ?? st.left ?? st.timeLeft ?? 0);
-      ctlNowTimer && (ctlNowTimer.textContent = fmtMMSS((rem | 0)));
+      if (ctlNowTimer) ctlNowTimer.textContent = fmtMMSS((rem | 0));
     } catch (_) {}
 
     if (ctlOrigin) {
-      const url = String(cam.originUrl || cam.url || "");
-      ctlOrigin.href = url || "#";
+      let url = String(cam.originUrl || cam.url || "");
+      try {
+        if (url && !/^https?:\/\//i.test(url)) url = "";
+      } catch (_) {}
+      try { ctlOrigin.href = url || "#"; } catch (_) { try { ctlOrigin.href = "#"; } catch (_) {} }
       try { ctlOrigin.style.pointerEvents = url ? "auto" : "none"; } catch (_) {}
       try { ctlOrigin.style.opacity = url ? "1" : ".6"; } catch (_) {}
     }
@@ -2043,9 +2109,9 @@
       const b = _bgmFromState(st);
       if (b) {
         ensureBgmTrackOptions();
-        if (ctlBgmOn && !isEditing(ctlBgmOn)) ctlBgmOn.value = b.enabled ? "on" : "off";
-        if (ctlBgmVol && !isEditing(ctlBgmVol)) ctlBgmVol.value = String(b.vol ?? 0.25);
-        if (ctlBgmTrack && b.trackId && !isEditing(ctlBgmTrack)) ctlBgmTrack.value = b.trackId;
+        uiSetOn(ctlBgmOn, !!b.enabled);
+        if (ctlBgmVol && !isEditing(ctlBgmVol)) safeSetValue(ctlBgmVol, String(b.vol ?? 0.25));
+        if (ctlBgmTrack && b.trackId && !isEditing(ctlBgmTrack)) safeSetValue(ctlBgmTrack, b.trackId);
 
         const title = b.trackTitle
           || (b.trackId && bgmTracks?.length ? (bgmTracks.find(t => t.id === b.trackId)?.title || b.trackId) : "")
@@ -2099,7 +2165,7 @@
     const cmd = String(msg.cmd || msg.name || msg.action || "");
     const payload = msg.payload || msg.data || {};
 
-    const sig = sigOf(`${msg.mid || ""}|${msg.ts || ""}|${cmd}|${JSON.stringify(payload || {})}`);
+    const sig = sigOf(`${msg.mid || ""}|${msg.ts || ""}|${cmd}|${_safeStringify(payload || {})}`);
     const now = Date.now();
     if (sig && sig === lastSeenCmdSig && (now - lastSeenCmdAt) < 1200) return;
     lastSeenCmdSig = sig;
@@ -2173,12 +2239,12 @@
     const fit = String(ctlFit?.value || "cover").toLowerCase();
     sendCmdAliases("SET_FIT", { fit }, ["FIT"]);
 
-    if (ctlHud) sendCmdAliases("HUD", { hidden: (ctlHud.value === "off") }, ["SET_HUD", "HUD_SET"]);
-    if (ctlHudDetails) sendCmdAliases("HUD_DETAILS", { enabled: (ctlHudDetails.value !== "off") }, ["SET_HUD_DETAILS", "HUDDETAILS"]);
+    if (ctlHud) sendCmdAliases("HUD", { hidden: !uiIsOn(ctlHud, true) }, ["SET_HUD", "HUD_SET"]);
+    if (ctlHudDetails) sendCmdAliases("HUD_DETAILS", { enabled: uiIsOn(ctlHudDetails, true) }, ["SET_HUD_DETAILS", "HUDDETAILS"]);
 
-    if (ctlAutoskip) sendCmdAliases("SET_AUTOSKIP", { enabled: (ctlAutoskip.value !== "off") }, ["AUTOSKIP"]);
-    if (ctlAdfree) sendCmdAliases("SET_MODE", { mode: (ctlAdfree.value !== "off") ? "adfree" : "" }, ["MODE"]);
-    if (ctlYtCookies) sendCmdAliases("YT_COOKIES", { enabled: (ctlYtCookies.value !== "off") }, ["SET_YT_COOKIES"]);
+    if (ctlAutoskip) sendCmdAliases("SET_AUTOSKIP", { enabled: uiIsOn(ctlAutoskip, true) }, ["AUTOSKIP"]);
+    if (ctlAdfree) sendCmdAliases("SET_MODE", { mode: uiIsOn(ctlAdfree, false) ? "adfree" : "" }, ["MODE"]);
+    if (ctlYtCookies) sendCmdAliases("YT_COOKIES", { enabled: uiIsOn(ctlYtCookies, true) }, ["SET_YT_COOKIES"]);
 
     // HUD SCALE (solo player)
     if (ctlHudScale) {
@@ -2189,11 +2255,11 @@
     sendCmdAliases("SET_PARAMS", {
       mins,
       fit,
-      hud: (ctlHud ? (ctlHud.value !== "off") : true),
-      hudDetails: (ctlHudDetails ? (ctlHudDetails.value !== "off") : true),
-      autoskip: (ctlAutoskip ? (ctlAutoskip.value !== "off") : true),
-      mode: (ctlAdfree ? ((ctlAdfree.value !== "off") ? "adfree" : "") : ""),
-      ytCookies: (ctlYtCookies ? (ctlYtCookies.value !== "off") : true),
+      hud: (ctlHud ? uiIsOn(ctlHud, true) : true),
+      hudDetails: (ctlHudDetails ? uiIsOn(ctlHudDetails, true) : true),
+      autoskip: (ctlAutoskip ? uiIsOn(ctlAutoskip, true) : true),
+      mode: (ctlAdfree ? (uiIsOn(ctlAdfree, false) ? "adfree" : "") : ""),
+      ytCookies: (ctlYtCookies ? uiIsOn(ctlYtCookies, true) : true),
       hudScale: (ctlHudScale ? (readHudUI().scale) : (loadHudCfg().scale))
     }, ["APPLY_SETTINGS"]);
 
@@ -2204,8 +2270,8 @@
     const twitch = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
     if (twitch) sendCmdAliases("SET_TWITCH", { channel: twitch }, ["TWITCH", "SET_CHANNEL"]);
 
-    const voteEnabled = ctlVoteOn ? (ctlVoteOn.value !== "off") : false;
-    const overlay = ctlVoteOverlay ? (ctlVoteOverlay.value !== "off") : true;
+    const voteEnabled = ctlVoteOn ? uiIsOn(ctlVoteOn, false) : false;
+    const overlay = ctlVoteOverlay ? uiIsOn(ctlVoteOverlay, true) : true;
 
     const timing = computeVoteTiming();
     const cmdStr = String(ctlVoteCmd?.value || "!next,!cam|!stay,!keep").trim();
@@ -2226,9 +2292,9 @@
   }
 
   function applyChatAlertsSettings() {
-    const chatEnabled = ctlChatOn ? (ctlChatOn.value !== "off") : true;
-    const hideCommands = ctlChatHideCmd ? (ctlChatHideCmd.value !== "off") : true;
-    const alertsEnabled = ctlAlertsOn ? (ctlAlertsOn.value !== "off") : true;
+    const chatEnabled = ctlChatOn ? uiIsOn(ctlChatOn, true) : true;
+    const hideCommands = ctlChatHideCmd ? uiIsOn(ctlChatHideCmd, true) : true;
+    const alertsEnabled = ctlAlertsOn ? uiIsOn(ctlAlertsOn, true) : true;
 
     sendCmdAliases("SET_CHAT", { enabled: chatEnabled, hideCommands }, ["CHAT", "CHAT_SET", "CHATCFG"]);
     sendCmdAliases("SET_ALERTS", { enabled: alertsEnabled }, ["ALERTS", "ALERTS_SET"]);
@@ -2250,10 +2316,10 @@
   }
 
   function applyAdsSettings() {
-    const enabled = ctlAdsOn ? (ctlAdsOn.value !== "off") : true;
+    const enabled = ctlAdsOn ? uiIsOn(ctlAdsOn, true) : true;
     const adLead = clamp(parseInt(ctlAdLead?.value || "30", 10) || 30, 0, 300);
     const adDurSec = clamp(parseInt(ctlAdDur?.value || String(loadAdDurStore()), 10) || 30, 5, 3600);
-    const showDuring = ctlAdShowDuring ? (ctlAdShowDuring.value !== "off") : true;
+    const showDuring = ctlAdShowDuring ? uiIsOn(ctlAdShowDuring, true) : true;
     const chatText = String(ctlAdChatText?.value || "").trim();
 
     sendCmdAliases("SET_ADS", { enabled, adLead, adDurSec, showDuring, chatText }, ["ADS_SET", "ADS"]);
@@ -2342,17 +2408,17 @@
   }
   function resetCatalogNow() {
     try {
-      if (ctlCatalogOn) ctlCatalogOn.value = CATALOG_DEFAULTS.enabled ? "on" : "off";
-      if (ctlCatalogLayout) ctlCatalogLayout.value = CATALOG_DEFAULTS.layout;
-      if (ctlCatalogGap) ctlCatalogGap.value = String(CATALOG_DEFAULTS.gap);
-      if (ctlCatalogLabels) ctlCatalogLabels.value = CATALOG_DEFAULTS.labels ? "on" : "off";
-      if (ctlCatalogMode) ctlCatalogMode.value = CATALOG_DEFAULTS.mode;
-      if (ctlCatalogFollowSlot) ctlCatalogFollowSlot.value = String(CATALOG_DEFAULTS.followSlot);
-      if (ctlCatalogClickCycle) ctlCatalogClickCycle.value = CATALOG_DEFAULTS.clickCycle ? "on" : "off";
-      if (ctlCatalogYtCookies) ctlCatalogYtCookies.value = CATALOG_DEFAULTS.ytCookies ? "on" : "off";
-      if (ctlCatalogWxTiles) ctlCatalogWxTiles.value = CATALOG_DEFAULTS.wxTiles ? "on" : "off";
-      if (ctlCatalogWxRefreshSec) ctlCatalogWxRefreshSec.value = String(CATALOG_DEFAULTS.wxRefreshSec);
-      if (ctlCatalogMuted) ctlCatalogMuted.value = CATALOG_DEFAULTS.muted ? "on" : "off";
+      uiSetOn(ctlCatalogOn, !!CATALOG_DEFAULTS.enabled);
+      if (ctlCatalogLayout) safeSetValue(ctlCatalogLayout, CATALOG_DEFAULTS.layout);
+      if (ctlCatalogGap) safeSetValue(ctlCatalogGap, String(CATALOG_DEFAULTS.gap));
+      uiSetOn(ctlCatalogLabels, !!CATALOG_DEFAULTS.labels);
+      if (ctlCatalogMode) safeSetValue(ctlCatalogMode, CATALOG_DEFAULTS.mode);
+      if (ctlCatalogFollowSlot) safeSetValue(ctlCatalogFollowSlot, String(CATALOG_DEFAULTS.followSlot));
+      uiSetOn(ctlCatalogClickCycle, !!CATALOG_DEFAULTS.clickCycle);
+      uiSetOn(ctlCatalogYtCookies, !!CATALOG_DEFAULTS.ytCookies);
+      uiSetOn(ctlCatalogWxTiles, !!CATALOG_DEFAULTS.wxTiles);
+      if (ctlCatalogWxRefreshSec) safeSetValue(ctlCatalogWxRefreshSec, String(CATALOG_DEFAULTS.wxRefreshSec));
+      uiSetOn(ctlCatalogMuted, !!CATALOG_DEFAULTS.muted);
     } catch (_) {}
     applyCatalogNow();
   }
@@ -2360,22 +2426,22 @@
   // ───────────────────────── Bot UI glue
   function syncBotUIFromStore() {
     botCfg = loadBotCfg();
-    if (ctlBotOn) ctlBotOn.value = botCfg.enabled ? "on" : "off";
+    uiSetOn(ctlBotOn, !!botCfg.enabled);
     if (ctlBotUser) safeSetValue(ctlBotUser, botCfg.user || "");
-    if (ctlBotToken && !isEditing(ctlBotToken)) ctlBotToken.value = botCfg.token ? "********" : "";
-    if (ctlBotSayOnAd) ctlBotSayOnAd.value = (botCfg.sayOnAd !== false) ? "on" : "off";
+    if (ctlBotToken && !isEditing(ctlBotToken)) safeSetValue(ctlBotToken, botCfg.token ? "********" : "");
+    uiSetOn(ctlBotSayOnAd, (botCfg.sayOnAd !== false));
     setBotStatus(botCfg.enabled ? "Bot: listo" : "Bot: OFF", !!botCfg.enabled);
   }
 
   function readBotUIAndSave() {
-    const enabled = ctlBotOn ? (ctlBotOn.value !== "off") : false;
+    const enabled = ctlBotOn ? uiIsOn(ctlBotOn, false) : false;
     const user = String(ctlBotUser?.value || "").trim().replace(/^@/, "");
     const chan = String(ctlTwitchChannel?.value || "").trim().replace(/^@/, "");
 
     let token = String(botCfg.token || "");
     const tokenUI = String(ctlBotToken?.value || "").trim();
     if (tokenUI && tokenUI !== "********") token = tokenUI.replace(/^oauth:/i, "");
-    const sayOnAd = ctlBotSayOnAd ? (ctlBotSayOnAd.value !== "off") : true;
+    const sayOnAd = ctlBotSayOnAd ? uiIsOn(ctlBotSayOnAd, true) : true;
 
     botCfg = saveBotCfg({ enabled, user, token, channel: chan, sayOnAd });
     syncBotUIFromStore();
@@ -2554,6 +2620,7 @@
     safeOn(ctlBgmOn, "change", applyBgmNow);
     safeOn(ctlBgmTrack, "change", applyBgmNow);
     safeOn(ctlBgmVol, "input", applyBgmNow);
+    safeOn(ctlBgmVol, "change", applyBgmNow);
     safeOn(ctlBgmPrev, "click", bgmPrev);
     safeOn(ctlBgmPlay, "click", bgmToggle);
     safeOn(ctlBgmNext, "click", bgmNext);
@@ -2574,6 +2641,9 @@
       ctlCountdownOn, ctlCountdownLabel, ctlCountdownTarget,
       ctlBgmOn, ctlBgmVol, ctlBgmTrack
     ].forEach(el => safeOn(el, "change", autoSync));
+
+    // también input para ranges (mejor UX)
+    [ctlBgmVol, ctlHudScale].forEach(el => safeOn(el, "input", autoSync));
 
     safeOn(ctlStatus, "click", () => {
       if (!updateAvailable) return;
@@ -2703,13 +2773,11 @@
       // key en UI
       syncKeyUI();
 
-      if (ctlBusName) {
-        try { ctlBusName.textContent = KEY ? `${BUS} (keyed)` : BUS; } catch (_) {}
-      }
+      if (ctlBusName) safeSetText(ctlBusName, KEY ? `${BUS} (keyed)` : BUS);
 
       try {
         if (ctlAdDur && (!ctlAdDur.value || !String(ctlAdDur.value).trim())) {
-          ctlAdDur.value = String(loadAdDurStore());
+          safeSetValue(ctlAdDur, String(loadAdDurStore()));
         }
       } catch (_) {}
 
@@ -2750,7 +2818,7 @@
 
       heartbeatId = setInterval(heartbeat, 900);
       setStatus(`Control listo · v${APP_VERSION}${KEY ? ` · key OK` : " · (sin key)"}`, true);
-      log("boot OK", { KEY, BUS, CMD_KEY, STATE_KEY, EVT_KEY, BGM_CFG_KEY, HUD_CFG_KEY });
+      log("boot OK", { APP_VERSION, BUILD_ID, KEY, BUS, CMD_KEY, STATE_KEY, EVT_KEY, BGM_CFG_KEY, HUD_CFG_KEY });
     } catch (e) {
       console.error(e);
       setStatus(`ERROR init: ${String(e?.message || e)}`, false);
