@@ -15,6 +15,7 @@
   ✅ Version sentinel: alinear v=APP_VERSION sin borrar tokens
   ✅ REPAIR MODE: ?repair=1 (limpia SW/caches/storage bajo demanda)
   ✅ Diagnóstico en pantalla (window.error + unhandledrejection)
+  ✅ FIX IMPORTANTE (v2.3.9): Countdown sin overflow 32-bit (NO usa |0 en duraciones largas)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark" data-ui="neo-atlas" data-ui-skin="newsroom">
@@ -439,7 +440,7 @@
     #stage .layer-media{ z-index:1; }
     #rlcCatalog{ position:absolute; inset:0; z-index:2; display:none; pointer-events:none; }
     #rlcCatalog.on{ display:block; pointer-events:auto; }
-    #fallback{ z-index:5; pointer-events:auto; }
+    #fallback{ z-index:5; pointer-events:auto; position:absolute; inset:0; }
     #stage .layer-ui{ z-index:10; }
 
     /* Tickers SIEMPRE arriba */
@@ -772,8 +773,7 @@
 
   <!-- ───────────────────────── CHAT VISIBILITY BOOT (v2.3.9) ─────────────────────────
        - Activa chat si URL trae ?chat=1 / true / on / yes
-       - Si llegan mensajes a #rlcChatList, fuerza chat visible (sin depender de clases del renderer)
-       NO cambia tu API ni tu versión. -->
+       - Si llegan mensajes a #rlcChatList, fuerza chat visible (sin depender de clases del renderer) -->
   <script>
     (() => {
       "use strict";
@@ -807,7 +807,7 @@
       if (wantsOn) setOn();
       if (wantsOff) setOff();
 
-      // Si entra cualquier mensaje, muestra chat (esto arregla el “no se ve” aunque el renderer no ponga clases)
+      // Si entra cualquier mensaje, muestra chat
       try {
         const obs = new MutationObserver((muts) => {
           for (const m of muts) {
@@ -818,6 +818,51 @@
           }
         });
         obs.observe(list, { childList: true, subtree: true });
+      } catch (_) {}
+    })();
+  </script>
+
+  <!-- ───────────────────────── SW REGISTER (PLAYER) ─────────────────────────
+       ✅ GitHub Pages friendly
+       ✅ updateViaCache:"none"
+       ✅ Re-registra por versión (sw.js?v=APP_VERSION)
+       ❌ Se salta si ?repair=1 o ?nosw=1 -->
+  <script>
+    (() => {
+      "use strict";
+      const g = (typeof globalThis !== "undefined") ? globalThis : window;
+      const GUARD = "__RLC_SW_BOOT_V1";
+      try { if (g[GUARD]) return; g[GUARD] = true; } catch (_) {}
+
+      try {
+        const u = new URL(location.href);
+        if (u.searchParams.has("repair")) return;
+        const nosw = String(u.searchParams.get("nosw") || "").toLowerCase();
+        if (nosw === "1" || nosw === "true" || nosw === "on") return;
+
+        if (!("serviceWorker" in navigator)) return;
+
+        const V = String(window.APP_VERSION || "").trim() || "0";
+        const swUrl = `./sw.js?v=${encodeURIComponent(V)}`;
+
+        let reloaded = false;
+
+        navigator.serviceWorker.register(swUrl, { updateViaCache: "none" })
+          .then((reg) => {
+            try { reg && reg.update && reg.update(); } catch (_) {}
+
+            // update periódico suave (por si GH Pages cachea raro)
+            try {
+              setInterval(() => { try { reg.update && reg.update(); } catch (_) {} }, 60_000);
+            } catch (_) {}
+          })
+          .catch(() => {});
+
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (reloaded) return;
+          reloaded = true;
+          try { location.reload(); } catch (_) {}
+        });
       } catch (_) {}
     })();
   </script>
@@ -833,7 +878,8 @@
 
   <!-- ───────────────────────── COUNTDOWN BOOTSTRAP ─────────────────────────
        Permite cfg desde control vía BC/LS + parámetros URL.
-       ✅ Compat legacy: acepta mensajes sin key en legacy bus. -->
+       ✅ Compat legacy: acepta mensajes sin key en legacy bus.
+       ✅ FIX: sin bitwise "|0" (evita overflow en countdowns largos). -->
   <script>
     (() => {
       "use strict";
@@ -1014,13 +1060,15 @@
         show(!!(CFG.enabled && targetMs > 0));
       }
 
+      // ✅ FIX: nada de bitwise (evita overflow > 24 días aprox)
       function fmtRemain(ms) {
-        ms = Math.max(0, ms | 0);
-        const sec = (ms / 1000) | 0;
-        const d = (sec / 86400) | 0;
-        const h = ((sec % 86400) / 3600) | 0;
-        const m = ((sec % 3600) / 60) | 0;
-        const s = sec % 60;
+        ms = Math.max(0, Math.floor(ms));
+        const sec = Math.floor(ms / 1000);
+
+        const d = Math.floor(sec / 86400);
+        const h = Math.floor((sec % 86400) / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
 
         const pad = (n) => String(n).padStart(2, "0");
         if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
