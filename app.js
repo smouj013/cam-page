@@ -3384,10 +3384,74 @@
 
     applyFilters();
     if (!cams.length) {
-      showFallback({ originUrl: "#" }, "No hay CAM_LIST cargada. Revisa cams.js / CAM_LIST.");
-      postState({ error: "no_cam_list" }, true);
-      return;
+      showFallback({ originUrl: "#" }, "Esperando CAM_LIST… (autodiscovery en cams.js)");
+      postState({ error: "waiting_cam_list" }, true);
+    } else {
+      if (saved?.curId) {
+        const n = cams.findIndex(c => c && String(c.id) === String(saved.curId));
+        if (n >= 0) idx = n;
+      }
+      playCam(cams[idx]);
     }
+
+    // 🔁 CAM_LIST puede llegar tarde (cams.js autodiscovery). Si llega, adoptamos y autoplay.
+    (function hookCamListLateArrival(){
+      let hooked = false;
+      if (hooked) return;
+      hooked = true;
+
+      function pickList(detail){
+        if (!detail || typeof detail !== "object") return null;
+        return (Array.isArray(detail.list) && detail.list)
+          || (Array.isArray(detail.main) && detail.main)
+          || (Array.isArray(detail.cams) && detail.cams)
+          || (Array.isArray(detail.camList) && detail.camList)
+          || null;
+      }
+
+      function adopt(detail){
+        const list = pickList(detail) || (Array.isArray(window.CAM_LIST) ? window.CAM_LIST : null);
+        if (!Array.isArray(list) || !list.length) return;
+
+        const prevId = (cams && cams[idx] && cams[idx].id != null) ? String(cams[idx].id) : null;
+
+        allCams = list.slice();
+        try { buildTagIndex(); } catch(_){}
+        applyFilters();
+
+        // Si estabas en adfree y no hay HLS -> cae a normal
+        if (!cams.length && modeAdfree) {
+          modeAdfree = false;
+          applyFilters();
+        }
+        if (!cams.length) return;
+
+        if (prevId) {
+          const n = cams.findIndex(c => c && String(c.id) === prevId);
+          if (n >= 0) idx = n;
+        }
+
+        // Si no había nada cargado aún, arrancamos
+        const nothingLoaded = (!frame?.src && !video?.src && !img?.src);
+        if (nothingLoaded) {
+          playCam(cams[idx] || cams[0]);
+          scheduleLayout();
+          postState({ reason: "cam_list_late_autoplay" }, true);
+        } else {
+          postState({ reason: "cam_list_update" }, true);
+        }
+      }
+
+      // Evento estándar de cams.js
+      window.addEventListener("rlc_cam_list_updated", (ev) => adopt(ev && ev.detail));
+
+      // Si existe API, también (no pasa nada si no está)
+      try {
+        if (window.RLCCams && typeof window.RLCCams.onUpdate === "function") {
+          window.RLCCams.onUpdate(adopt);
+        }
+      } catch(_){}
+    })();
 
     if (saved?.curId) {
       const n = cams.findIndex(c => c && String(c.id) === String(saved.curId));

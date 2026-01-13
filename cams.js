@@ -1328,7 +1328,7 @@
 
   // Cache webcams
   const cached = loadCacheAny([CACHE_KEY_V238, CACHE_KEY_LEGACY], (c) => camTitleOk(c.title, c.source));
-  if (cached && cached.length >= Math.min(180, TARGET_CAMS)) {
+  if (cached && cached.length >= Math.min(60, TARGET_CAMS)) {
     for (let i = 0; i < cached.length; i++) {
       const c = cached[i];
       if (!c || typeof c !== "object") continue;
