@@ -12,7 +12,7 @@
      - Mirror LS cmd/state/evt keyed <-> legacy
      - Polling LS + reinyección a BC (por si BC/storage fallan)
      - postMessage same-origin (cmd/state/event)
-  ✅ Version sentinel: alinear v=APP_VERSION sin borrar tokens
+  ✅ Version sentinel: fuerza ?v=APP_VERSION (sin borrar tokens)
   ✅ REPAIR MODE: ?repair=1 (limpia SW/caches/storage bajo demanda)
   ✅ Diagnóstico en pantalla (window.error + unhandledrejection)
   ✅ FIX IMPORTANTE (v2.3.9): Countdown sin overflow 32-bit (NO usa |0 en duraciones largas)
@@ -38,28 +38,30 @@
   </script>
 
   <!-- ───────────────────────── VERSION SENTINEL ─────────────────────────
-       Recarga suave si cambia APP_VERSION (NO borra storage / NO toca tokens).
-       También pide update del SW si existiera uno registrado. -->
+       - Fuerza ?v=APP_VERSION para evitar “assets viejos” en GH Pages
+       - NO borra storage / NO toca tokens
+       - También pide update() del SW si existe
+  -->
   <script>
     (() => {
       "use strict";
       try {
-        const V = String(window.APP_VERSION || "");
+        const V = String(window.APP_VERSION || "").trim();
         if (!V) return;
 
         const K = "rlc_app_version_seen_v1";
         let prev = "";
         try { prev = localStorage.getItem(K) || ""; } catch (_) {}
 
-        if (prev !== V) {
-          try { localStorage.setItem(K, V); } catch (_) {}
+        const u = new URL(location.href);
+        const curV = String(u.searchParams.get("v") || "").trim();
 
-          const u = new URL(location.href);
-          if (!u.searchParams.has("v")) {
-            u.searchParams.set("v", V);
-            location.replace(u.toString());
-            return;
-          }
+        // Si cambia versión o falta/está distinta la v, la fijamos.
+        if (prev !== V || curV !== V) {
+          try { localStorage.setItem(K, V); } catch (_) {}
+          u.searchParams.set("v", V);
+          location.replace(u.toString());
+          return;
         }
 
         if ("serviceWorker" in navigator) {
@@ -76,7 +78,8 @@
 
   <!-- ───────────────────────── REPAIR MODE ─────────────────────────
        index.html?repair=1
-       ⚠️ Esto SÍ limpia localStorage/sessionStorage (incluye tokens). Úsalo solo si quieres reset total. -->
+       ⚠️ Esto SÍ limpia localStorage/sessionStorage (incluye tokens). Úsalo solo si quieres reset total.
+  -->
   <script>
     (() => {
       "use strict";
@@ -267,7 +270,9 @@
 
       function forward(targetBc, msg, fromTag) {
         if (!targetBc || !isObj(msg)) return;
-        const hop = (msg[BRIDGE_TAG] | 0) || 0;
+
+        const hopRaw = msg[BRIDGE_TAG];
+        const hop = Number.isFinite(Number(hopRaw)) ? Math.max(0, Math.floor(Number(hopRaw))) : 0;
         if (hop >= MAX_HOPS) return;
 
         const out = cloneMsg(msg);
@@ -773,7 +778,8 @@
 
   <!-- ───────────────────────── CHAT VISIBILITY BOOT (v2.3.9) ─────────────────────────
        - Activa chat si URL trae ?chat=1 / true / on / yes
-       - Si llegan mensajes a #rlcChatList, fuerza chat visible (sin depender de clases del renderer) -->
+       - Si llegan mensajes a #rlcChatList, fuerza chat visible (sin depender de clases del renderer)
+  -->
   <script>
     (() => {
       "use strict";
@@ -826,7 +832,8 @@
        ✅ GitHub Pages friendly
        ✅ updateViaCache:"none"
        ✅ Re-registra por versión (sw.js?v=APP_VERSION)
-       ❌ Se salta si ?repair=1 o ?nosw=1 -->
+       ❌ Se salta si ?repair=1 o ?nosw=1
+  -->
   <script>
     (() => {
       "use strict";
@@ -879,13 +886,14 @@
   <!-- ───────────────────────── COUNTDOWN BOOTSTRAP ─────────────────────────
        Permite cfg desde control vía BC/LS + parámetros URL.
        ✅ Compat legacy: acepta mensajes sin key en legacy bus.
-       ✅ FIX: sin bitwise "|0" (evita overflow en countdowns largos). -->
+       ✅ FIX: sin bitwise "|0" (evita overflow en countdowns largos).
+  -->
   <script>
     (() => {
       "use strict";
 
       const g = (typeof globalThis !== "undefined") ? globalThis : window;
-      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V110";
+      const LOAD_GUARD = "__RLC_COUNTDOWN_BOOT_V111";
       try { if (g[LOAD_GUARD]) return; g[LOAD_GUARD] = true; } catch (_) {}
 
       const BUS_BASE = "rlc_bus_v1";
@@ -1060,7 +1068,7 @@
         show(!!(CFG.enabled && targetMs > 0));
       }
 
-      // ✅ FIX: nada de bitwise (evita overflow > 24 días aprox)
+      // ✅ FIX: nada de bitwise (evita overflow > ~24 días)
       function fmtRemain(ms) {
         ms = Math.max(0, Math.floor(ms));
         const sec = Math.floor(ms / 1000);
